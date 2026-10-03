@@ -1,0 +1,423 @@
+# Echo Market — setup guide (start to finish)
+
+This guide takes you from "code on GitHub" to "players are ordering planes". Nothing is assumed: every click, every copy-paste, and every place where you can just ask Claude to do it for you.
+
+**Time:** about 2 hours in total, split into 9 parts. You can stop after any step; each part ends at a safe checkpoint.
+
+**Cost:** €0. Everything uses free plans (GitHub Free, Vercel Hobby, Supabase Free, Discord).
+
+---
+
+## How to read this guide
+
+| Mark | Meaning |
+|---|---|
+| 🧑 **You** | You click or type in a website. |
+| 💬 **Tell Claude** | Copy the quoted sentence into the Claude Code chat. Claude does the work and tells you the result. |
+| ▶ **Run** | A terminal command. In the Claude app, code blocks have a **Run** button, or you can ask Claude to run it. |
+| 🔒 **Secret** | A password-like value. Copy it **straight from the website into Vercel**. Never paste it into the chat, Discord or a file. |
+| 🙋 **Admin** | Needs a Discord server admin. There's a ready-made message for them in Part 6. |
+
+> **Starting a new Claude session later?** Begin with:
+> 💬 *"I'm setting up Echo Market from the echomarket repo (github.com/tommy2006/echomarket), following SETUP.md. I just finished step X."*
+
+### The 4 values that must never go in the chat
+
+1. Supabase **secret key** (starts with `sb_secret_`, or the legacy `service_role` key)
+2. Discord **Client Secret**
+3. Discord **bot token**
+4. Discord **webhook URLs** (anyone holding one can post in that channel)
+
+Claude never needs them. When something is wrong, Claude checks `/api/health` on either site, which reports *whether* each value works without ever showing it.
+
+---
+
+## The big picture
+
+```
+                          Players / sellers
+                     ┌───────────┴───────────┐
+                     ▼                       ▼
+        ┌──────────────────────┐ ┌──────────────────────┐
+        │ Vercel project:      │ │ Vercel project:      │
+        │ BUYER (market)       │ │ SELLER (desk)        │      ┌──────────────────────┐
+        │ root dir: buyer/     │ │ root dir: seller/    │ ◄─── │ GitHub: one repo     │
+        └──────────┬───────────┘ └───────────┬──────────┘      │ tommy2006/echomarket │
+                   └───────────┬─────────────┘                  └──────────────────────┘
+                               ▼
+   ┌──────────────────────┐          ┌──────────────────────┐
+   │ Supabase             │ ◄──────► │ Discord              │
+   │ database + logins    │          │ login, channel posts,│
+   └──────────────────────┘          │ DM bot               │
+                                     └──────────────────────┘
+```
+
+- **One GitHub repo, two websites.** Vercel builds the buyer site from the `buyer/` folder and the seller site from the `seller/` folder.
+- **One shared database.** Both sites use the same Supabase project.
+- **Automatic deploys.** Every push to GitHub redeploys both sites.
+
+**Words used below**
+
+- **BUYER-SITE**: the name you give the buyer Vercel project, e.g. `echomarket-buyer`. Its address is `https://BUYER-SITE.vercel.app`.
+- **SELLER-SITE**: the name you give the seller Vercel project, e.g. `echomarket-seller`. Its address is `https://SELLER-SITE.vercel.app`.
+- **PROJECT-REF**: the 20-letter ID of your Supabase project, e.g. `abcdefghijklmnopqrst`.
+
+---
+
+## Part 1 — The code on GitHub (≈10 min)
+
+The code is already in **https://github.com/tommy2006/echomarket**:
+
+```
+buyer/      the market players use
+seller/     the seller desk
+shared/     code both apps use (copied into each by "npm run sync")
+supabase/   schema.sql, the database setup
+SETUP.md    this guide
+```
+
+**1.1 🧑 Make sure your GitHub account can use the repo**
+- If you are **tommy2006**, you're set.
+- If not, the owner (tommy2006) adds you: **repo → Settings → Collaborators → Add people**. Then accept the email invite.
+
+Vercel can only import repos your GitHub account owns or collaborates on.
+
+**1.2 💬 Log the GitHub tool in** (so Claude can push changes for you later). Tell Claude:
+> *"Log me into the GitHub CLI using the web browser flow, in my terminal panel."*
+
+Claude opens a terminal tab and runs `gh auth login --web`. Then:
+1. The terminal shows an 8-character code like `ABCD-1234`. Copy it.
+2. A browser window opens at github.com/login/device. Paste the code and click **Authorize**.
+3. The terminal says "Logged in as …".
+
+✅ **Checkpoint:** https://github.com/tommy2006/echomarket shows the `buyer`, `seller`, `shared` and `supabase` folders.
+
+---
+
+## Part 2 — Database: Supabase (≈20 min)
+
+Supabase holds accounts, airlines and orders, and handles "Sign in with Discord". **Both** sites use this one project.
+
+**2.1 🧑 Create a Supabase account**
+1. Go to https://supabase.com/dashboard.
+2. Choose **Continue with GitHub** and authorize it.
+3. If asked, create an **organization**. Name it e.g. "Echo Market" and pick the **Free** plan.
+
+**2.2 Connect Claude to Supabase** (recommended)
+1. Click **Connect** on the *Supabase* card Claude showed in the chat. You can also add it from the Connectors section of the Claude app's settings.
+2. Log in and approve your organization.
+
+💬 Then tell Claude:
+> *"Using the Supabase connector, create a free project called echomarket in the region closest to most of our players, then run supabase/schema.sql on it."*
+
+Claude shows you the cost (**$0** on Free) and asks you to confirm before creating anything.
+
+<details><summary>Do it by hand instead</summary>
+
+1. In the Supabase dashboard, click **New project**.
+   - Name: `echomarket`.
+   - Database password: click **Generate a password**, then save it in your password manager.
+   - Region: closest to your players.
+   - Plan: Free.
+2. Wait about 2 minutes for it to finish setting up.
+3. Left menu → **SQL Editor** → **New query**.
+4. On GitHub, open `supabase/schema.sql` and click **Copy raw file**. Paste it into the editor.
+5. Click **Run** (or press Ctrl+Enter). You should see *"Success. No rows returned"*.
+</details>
+
+**2.3 Collect the three Supabase values.** You'll paste them into Vercel in Part 4. Leave the tab open.
+
+- **Project URL** and **publishable key** (both public). Tell Claude:
+  > 💬 *"What's my Supabase project URL, project ref and publishable key?"*
+
+  Or find them by hand:
+  - The URL is under **Project Settings → Data API**.
+  - The publishable key is under **Project Settings → API Keys** and starts with `sb_publishable_`.
+- 🔒 **Secret key.** Go to **Project Settings → API Keys → Secret keys**, click **Reveal**, then **Copy**. It starts with `sb_secret_`.
+  - Copy it **only when you're about to paste it into Vercel**.
+  - If your project only shows a **Legacy API keys** tab, use `anon` as the publishable key and `service_role` as the secret key. Both pairs work.
+
+✅ **Checkpoint:** In Supabase, **Table Editor** lists `accounts`, `airlines`, `alliances`, `orders`, `order_events`, `order_flags` and `sellers`.
+
+---
+
+## Part 3 — Discord application: login + DM bot (≈20 min)
+
+One Discord "application" powers **Sign in with Discord** on both sites. Its **bot** DMs players about their orders.
+
+**3.1 🧑 Create the application**
+1. Go to https://discord.com/developers/applications and log in with your normal Discord account.
+2. Click **New Application**.
+3. Name it **Echo Market**, tick the box to accept the Developer Terms, and click **Create**.
+4. Optional: upload `buyer/echo_logo.png` as the **App Icon**.
+
+**3.2 🧑 Login settings (OAuth2 page)**
+1. Left menu → **OAuth2**.
+2. Under **Client information**:
+   - Copy the **Client ID**. It's public.
+   - Click **Reset Secret**, then **Yes, do it!**, and copy the 🔒 **Client Secret**. You'll paste it into Supabase in the next step.
+3. Under **Redirects**, click **Add Redirect** and paste the callback URL, then click **Save Changes**:
+
+   ```
+   https://PROJECT-REF.supabase.co/auth/v1/callback
+   ```
+
+   > 💬 *"What's my exact Supabase auth callback URL for Discord?"*
+
+**3.3 🧑 Turn on Discord login in Supabase**
+1. Supabase → **Authentication → Sign In / Providers**.
+2. Click **Discord**:
+   - Turn on **Enable Sign in with Discord**.
+   - Paste the **Client ID** and the 🔒 **Client Secret**.
+   - Click **Save**.
+3. Click **Email**, turn it **off**, and click **Save**. With Discord as the only way in, each Discord user gets exactly one market account.
+
+**3.4 🧑 Create the bot (for DMs)**
+1. Developer portal → **Bot**.
+2. Click **Reset Token**, then **Yes, do it!**, and copy the 🔒 **token**. Discord shows it **only once**, but you can reset it again any time.
+3. Settings on the same page:
+   - **Public Bot: ON**, so an admin can add it with your link.
+   - **Requires OAuth2 Code Grant: OFF.**
+   - **Privileged Gateway Intents: all OFF.**
+4. Click **Save Changes**.
+
+**3.5 💬 Make the bot invite link.** Tell Claude:
+> *"Make me the Discord bot invite link. My Client ID is 123456789012345678."*
+
+```
+https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot&permissions=0
+```
+
+`permissions=0` means the bot can't read, post or moderate anything in the server.
+
+✅ **Checkpoint:** Supabase shows Discord **Enabled** and Email **Disabled**, and you have the invite link.
+
+---
+
+## Part 4 — Two websites on Vercel (≈25 min)
+
+You create **two** Vercel projects from the same repo. They differ only in name and **Root Directory**.
+
+**4.1 🧑 Create a Vercel account**
+1. Go to https://vercel.com/signup and choose the **Hobby** plan.
+2. Choose **Continue with GitHub** and authorize it.
+
+Optional: click **Connect** on the *Vercel* card in the chat, so Claude can read deployments and error logs.
+
+**4.2 🧑 Choose the two names first.** You need both addresses as settings in *both* projects, so decide them up front:
+
+| | Project Name | Address |
+|---|---|---|
+| Buyer | `echomarket-buyer` (example) | `https://echomarket-buyer.vercel.app` |
+| Seller | `echomarket-seller` (example) | `https://echomarket-seller.vercel.app` |
+
+If Vercel says a name is taken, pick another and use *that* address below.
+
+**4.3 🧑 Create the BUYER project**
+1. **Add New… → Project** → find `echomarket` under **Import Git Repository** → **Import**.
+   - Don't see it? Click **Adjust GitHub App Permissions** and allow the repo.
+2. **Project Name:** your BUYER-SITE name.
+3. **Framework Preset:** `Other`.
+4. **Root Directory:** click **Edit**, choose **`buyer`**, then **Continue**.
+5. **Environment Variables:** add each row (Key, Value, **Add**):
+
+   | Key | Value |
+   |---|---|
+   | `SUPABASE_URL` | Project URL from 2.3 |
+   | `SUPABASE_PUBLISHABLE_KEY` | publishable key from 2.3 |
+   | `SUPABASE_SECRET_KEY` | 🔒 secret key from 2.3 |
+   | `BUYER_URL` | `https://BUYER-SITE.vercel.app` |
+   | `SELLER_URL` | `https://SELLER-SITE.vercel.app` |
+   | `DISCORD_BOT_TOKEN` | 🔒 bot token from 3.4 |
+
+6. Click **Deploy**. Wait about 1 minute.
+
+**4.4 🧑 Create the SELLER project.** Repeat 4.3 with **Add New… → Project → `echomarket` → Import** again, with these differences:
+- **Project Name:** your SELLER-SITE name.
+- **Root Directory:** **`seller`**.
+- **The same six environment variables** with the same values. The seller site also needs the bot token, because it sends the "taken" and "delivered" DMs.
+
+> Tip: after the first project is set up, you can paste all six variables in one go. Copy them as `KEY=value` lines and paste into the first **Key** box; Vercel splits them up.
+
+**4.5 🧑 Tell Supabase about both sites.** Without this, logins bounce back to the wrong address.
+1. Supabase → **Authentication → URL Configuration**.
+2. **Site URL:** `https://BUYER-SITE.vercel.app`.
+3. **Redirect URLs** → **Add URL**, twice:
+   - `https://BUYER-SITE.vercel.app/**`
+   - `https://SELLER-SITE.vercel.app/**`
+4. Save.
+
+**4.6 💬 Check both.** Tell Claude:
+> *"Check https://BUYER-SITE.vercel.app/api/health and https://SELLER-SITE.vercel.app/api/health and tell me what's left."*
+
+Each is a checklist: ✅ done, ❌ required and missing, ➖ optional. At this point "at least one seller", "bot is in your server" and the webhooks are expected to be missing.
+
+✅ **Checkpoint:**
+- The buyer address shows the Echo Market home page.
+- The seller address shows **"Echo Market seller desk — Sign in with Discord"**.
+- Both `/api/health` pages say `"ready": true`.
+
+---
+
+## Part 5 — First sign-in: make yourself the admin seller (≈10 min)
+
+**5.1 🧑 Sign in on the buyer site**
+1. Open `https://BUYER-SITE.vercel.app` → **Sign in with Discord** → **Authorize**.
+2. You land back signed in. The banner says *Step 2 of 3: Create your first airline profile*.
+
+**5.2 🧑 Create your airline** there: **Create airline**, enter a name, pick an alliance.
+
+**5.3 🧑 Get your Discord ID**
+1. Open `https://SELLER-SITE.vercel.app` and sign in with Discord. It's quick the second time.
+2. It says **"You're not on the seller list yet"** and shows your Discord ID. Click it to copy.
+
+**5.4 💬 Make yourself admin.** Tell Claude:
+> *"Using the Supabase connector, make Discord ID 123456789012345678 an admin seller."*
+
+<details><summary>Do it by hand instead</summary>
+
+In Supabase **SQL Editor**, open a **New query**, paste this, and click **Run**:
+
+```sql
+insert into public.sellers (user_id, is_admin)
+select id, true from public.accounts where discord_id = 'PASTE_YOUR_DISCORD_ID';
+```
+
+It should say "1 row affected". If it says 0 rows, sign in first (5.1).
+</details>
+
+✅ **Checkpoint:** after a refresh, the seller site shows the desk with **Selling as: (your airline)** at the top.
+
+---
+
+## Part 6 — Discord server pieces (needs an admin) (≈10 min for you, plus admin time)
+
+You need three things:
+1. **Channel webhooks**, so orders get posted to seller channels.
+2. **The bot in the server.** Discord only lets a bot DM people who share a server with it.
+3. **The seller role ID**, so new orders ping sellers.
+
+**6.1 🧑 Turn on Discord Developer Mode:** **User Settings → Advanced → Developer Mode**.
+
+**6.2 🙋 Send this to your admins** (edit the bits in [brackets]):
+
+> Hi! I've taken over the Echo Market app after [old dev] left, and rebuilt it so it actually works: Discord login, saved airlines, sellers taking orders, and order updates.
+> Market: https://BUYER-SITE.vercel.app · Seller desk: https://SELLER-SITE.vercel.app
+>
+> Could you help with 3 small things?
+> 1. **Webhooks**: in each of these channels go to *Edit Channel → Integrations → Webhooks → New Webhook*, name it "Echo Market", click *Copy Webhook URL*, and DM me the URL. Treat these like passwords.
+>    - [#market-requests]: new orders
+>    - [#market-in-progress]: orders a seller has taken
+>    - [#market-done]: finished orders
+>
+>    One channel for all three is fine too.
+> 2. **Invite the Echo Market bot**: [BOT INVITE LINK]. It asks for **no permissions**. It can't read or post in channels. It only DMs players when *their own* order is taken or delivered, and players can turn that off.
+> 3. **Seller role**: is @[Seller role] still the one to ping for new orders?
+>
+> Alternatively, you could give me "Manage Webhooks" on those channels and I'll set them up myself. Thanks!
+
+**6.3 🧑 Copy the seller role ID:** **Server Settings → Roles** → right-click the seller role → **Copy Role ID**.
+
+**6.4 🧑 Add the new values to BOTH Vercel projects**
+1. Open the buyer project → **Settings → Environment Variables** and add these. Then do the same in the seller project:
+
+   | Key | Value |
+   |---|---|
+   | `DISCORD_WEBHOOK_REQUEST` | 🔒 webhook URL for new orders |
+   | `DISCORD_WEBHOOK_PROGRESS` | 🔒 webhook URL for taken / partly delivered |
+   | `DISCORD_WEBHOOK_FULFILLED` | 🔒 webhook URL for finished |
+   | `DISCORD_ROLE_ID` | the role ID number |
+
+   If you only have **one** webhook, add it once as `DISCORD_WEBHOOK_URL` instead.
+2. **Redeploy both:** in each project, go to **Deployments**, click **⋯** on the top deployment, and choose **Redeploy**.
+
+> Why both? The buyer site posts **new** orders; the seller site **moves** them as sellers work. Both need the webhooks.
+
+**6.5 💬 Check:** *"Check /api/health on both of my Echo Market sites again."* Every line should be ✅.
+
+**6.6 🧑 Test the DM**
+1. On the buyer site, click the 🔔 bell, then **Send me a test DM**.
+2. If it says Discord wouldn't let the bot DM you:
+   - Make sure you're in the server the bot joined.
+   - In Discord, open the server name menu → **Privacy Settings** and turn on **Direct Messages**.
+
+---
+
+## Part 7 — Full test run (≈10 min)
+
+1. 🧑 **Buyer site → Shop:**
+   - Click **Add** on any aircraft, choose quantity 1 and **50%**, then **Add to order**.
+   - Open 🛒, pick your airline, and click **Send order to sellers**.
+   - ✅ **Orders** shows it as *Waiting for seller*.
+   - ✅ The requests channel gets a post that pings the seller role.
+2. 🧑 **Seller site:**
+   - The order is in **Open queue**. Click **Take order**, pick your airline, and confirm.
+   - ✅ You get a DM: *"Your order … was taken"*.
+   - ✅ The Discord post moves to in-progress.
+3. 🧑 **Seller site:** click **Update delivery**, then **All delivered**, then **Save**.
+   - ✅ DM: *"… is complete"*.
+   - ✅ The post moves to the done channel.
+   - ✅ The buyer site shows **Delivered**.
+4. 🧑 **Clean up.** On the seller site, open the order and click **Delete** (admins only).
+
+✅ **Checkpoint:** everything worked. 🎉 **The market is live.**
+
+---
+
+## Part 8 — Go live
+
+**8.1 🙋 Announce the new address** (ask an admin to pin it):
+
+> 📢 **Echo Market has moved:** https://BUYER-SITE.vercel.app
+> - Sign in with Discord. Your airlines are now saved to your account, on every device.
+> - Create your airline (up to 20), pick aircraft, choose your price level (the % of the in-game list price you pay), and send.
+> - You'll see which airline is selling to you, and get a DM when it's taken and delivered.
+>
+> The old site no longer accepts orders. Please re-create your airlines on the new one; it takes 10 seconds.
+
+Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app`.
+
+**8.2 Add the other sellers.** For each seller:
+1. They sign in on the seller site and send you the Discord ID shown there.
+2. 💬 *"Add Discord ID 123… as a seller."* Add *"…as an admin"* if they should be able to delete orders and manage any order.
+
+To remove a seller: 💬 *"Deactivate seller with Discord ID 123…"*. Their history is kept.
+
+---
+
+## Part 9 — Everyday changes and fixing problems
+
+### Changing things (just ask)
+
+| You want to… | 💬 Tell Claude |
+|---|---|
+| Change a price / add an aircraft | *"In buyer/aircraft_pricelist.json change the A320neo price to 112 million, then commit and push."* |
+| Add or rename an alliance | *"Using the Supabase connector, add the alliance 'Nova' to the alliances table."* |
+| Change the daily limit / max quantity | *"Change the 24-hour limit to 15 billion in buyer/lib/pricing.js, commit and push."* |
+| Change something both sites share (buttons, Discord posts, DMs) | *"Edit shared/…, run npm run sync, commit and push."* |
+| See who the sellers are | *"List all sellers with their Discord names."* |
+| See today's orders | *"Show me orders from the last 24 hours."* |
+
+Every push to GitHub redeploys both sites, usually within a minute.
+
+> **Shared code rule:** files in `shared/` are copied into `buyer/` and `seller/`. Always edit the `shared/` version, then run ▶ `npm run sync` at the repo root. `npm run check` tells you if a copy is out of date.
+
+### When something breaks
+
+| Symptom | Likely cause and fix |
+|---|---|
+| A site says **"Echo Market isn't connected yet"** | That project is missing its Supabase keys, or wasn't redeployed after adding them. Open its `/api/health`. |
+| Discord login shows **"Invalid OAuth2 redirect_uri"** | The redirect in Discord (3.2) doesn't exactly match `https://PROJECT-REF.supabase.co/auth/v1/callback`. |
+| After login you land on the **wrong site or an error page** | Supabase **Site URL / Redirect URLs** (4.5). Both sites must be listed. |
+| The "Seller desk" link or "Create airline" button goes nowhere | `BUYER_URL` / `SELLER_URL` are missing in that project. Check `/api/health`. |
+| Login works but **"Market account not found"** | `schema.sql` didn't run fully. Run it again; that's safe. |
+| Seller site says **not on the seller list** | Add the Discord ID (5.4 / 8.2). |
+| **No Discord channel posts** | `/api/health → Discord channels` on *both* sites. Both need the webhooks. |
+| **No DMs** | `/api/health → Discord DMs` on both sites. The bot must be in the server, and the player must allow DMs from server members. |
+| A site was idle for a week and now **fails to load data** | Supabase Free pauses inactive projects. Go to Dashboard → project → **Restore**. No data is lost. |
+| Anything else | 💬 *"Something's wrong on my Echo Market [buyer/seller] site: [describe]. Check /api/health and the latest Vercel deployment logs."* |
+
+### Optional: speed
+
+Vercel runs the `/api` code in Washington DC by default. If your Supabase region is elsewhere:
+> 💬 *"Set the Vercel function region in buyer/vercel.json and seller/vercel.json to match my Supabase region, commit and push."*

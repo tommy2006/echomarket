@@ -1,0 +1,9 @@
+{
+  "name": "echomarket",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-shared.mjs",
+    "check": "node scripts/sync-shared.mjs --check"
+  }
+}
