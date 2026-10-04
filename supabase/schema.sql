@@ -326,3 +326,9 @@ begin
         end if;
     end loop;
 end $$;
+
+-- ---------------------------------------------------------------------
+--  8. Make the API notice new tables/columns right away (otherwise it can
+--     briefly report "could not find the ... column in the schema cache").
+-- ---------------------------------------------------------------------
+notify pgrst, 'reload schema';
