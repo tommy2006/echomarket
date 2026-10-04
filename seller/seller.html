@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Echo Market — Seller desk</title>
     <link rel="icon" type="image/png" href="echo_logo.png">
-    <meta name="theme-color" content="#2A0B1E">
+    <meta name="theme-color" content="#1C0416">
     <meta name="robots" content="noindex">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,12 +22,13 @@
     <script src="/api/config"></script>
 
     <script>
-        // Seller theme: dark pink. Redefines "slate" (surfaces/text, wine-tinted) and "sky"
-        // (accent, hot pink) so the shared components turn pink without touching the JS.
+        // Seller theme: dark pink "aurora night sky". Redefines "slate" (surfaces/text, deep magenta)
+        // and "sky" (accent, hot pink) so the shared components turn pink without touching the JS.
+        // The stars and the pink aurora behind the content are in the <style> block below.
         window.ECHO_THEME = {
-            page: '#2A0B1E',
-            slate: { 50: '#FFF5FA', 100: '#FCE7F3', 200: '#F9DCEB', 300: '#F2C6DD', 400: '#E2A6C6', 500: '#C27BA1',
-                     600: '#96547A', 700: '#74305A', 800: '#5A1F42', 900: '#3A1029', 950: '#2F0D22' },
+            page: '#1C0416',
+            slate: { 50: '#FFF4FA', 100: '#FDE8F4', 200: '#FAD3E9', 300: '#F5B3D7', 400: '#EA8CC0', 500: '#CF5FA0',
+                     600: '#A53D7E', 700: '#7E2462', 800: '#5E164A', 900: '#3D0A30', 950: '#2C0623' },
             sky:   { 50: '#FDF2F8', 100: '#FCE7F3', 200: '#FBCFE8', 300: '#F9A8D4', 400: '#F472B6', 500: '#EC4899',
                      600: '#DB2777', 700: '#BE185D', 800: '#9D174D', 900: '#831843', 950: '#500724' }
         };
@@ -55,9 +56,65 @@
     </script>
     <style type="text/tailwindcss">
         :root { color-scheme: dark; }
+        /* Aurora night sky.
+           body:         stars (tiled at four sizes so the pattern looks random) over a dark-pink sky
+                         that is a little lighter near the horizon.
+           body::before: the aurora glow, soft pink/magenta clouds that slowly sway.
+           body::after:  the aurora "curtain" rays, thin vertical streaks fading out top and bottom. */
+        body {
+            background-image:
+                radial-gradient(1.5px 1.5px at 31px 47px, rgba(255,240,250,.85), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 157px 119px, rgba(255,255,255,.6), rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 89px 191px, rgba(255,214,236,.8), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 211px 23px, rgba(255,255,255,.5), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 271px 149px, rgba(255,255,255,.55), rgba(0,0,0,0)),
+                radial-gradient(2.5px 2.5px at 53px 293px, rgba(249,168,212,.75), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 389px 71px, rgba(255,255,255,.6), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 443px 331px, rgba(255,255,255,.5), rgba(0,0,0,0)),
+                linear-gradient(to bottom, #14020F 0%, #1C0416 55%, #2A0720 100%);
+            background-size: 240px 240px, 240px 240px, 240px 240px, 330px 330px, 330px 330px, 420px 420px,
+                             510px 510px, 510px 510px, 100% 100%;
+            background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat;
+            background-attachment: fixed;
+        }
+        body::before, body::after { content: ""; position: fixed; z-index: -1; pointer-events: none; }
+        body::before {
+            inset: -10% -15% 10% -15%;
+            background:
+                radial-gradient(ellipse 22% 42% at 14% 44%, rgba(255, 46, 160, .85), transparent 70%),
+                radial-gradient(ellipse 20% 50% at 36% 36%, rgba(255, 79, 178, .75), transparent 70%),
+                radial-gradient(ellipse 18% 40% at 58% 46%, rgba(232, 72, 240, .65), transparent 70%),
+                radial-gradient(ellipse 20% 48% at 80% 38%, rgba(255, 110, 190, .75), transparent 70%),
+                radial-gradient(ellipse 70% 18% at 50% 62%, rgba(255, 92, 170, .35), transparent 75%);
+            filter: blur(42px) saturate(1.2);
+            opacity: .8;
+            transform-origin: 50% 0;
+            animation: aurora-sway 26s ease-in-out infinite alternate;
+        }
+        body::after {
+            inset: 5% -10% 25% -10%;
+            background: repeating-linear-gradient(90deg,
+                rgba(255, 150, 210, .00) 0px, rgba(255, 170, 220, .20) 3px,
+                rgba(255, 150, 210, .00) 7px, rgba(255, 150, 210, .00) 23px);
+            -webkit-mask-image: radial-gradient(ellipse 75% 55% at 50% 45%, #000 15%, transparent 72%);
+                    mask-image: radial-gradient(ellipse 75% 55% at 50% 45%, #000 15%, transparent 72%);
+            filter: blur(1.5px);
+            opacity: .9;
+            animation: aurora-rays 34s ease-in-out infinite alternate;
+        }
+        @keyframes aurora-sway {
+            0%   { transform: translateX(-5%) skewX(-8deg) scaleY(.95); }
+            50%  { transform: translateX(2%)  skewX(4deg)  scaleY(1.10); }
+            100% { transform: translateX(5%)  skewX(9deg)  scaleY(1.00); }
+        }
+        @keyframes aurora-rays {
+            0%   { transform: translateX(-3%) skewX(-10deg); opacity: .6; }
+            100% { transform: translateX(3%)  skewX(10deg);  opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) { body::before, body::after { animation: none; } }
         body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
         @layer components {
-        .card { @apply bg-slate-900 border border-slate-800 rounded-3xl transition-colors; }
+        .card { @apply bg-slate-900/80 backdrop-blur-sm border border-slate-800 rounded-3xl transition-colors; }
         .label { @apply font-mono text-[10px] font-medium uppercase tracking-[0.16em]; }
         .field-label { @apply block text-xs font-bold text-slate-400 mb-1.5; }
         .input { @apply w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-sky-400/70 focus:ring-2 focus:ring-sky-400/20; }
