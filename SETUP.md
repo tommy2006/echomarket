@@ -335,6 +335,16 @@ You need three things:
 
 **6.5 💬 Check:** *"Check /api/health on both of my Echo Market sites again."* Every line should be ✅.
 
+**6B — Testing DMs before the admins reply (your own server)**
+
+Discord only lets a bot DM people who share a server with it. Any server works, including your own.
+1. Open the bot invite link from 3.5: `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot&permissions=0`
+2. Under **Add to server**, pick your server, then click **Continue → Authorize** and complete Discord's check.
+3. The bot appears in the member list as **offline**. That's normal: it never "logs in", it only sends DMs.
+4. Testers must be in that server too, with **Server menu → Privacy Settings → Direct Messages** on.
+
+When the admins add the bot to the main server later, nothing else changes. A bot can be in several servers.
+
 **6.6 🧑 Test the DM**
 1. On the buyer site, click the 🔔 bell, then **Send me a test DM**.
 2. If it says Discord wouldn't let the bot DM you:

@@ -1,7 +1,7 @@
 // POST /api/orders — a signed-in buyer places an order.
 // Body: { airlineId, buyerNote, items: [{ model, qty, pricePercent, note }] }
 import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, HttpError } from '../lib/server.js';
-import { priceItems, DAILY_LIMIT_USD } from '../lib/pricing.js';
+import { priceItems, orderListValue, DAILY_LIMIT_USD } from '../lib/pricing.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -14,19 +14,20 @@ export default handler(['POST'], async (req, res) => {
         .maybeSingle();
     if (!airline) throw new HttpError(400, 'Choose one of your airline profiles for this order.');
 
-    const { items, totalQty, totalUSD } = priceItems(input.items);
+    const { items, totalQty, totalUSD, listTotalUSD } = priceItems(input.items);
 
-    // Rolling 24h spending limit, counted across ALL of this account's airlines.
+    // Rolling 24h limit, counted across ALL of this account's airlines, at 100% LIST price:
+    // a 50% order uses up the same quota as the same aircraft at 90%.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: recent, error: recentErr } = await db.from('orders').select('total_usd')
+    const { data: recent, error: recentErr } = await db.from('orders').select('items, total_usd')
         .eq('buyer_id', account.id)
         .gte('created_at', since)
         .not('status', 'in', '(CANCELLED,DECLINED)');
     if (recentErr) throw recentErr;
-    const spent = (recent || []).reduce((s, o) => s + Number(o.total_usd), 0);
-    if (spent + totalUSD > DAILY_LIMIT_USD) {
-        const left = Math.max(0, DAILY_LIMIT_USD - spent);
-        throw new HttpError(400, `This order goes over the 24-hour limit. You can still order $${left.toLocaleString('en-US')} worth today.`);
+    const used = (recent || []).reduce((s, o) => s + orderListValue(o), 0);
+    if (used + listTotalUSD > DAILY_LIMIT_USD) {
+        const left = Math.max(0, DAILY_LIMIT_USD - used);
+        throw new HttpError(400, `This order goes over the 24-hour limit, which counts aircraft at full list price. This order is $${listTotalUSD.toLocaleString('en-US')} at list price; you have $${left.toLocaleString('en-US')} of list-price quota left today.`);
     }
 
     const { data: order, error } = await db.from('orders').insert({

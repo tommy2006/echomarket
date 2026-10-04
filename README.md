@@ -63,7 +63,7 @@ buyer/lib/site.js, seller/lib/site.js   the only per-app difference in lib/ ("bu
 | Rule | Where |
 |---|---|
 | Price levels 90/80/70/60/50% (no 100%) | `buyer/lib/pricing.js` + `buyer/js/app.js` |
-| $10B per account per rolling 24h; max 500 per line, 20 lines | `buyer/lib/pricing.js` |
+| $10B per account per rolling 24h, **counted at 100% list price** (whatever price level is chosen); max 500 per line, 20 lines | `buyer/lib/pricing.js` |
 | Max 20 airlines per account | `supabase/schema.sql` (`enforce_airline_limit`) |
 | One account per Discord user | Discord-only login + unique `discord_id` |
 | Buyer can cancel only before a seller takes the order | `buyer/api/orders/[orderId].js` |

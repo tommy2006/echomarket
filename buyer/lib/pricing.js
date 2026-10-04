@@ -5,6 +5,7 @@ import { HttpError } from './server.js';
 
 // Price levels the alliance allows (percent of list price). 100% is intentionally not offered.
 export const PRICE_LEVELS = [90, 80, 70, 60, 50];
+// Rolling 24h limit per account, counted at 100% LIST price (the price level chosen doesn't matter).
 export const DAILY_LIMIT_USD = 10_000_000_000;
 export const MAX_LINES = 20;
 export const MAX_QTY_PER_LINE = 500;
@@ -48,6 +49,18 @@ export function priceItems(rawItems) {
     return {
         items,
         totalQty: items.reduce((s, it) => s + it.qty, 0),
-        totalUSD: items.reduce((s, it) => s + it.totalUSD, 0)
+        totalUSD: items.reduce((s, it) => s + it.totalUSD, 0),
+        listTotalUSD: items.reduce((s, it) => s + it.listPriceUSD * it.qty, 0)
     };
+}
+
+// What an existing order counts against the daily limit: its aircraft at 100% list price.
+// (Lines always store listPriceUSD; the fallback undoes the discount for anything older.)
+export function orderListValue(order) {
+    const items = Array.isArray(order.items) ? order.items : [];
+    return items.reduce((s, it) => {
+        if (Number(it.listPriceUSD) > 0) return s + Number(it.listPriceUSD) * (Number(it.qty) || 0);
+        const pct = Number(it.pricePercent) || 100;
+        return s + Math.round((Number(it.totalUSD) || 0) * 100 / pct);
+    }, 0);
 }

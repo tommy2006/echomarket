@@ -96,6 +96,15 @@ export const STATUS = {
     // i.e. a seller passed on the rest. See displayStatus().
     HANDOFF:   { label: 'Partly delivered · needs seller', short: 'Needs seller', tone: 'amber', icon: 'repeat' }
 };
+// What an order counts against the 24h limit: its aircraft at 100% list price (see buyer/lib/pricing.js).
+export function orderListValue(order) {
+    const items = Array.isArray(order.items) ? order.items : [];
+    return items.reduce((s, it) => {
+        if (Number(it.listPriceUSD) > 0) return s + Number(it.listPriceUSD) * (Number(it.qty) || 0);
+        const pct = Number(it.pricePercent) || 100;
+        return s + Math.round((Number(it.totalUSD) || 0) * 100 / pct);
+    }, 0);
+}
 export const displayStatus = (order) => (order.status === 'PENDING' && order.filled > 0 ? 'HANDOFF' : order.status);
 
 // Order lines with per-type delivery (same rules as orderItems() in lib/server.js):

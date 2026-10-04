@@ -54,7 +54,7 @@ The old app lived in two repos and two Vercel projects owned by falcc00 (github.
 ## Decisions you made (October 2026)
 
 1. **Price level** = the seller sells at that % of the in-game list price. It's a discount-buying app. A lower % *might* be accepted less quickly. The shop explains this.
-2. Keep $10B per 24h per account, and 500 per line.
+2. Keep $10B per 24h per account, and 500 per line. The limit counts aircraft at **100% list price**, so ordering at 50% doesn't let anyone buy twice as many.
 3. No cancelling after a seller has taken the order.
 4. Don't restrict by alliance, but warn sellers when they share no alliance with the buyer.
 5. Airline names are unique only within one account. Alliances have overlapping names.

@@ -6,7 +6,7 @@ import {
     html, useState, useEffect, useMemo, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
-    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
+    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
     pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush
 } from './ui.js';
 
@@ -137,7 +137,7 @@ function App() {
     const activeOrders = orders.filter((o) => ACTIVE_STATUSES.includes(o.status));
     const spent24h = orders
         .filter((o) => !CLOSED_STATUSES.includes(o.status) && Date.now() - new Date(o.created_at).getTime() < 864e5)
-        .reduce((s, o) => s + Number(o.total_usd), 0);
+        .reduce((s, o) => s + orderListValue(o), 0);   // 24h limit counts list price
 
     // ---------------- actions
     const requireAirline = () => {
@@ -437,7 +437,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
             ${tile('plane-landing', 'Active progress', activeQty ? `${activePct}%` : '–',
                 activeQty ? `${activeFilled} of ${plural(activeQty, 'aircraft')} delivered` : 'nothing in delivery',
                 activeQty > 0 && html`<div className="mt-2"><${ProgressBar} value=${activeFilled} max=${activeQty} /></div>`)}
-            ${tile('wallet', '24-hour budget', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used`,
+            ${tile('wallet', '24-hour limit', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used, at list price`,
                 html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} /></div>`)}
         </div>`}
 
@@ -638,8 +638,10 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
         return { ...c, i, aircraft: a, unit, total: unit * c.qty };
     });
     const total = lines.reduce((s, l) => s + l.total, 0);
+    // The 24h limit counts aircraft at 100% list price, whatever price level is chosen.
+    const listTotal = lines.reduce((s, l) => s + (l.aircraft ? l.aircraft.price * l.qty : 0), 0);
     const left = Math.max(0, DAILY_LIMIT_USD - spent24h);
-    const overLimit = total > left;
+    const overLimit = listTotal > left;
     const update = (i, patch) => setCart((c) => c.map((x, j) => (j === i ? { ...x, ...patch } : x)));
     const remove = (i) => setCart((c) => c.filter((_, j) => j !== i));
 
@@ -648,7 +650,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
     else if (!airlines.length) problems.push('Create an airline profile first.');
     else if (!airlineId) problems.push('Choose which airline this order is for.');
     if (!cart.length) problems.push('Your order is empty.');
-    if (overLimit) problems.push(`This is over your 24-hour limit — you can order ${fmtUSDShort(left)} more today.`);
+    if (overLimit) problems.push(`Over your 24-hour limit: this order is ${fmtUSDShort(listTotal)} at list price, and ${fmtUSDShort(left)} of your limit is left today.`);
 
     const submit = async () => {
         setBusy(true);
@@ -725,8 +727,8 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                     <span className="text-2xl font-black text-white">${fmtUSD(total)}</span>
                 </div>
                 ${session && html`<div>
-                    <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>24-hour limit used</span><span>${fmtUSDShort(spent24h + total)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
-                    <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + total)} max=${DAILY_LIMIT_USD} />
+                    <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>24-hour limit, at list price</span><span>${fmtUSDShort(spent24h + listTotal)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
+                    <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} />
                 </div>`}
                 ${problems.length > 0 && cart.length > 0 && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="info" className="w-3.5 h-3.5 mt-px" />${problems[0]}</p>`}
                 ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in to send<//>`
