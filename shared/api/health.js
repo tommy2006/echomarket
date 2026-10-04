@@ -94,7 +94,8 @@ export default async function handler(req, res) {
         }
     }
 
-    const required = checks.filter((c) => ['Vercel env', 'Database', 'Discord login'].includes(c.step));
+    // 'at least one seller' is done in Part 5 (after the sites exist), so it doesn't block 'ready'.
+    const required = checks.filter((c) => ['Vercel env', 'Database', 'Discord login'].includes(c.step) && c.check !== 'at least one seller');
     const ready = required.every((c) => c.ok);
     const next = checks.find((c) => !c.ok && !String(c.detail).includes('optional'));
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
