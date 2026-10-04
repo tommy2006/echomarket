@@ -421,3 +421,45 @@ Every push to GitHub redeploys both sites, usually within a minute.
 
 Vercel runs the `/api` code in Washington DC by default. If your Supabase region is elsewhere:
 > 💬 *"Set the Vercel function region in buyer/vercel.json and seller/vercel.json to match my Supabase region, commit and push."*
+
+### When an update says "re-run the schema"
+
+Some updates add tables or columns. `supabase/schema.sql` is written so it is **safe to run again**: it only adds what is missing and never deletes data.
+1. Open [schema.sql on GitHub](https://github.com/tommy2006/echomarket/blob/main/supabase/schema.sql) and click **Copy raw file**.
+2. In Supabase, go to **SQL Editor → New query**, paste it and click **Run**.
+3. ▶ Check it: `node scripts/check-supabase.mjs <project-url> <publishable-key>`, or 💬 *"check my Supabase"*.
+
+---
+
+## Part 10 — Phone & browser alerts (optional, ≈10 min)
+
+Buyers can turn on an alert that pops up on their phone or computer when an order is **fully delivered**, even with Echo Market closed. It works on Android, Windows, Mac and Linux browsers. On **iPhone/iPad**, the buyer must first add the site to the Home Screen and open it from there; Apple only allows alerts for installed web apps.
+
+The sites need a key pair ("VAPID keys") to sign these alerts.
+
+**10.1 ▶ Make the keys on your computer.** In a terminal (Claude app → Terminal panel, or Windows Terminal), run:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+It prints a **Public Key** and a 🔒 **Private Key**. Keep the window open. Don't paste the private key into the chat.
+
+**10.2 🧑 Add them to BOTH Vercel projects** (**Settings → Environment Variables**):
+
+| Key | Value |
+|---|---|
+| `VAPID_PUBLIC_KEY` | the Public Key |
+| `VAPID_PRIVATE_KEY` | 🔒 the Private Key |
+| `VAPID_SUBJECT` | `mailto:` followed by your email, e.g. `mailto:you@example.com` (alert services contact this address if something goes wrong) |
+
+Then **redeploy both** projects. Both need the keys: the seller site sends the "delivered" alert, and the buyer site sends test alerts.
+
+**10.3 🧑 Turn it on as a buyer.**
+1. On the buyer site, click 🔔 → **Phone & browser alerts** → switch it on.
+2. Allow notifications when the browser asks.
+3. Click **Send me a test alert**.
+
+Each device has to be switched on separately. A phone and a laptop are two devices.
+
+**10.4 💬 Check:** *"Check both health pages."* The **Phone alerts** line should be ✅.

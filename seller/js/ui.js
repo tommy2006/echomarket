@@ -91,8 +91,26 @@ export const STATUS = {
     PARTIAL:   { label: 'Delivering',         short: 'Delivering', tone: 'violet',  icon: 'truck' },
     FULFILLED: { label: 'Delivered',          short: 'Delivered',  tone: 'emerald', icon: 'circle-check' },
     CANCELLED: { label: 'Cancelled',          short: 'Cancelled',  tone: 'slate',   icon: 'circle-x' },
-    DECLINED:  { label: 'Declined',           short: 'Declined',   tone: 'rose',    icon: 'ban' }
+    DECLINED:  { label: 'Declined',           short: 'Declined',   tone: 'rose',    icon: 'ban' },
+    // Not stored in the database: an open (PENDING) order with aircraft already delivered,
+    // i.e. a seller passed on the rest. See displayStatus().
+    HANDOFF:   { label: 'Partly delivered · needs seller', short: 'Needs seller', tone: 'amber', icon: 'repeat' }
 };
+export const displayStatus = (order) => (order.status === 'PENDING' && order.filled > 0 ? 'HANDOFF' : order.status);
+
+// Order lines with per-type delivery (same rules as orderItems() in lib/server.js):
+// each line has "filled" and "locked"; older orders only have a total, spread over the lines.
+export function orderLines(order) {
+    const items = Array.isArray(order.items) ? order.items : [];
+    const hasPerLine = items.some((it) => typeof it.filled === 'number');
+    let rest = hasPerLine ? 0 : Number(order.filled) || 0;
+    return items.map((it) => {
+        let filled = Number(it.filled);
+        if (!hasPerLine) { filled = Math.min(it.qty, rest); rest -= filled; }
+        filled = Math.max(0, Math.min(it.qty, Math.floor(filled) || 0));
+        return { ...it, filled, locked: Math.max(0, Math.min(filled, Math.floor(Number(it.locked)) || 0)) };
+    });
+}
 export const ACTIVE_STATUSES = ['PENDING', 'CLAIMED', 'PARTIAL'];
 export const CLOSED_STATUSES = ['CANCELLED', 'DECLINED'];
 
@@ -116,7 +134,7 @@ export function StatusBadge({ status }) {
 // Sent → Taken → Delivering → Delivered
 export function OrderStepper({ order }) {
     const steps = ['Sent', 'Seller assigned', 'Delivering', 'Delivered'];
-    const reached = { PENDING: 0, CLAIMED: 1, PARTIAL: 2, FULFILLED: 3 }[order.status];
+    const reached = { PENDING: order.filled > 0 ? 2 : 0, CLAIMED: 1, PARTIAL: 2, FULFILLED: 3 }[order.status];
     if (reached === undefined) return null;
     return html`<ol className="flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold">
         ${steps.map((s, i) => html`
@@ -128,6 +146,21 @@ export function OrderStepper({ order }) {
                 ${i < steps.length - 1 && html`<span className=${`h-px flex-1 min-w-2 ${i < reached ? 'bg-sky-400' : 'bg-slate-700'}`}></span>`}
             </li>`)}
     </ol>`;
+}
+
+// One small delivery bar per aircraft type (only useful when an order has 2+ types).
+export function ItemProgress({ order, compact = false }) {
+    const lines = orderLines(order);
+    if (lines.length < 2) return null;
+    return html`<ul className=${compact ? 'space-y-1.5' : 'space-y-2.5'}>
+        ${lines.map((it, i) => html`<li key=${i}>
+            <div className="flex justify-between gap-3 text-xs mb-1">
+                <span className="text-slate-300 truncate">${it.model}</span>
+                <span className=${`shrink-0 font-bold tabular-nums ${it.filled >= it.qty ? 'text-emerald-300' : 'text-slate-300'}`}>${it.filled}/${it.qty}</span>
+            </div>
+            <${ProgressBar} value=${it.filled} max=${it.qty} />
+        </li>`)}
+    </ul>`;
 }
 
 export function ProgressBar({ value, max }) {
@@ -291,18 +324,50 @@ export function NotConfigured() {
     </div>`;
 }
 
-// Browser notifications (only while a tab is open; no push server needed).
-export function notifyBrowser(title, body) {
+// Browser notification while a tab is open but in the background. Uses the service worker when
+// the page has one (required on Android); "tag" makes a repeat of the same alert replace the old one.
+export async function notifyBrowser(title, body, tag) {
     try {
-        if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
-            new Notification(title, { body, icon: 'echo_logo.png' });
-        }
-    } catch { /* some mobile browsers throw */ }
+        if (!('Notification' in window) || Notification.permission !== 'granted' || document.visibilityState === 'visible') return;
+        const reg = await navigator.serviceWorker?.getRegistration?.();
+        if (reg) await reg.showNotification(title, { body, icon: 'echo_logo.png', tag });
+        else new Notification(title, { body, icon: 'echo_logo.png', tag });
+    } catch { /* some browsers throw */ }
 }
 
-// Old builds registered a service worker; remove it so it can't interfere.
-export function removeOldServiceWorkers() {
-    try {
-        navigator.serviceWorker?.getRegistrations?.().then((regs) => regs.forEach((r) => r.unregister()));
-    } catch { /* ignore */ }
+// ------------------------------------------------------------ push alerts
+// Phone / browser alerts that arrive even when the site is closed (buyer site only).
+export const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+// iPhones only allow alerts for sites added to the Home Screen.
+export const needsHomeScreen = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches;
+
+function base64ToBytes(b64) {
+    const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+export async function pushSubscription() {
+    if (!pushSupported()) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? reg.pushManager.getSubscription() : null;
+}
+// Asks permission, subscribes this device and saves it on the server. Throws a readable error.
+export async function enablePush() {
+    if (!pushSupported()) throw new Error(needsHomeScreen()
+        ? 'On iPhone, first add Echo Market to your Home Screen (Share → Add to Home Screen), then open it from there.'
+        : "This browser doesn't support alerts.");
+    if (!CONFIG.VAPID_PUBLIC_KEY) throw new Error('Phone alerts are not set up on this site yet.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Alerts are blocked. Allow notifications for this site in your browser settings, then try again.');
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(CONFIG.VAPID_PUBLIC_KEY) }));
+    await api('/api/push', { action: 'subscribe', subscription: sub.toJSON() });
+    return sub;
+}
+export async function disablePush() {
+    const sub = await pushSubscription();
+    if (!sub) return;
+    await api('/api/push', { action: 'unsubscribe', endpoint: sub.endpoint }).catch(() => {});
+    await sub.unsubscribe();
 }

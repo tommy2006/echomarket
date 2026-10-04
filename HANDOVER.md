@@ -42,6 +42,15 @@ The old app lived in two repos and two Vercel projects owned by falcc00 (github.
 | Moderation | Normal / Suspicious / Blacklisted flags, visible to sellers only. |
 | Setup checks | `/api/health` shows what's configured, without revealing secrets. |
 
+## Order rules added later (October 2026)
+
+| Rule | How it works |
+|---|---|
+| **Delivery per aircraft type** | Each line in  has  (delivered so far) and  (delivered before the current seller took over). Sellers update each type separately; buyers see one bar per type. |
+| **Team decline** |  on an open order is a *pass* for that seller only, stored in  and visible only to sellers. The order is declined for the buyer only when every active seller has passed; the last one must write the reason the buyer sees. Admins can still decline for everyone (spam, rule breaks). A seller who passed can change their mind and take the order. |
+| **Pass on the rest** | A seller who can't finish clicks **Pass on the rest**. The order goes back to the open queue as *Partly delivered · needs seller*, delivered aircraft stay counted and locked, and the seller is recorded in . The buyer gets a DM and can no longer cancel. |
+| **Phone & browser alerts** | Web push (, , ) when an order is **fully delivered**. Needs the VAPID keys (SETUP.md Part 10). iPhone users must add the site to their Home Screen first. |
+
 ## Decisions you made (October 2026)
 
 1. **Price level** = the seller sells at that % of the in-game list price. It's a discount-buying app. A lower % *might* be accepted less quickly. The shop explains this.

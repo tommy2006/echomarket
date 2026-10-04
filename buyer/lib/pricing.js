@@ -39,7 +39,9 @@ export function priceItems(rawItems) {
             pricePercent,
             pricePerUnitUSD,
             totalUSD: pricePerUnitUSD * qty,
-            note: typeof raw.note === 'string' ? raw.note.trim().slice(0, 200) : ''
+            note: typeof raw.note === 'string' ? raw.note.trim().slice(0, 200) : '',
+            filled: 0,   // delivered so far for this type (updated by the seller)
+            locked: 0    // delivered before the current seller took over
         };
     });
 

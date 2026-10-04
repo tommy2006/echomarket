@@ -6,7 +6,8 @@ import {
     html, useState, useEffect, useMemo, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
-    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, removeOldServiceWorkers
+    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
+    pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
@@ -59,7 +60,8 @@ function App() {
 
     // ---------------- boot
     useEffect(() => {
-        removeOldServiceWorkers();
+        // Service worker for phone / browser alerts (also needed to show alerts on Android).
+        try { navigator.serviceWorker?.register('/sw.js').catch(() => {}); } catch { /* unsupported */ }
         fetch('aircraft_pricelist.json').then((r) => r.json()).then(setPricelist)
             .catch(() => toast('Could not load the aircraft catalog. Refresh the page.', 'error'));
         const onHash = () => setView(viewFromHash());
@@ -116,7 +118,7 @@ function App() {
                 if (ev.actor_id !== userId) {
                     const text = describeEvent(ev);
                     toast(text, ev.kind === 'DECLINED' ? 'error' : 'success');
-                    notifyBrowser(`Order ${ev.order_id}`, text);
+                    notifyBrowser(`Order ${ev.order_id}`, text, ev.order_id);
                 }
             })
             .subscribe();
@@ -229,6 +231,7 @@ function describeEvent(ev) {
     switch (ev.kind) {
         case 'CLAIMED': return `${ev.order_id}: ${ev.message || 'A seller took your order.'}`;
         case 'RELEASED': return `${ev.order_id}: the seller released it — waiting for another seller.`;
+        case 'HANDOFF': return `${ev.order_id}: ${ev.message || 'the seller passed on the rest — waiting for a new seller.'}`;
         case 'PROGRESS': return `${ev.order_id}: ${ev.filled} delivered. ${ev.message || ''}`.trim();
         case 'FULFILLED': return `${ev.order_id} is fully delivered! ${ev.message || ''}`.trim();
         case 'DECLINED': return `${ev.order_id} was declined: ${ev.message || ''}`;
@@ -393,7 +396,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
     const clock = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     const date = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 
-    const waiting = activeOrders.filter((o) => o.status === 'PENDING').length;
+    const waiting = activeOrders.filter((o) => o.status === 'PENDING').length;  // includes partly delivered orders needing a new seller
     const inDelivery = activeOrders.length - waiting;
     const fulfilled = orders.filter((o) => o.status === 'FULFILLED');
     const received = orders.filter((o) => !CLOSED_STATUSES.includes(o.status)).reduce((s, o) => s + o.filled, 0);
@@ -450,14 +453,16 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                             <p className="font-bold text-white truncate">${o.airline_name} <span className="font-mono text-[11px] text-slate-500">${o.id}</span></p>
-                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}` : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
+                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}`
+                                : o.filled > 0 ? 'Partly delivered · waiting for a new seller' : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
                         </div>
-                        <${StatusBadge} status=${o.status} />
+                        <${StatusBadge} status=${displayStatus(o)} />
                     </div>
                     <div className="flex items-center gap-3">
                         <div className="flex-1"><${ProgressBar} value=${o.filled} max=${o.total_qty} /></div>
                         <span className="text-xs font-bold text-slate-300 tabular-nums">${o.filled}/${o.total_qty}</span>
                     </div>
+                    ${orderLines(o).length > 1 && html`<${ItemProgress} order=${o} compact=${true} />`}
                 </button>`)}
                 ${activeOrders.length > 4 && html`<a href="#orders" className="block text-center text-xs font-bold text-slate-400 hover:text-white">+ ${activeOrders.length - 4} more in progress</a>`}
             </div>
@@ -785,8 +790,10 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
 function OrderCard({ order, events, highlight, onChanged }) {
     const [open, setOpen] = useState(highlight);
     const [busy, setBusy] = useState(false);
-    const items = Array.isArray(order.items) ? order.items : [];
+    const items = orderLines(order);
     const closed = CLOSED_STATUSES.includes(order.status);
+    const handoff = order.status === 'PENDING' && order.filled > 0;
+    const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
 
     const cancel = async () => {
         const ok = await ask({ title: `Cancel ${order.id}?`, message: 'Sellers will no longer see this order. You can only cancel while no seller has taken it.', confirmLabel: 'Cancel order', danger: true });
@@ -806,12 +813,17 @@ function OrderCard({ order, events, highlight, onChanged }) {
                 <h3 className="font-extrabold text-white mt-0.5">${order.airline_name} <span className="text-slate-500 font-semibold text-sm">· ${order.alliance}</span></h3>
                 <p className="text-sm text-slate-400">${plural(order.total_qty, 'aircraft')} · ${fmtUSD(order.total_usd)}</p>
             </div>
-            <${StatusBadge} status=${order.status} />
+            <${StatusBadge} status=${displayStatus(order)} />
         </div>
 
         ${!closed && html`<${OrderStepper} order=${order} />`}
 
-        ${order.status === 'PENDING' && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
+        ${handoff && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
+            <${Icon} name="repeat" className="w-4 h-4 text-amber-300" />
+            <span className="flex-1">${order.filled} of ${plural(order.total_qty, 'aircraft')} are already delivered. Your seller couldn't finish, so the remaining ${order.total_qty - order.filled} went back to the seller team. Waiting for a new seller.</span>
+        </div>`}
+
+        ${order.status === 'PENDING' && !handoff && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
             <${Icon} name="hourglass" className="w-4 h-4 text-amber-300" />
             <span className="flex-1">Sent to the seller team. Waiting for one of them to take it.</span>
             <${Button} variant="ghost" size="sm" busy=${busy} onClick=${cancel}>Cancel<//>
@@ -826,9 +838,17 @@ function OrderCard({ order, events, highlight, onChanged }) {
             </div>
         </div>`}
 
-        ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && html`<div>
-            <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">Delivered in-game</span><span className="font-bold text-white">${order.filled} / ${order.total_qty}</span></div>
-            <${ProgressBar} value=${order.filled} max=${order.total_qty} />
+        ${previous.length > 0 && !closed && html`<p className="text-xs text-slate-400 flex items-start gap-1.5">
+            <${Icon} name="history" className="w-3.5 h-3.5 mt-px" />
+            <span>Earlier: ${previous.map((p) => `${p.seller_airline_name} delivered ${p.delivered}`).join(' · ')}</span>
+        </p>`}
+
+        ${(['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) || handoff) && html`<div className="space-y-3">
+            <div>
+                <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">Delivered in-game</span><span className="font-bold text-white">${order.filled} / ${order.total_qty}</span></div>
+                <${ProgressBar} value=${order.filled} max=${order.total_qty} />
+            </div>
+            ${items.length > 1 && html`<div className="pl-3 border-l-2 border-slate-800"><${ItemProgress} order=${order} /></div>`}
         </div>`}
 
         ${closed && html`<div className=${`p-3 rounded-2xl border text-sm ${order.status === 'DECLINED' ? 'bg-rose-500/5 border-rose-500/20 text-rose-100' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
@@ -849,7 +869,7 @@ function OrderCard({ order, events, highlight, onChanged }) {
                 <p className="label text-slate-500 mb-2">Aircraft</p>
                 <ul className="space-y-1.5 text-sm">
                     ${items.map((it, i) => html`<li key=${i} className="flex justify-between gap-3">
-                        <span className="text-slate-200 min-w-0"><b>${it.qty}×</b> ${it.model} <span className="text-slate-500">@ ${it.pricePercent}%</span>
+                        <span className="text-slate-200 min-w-0"><b>${it.qty}×</b> ${it.model} <span className="text-slate-500">@ ${it.pricePercent}% · ${it.filled}/${it.qty} delivered</span>
                             ${it.note && html`<span className="block text-xs text-slate-500">“${it.note}”</span>`}</span>
                         <span className="text-slate-400 shrink-0">${fmtUSDShort(it.totalUSD)}</span>
                     </li>`)}
@@ -975,7 +995,22 @@ function AirlineForm({ state, alliances, count, userId, onClose, onSaved }) {
 function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClose, onOpenOrder }) {
     const [perm, setPerm] = useState(() => ('Notification' in window ? Notification.permission : 'unsupported'));
     const [testing, setTesting] = useState(false);
+    const [pushOn, setPushOn] = useState(false);
+    const [pushBusy, setPushBusy] = useState(false);
+    useEffect(() => { if (open) pushSubscription().then((sub) => setPushOn(Boolean(sub))).catch(() => {}); }, [open]);
     if (!open) return null;
+    const togglePush = async () => {
+        setPushBusy(true);
+        try {
+            if (pushOn) { await disablePush(); setPushOn(false); toast('Alerts turned off on this device.'); }
+            else { await enablePush(); setPushOn(true); setPerm('granted'); toast("Alerts are on for this device. You'll get one when an order is fully delivered.", 'success'); }
+        } catch (err) { toast(err.message, 'error'); } finally { setPushBusy(false); }
+    };
+    const testPush = async () => {
+        setPushBusy(true);
+        try { const r = await api('/api/push', { action: 'test' }); toast(r.message, 'success'); }
+        catch (err) { toast(err.message, 'error'); } finally { setPushBusy(false); }
+    };
     const enable = async () => { try { setPerm(await Notification.requestPermission()); } catch { /* ignore */ } };
     const dmOn = account?.dm_enabled !== false;
     const toggleDM = async () => {
@@ -1009,7 +1044,20 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
                 The bot couldn't DM you last time. Join the Echo Discord server and allow Direct Messages from that server (Server menu → Privacy Settings).</p>`}
             ${dmOn && html`<${Button} size="sm" variant="secondary" busy=${testing} onClick=${testDM}>Send me a test DM<//>`}
         </div>`}
-        ${perm === 'default' && html`<div className="flex items-center gap-3 p-3 mb-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm">
+        ${CONFIG.PUSH_AVAILABLE && html`<div className="p-3 mb-3 rounded-2xl bg-slate-950 border border-slate-800 text-sm space-y-3">
+            <div className="flex items-center gap-3">
+                <span className="text-sky-300"><${Icon} name="smartphone" className="w-5 h-5" /></span>
+                <span className="flex-1 text-slate-300"><b className="text-white">Phone & browser alerts</b><br />An alert on this device when an order is fully delivered, even with Echo Market closed.</span>
+                <button role="switch" aria-checked=${pushOn} aria-label="Phone and browser alerts" onClick=${togglePush} disabled=${pushBusy}
+                    className=${`w-11 h-6 shrink-0 rounded-full relative transition-colors disabled:opacity-50 ${pushOn ? 'bg-sky-400' : 'bg-slate-700'}`}>
+                    <span className=${`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${pushOn ? 'left-[22px]' : 'left-0.5'}`}></span>
+                </button>
+            </div>
+            ${!pushSupported() && needsHomeScreen() && html`<p className="text-xs text-amber-300">On iPhone: tap Share → <b>Add to Home Screen</b>, open Echo Market from your Home Screen, then turn this on there.</p>`}
+            ${perm === 'denied' && html`<p className="text-xs text-amber-300">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>`}
+            ${pushOn && html`<${Button} size="sm" variant="secondary" busy=${pushBusy} onClick=${testPush}>Send me a test alert<//>`}
+        </div>`}
+        ${!CONFIG.PUSH_AVAILABLE && perm === 'default' && html`<div className="flex items-center gap-3 p-3 mb-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm">
             <${Icon} name="bell-ring" className="w-5 h-5 text-sky-300" />
             <span className="flex-1 text-slate-300">Get a browser alert when a seller updates your order (while Echo Market is open in a tab).</span>
             <${Button} size="sm" onClick=${enable}>Enable<//>

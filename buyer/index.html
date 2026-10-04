@@ -80,9 +80,46 @@
             background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat, no-repeat;
             background-attachment: fixed;
         }
+        /* Aurora (same technique as the seller site, in navy / indigo / purple):
+           body::before = soft glowing clouds that slowly sway; body::after = faint curtain rays. */
+        body::before, body::after { content: ""; position: fixed; z-index: -1; pointer-events: none; }
+        body::before {
+            inset: -10% -15% 15% -15%;
+            background:
+                radial-gradient(ellipse 22% 42% at 14% 40%, rgba(59, 130, 246, .55), transparent 70%),
+                radial-gradient(ellipse 20% 50% at 37% 32%, rgba(99, 102, 241, .60), transparent 70%),
+                radial-gradient(ellipse 18% 40% at 60% 42%, rgba(139, 92, 246, .55), transparent 70%),
+                radial-gradient(ellipse 20% 48% at 82% 34%, rgba(168, 85, 247, .50), transparent 70%),
+                radial-gradient(ellipse 70% 18% at 50% 60%, rgba(79, 70, 229, .28), transparent 75%);
+            filter: blur(46px) saturate(1.15);
+            opacity: .6;
+            transform-origin: 50% 0;
+            animation: aurora-sway 30s ease-in-out infinite alternate;
+        }
+        body::after {
+            inset: 5% -10% 30% -10%;
+            background: repeating-linear-gradient(90deg,
+                rgba(165, 180, 252, .00) 0px, rgba(180, 190, 255, .14) 3px,
+                rgba(165, 180, 252, .00) 7px, rgba(165, 180, 252, .00) 23px);
+            -webkit-mask-image: radial-gradient(ellipse 75% 55% at 50% 42%, #000 15%, transparent 72%);
+                    mask-image: radial-gradient(ellipse 75% 55% at 50% 42%, #000 15%, transparent 72%);
+            filter: blur(1.5px);
+            opacity: .8;
+            animation: aurora-rays 38s ease-in-out infinite alternate;
+        }
+        @keyframes aurora-sway {
+            0%   { transform: translateX(-5%) skewX(-8deg) scaleY(.95); }
+            50%  { transform: translateX(2%)  skewX(4deg)  scaleY(1.10); }
+            100% { transform: translateX(5%)  skewX(9deg)  scaleY(1.00); }
+        }
+        @keyframes aurora-rays {
+            0%   { transform: translateX(-3%) skewX(-10deg); opacity: .55; }
+            100% { transform: translateX(3%)  skewX(10deg);  opacity: .9; }
+        }
+        @media (prefers-reduced-motion: reduce) { body::before, body::after { animation: none; } }
         body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
         @layer components {
-        .card { @apply bg-slate-900 border border-slate-800 rounded-3xl transition-colors; }
+        .card { @apply bg-slate-900/80 backdrop-blur-sm border border-slate-800 rounded-3xl transition-colors; }
         .label { @apply font-mono text-[10px] font-medium uppercase tracking-[0.16em]; }
         .field-label { @apply block text-xs font-bold text-slate-400 mb-1.5; }
         .input { @apply w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-sky-400/70 focus:ring-2 focus:ring-sky-400/20; }

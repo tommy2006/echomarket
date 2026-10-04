@@ -6,7 +6,7 @@ import {
     html, useState, useEffect, useMemo, useCallback, sb, isConfigured, CONFIG, api, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
-    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser
+    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress
 } from './ui.js';
 
 const LS_SELL_AS = 'echo_seller_airline_v2';
@@ -24,6 +24,8 @@ function App() {
     const [airlines, setAirlines] = useState([]);
     const [orders, setOrders] = useState([]);
     const [flags, setFlags] = useState({});
+    const [declines, setDeclines] = useState([]);      // [{ order_id, seller_id, seller_name, note }]
+    const [teamSize, setTeamSize] = useState(1);        // active sellers
     const [loading, setLoading] = useState(true);
 
     const [tab, setTab] = useState('open');
@@ -54,11 +56,15 @@ function App() {
         const me = sel.data?.active ? sel.data : null;
         setSeller(me);
         if (!me) { setLoading(false); return; }
-        const [ord, fl, air] = await Promise.all([
+        const [ord, fl, air, dec, team] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
-            sb.from('airlines').select('*').eq('owner_id', userId).order('created_at')
+            sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
+            sb.from('order_declines').select('*'),
+            sb.from('sellers').select('user_id').eq('active', true)
         ]);
+        setDeclines(dec.data || []);
+        setTeamSize(Math.max(1, (team.data || []).length));
         if (ord.error) toast('Could not load orders: ' + ord.error.message, 'error');
         setOrders(ord.data || []);
         setFlags(Object.fromEntries((fl.data || []).map((f) => [f.order_id, f])));
@@ -80,6 +86,13 @@ function App() {
                 }
                 setOrders((l) => [p.new, ...l.filter((o) => o.id !== p.new.id)].sort((a, b) => b.created_at.localeCompare(a.created_at)));
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_declines' }, (p) => {
+                setDeclines((l) => {
+                    const key = (d) => d.order_id + '|' + d.seller_id;
+                    const rest = l.filter((d) => key(d) !== key(p.eventType === 'DELETE' ? p.old : p.new));
+                    return p.eventType === 'DELETE' ? rest : [...rest, p.new];
+                });
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'order_flags' }, (p) => {
                 setFlags((f) => {
                     const next = { ...f };
@@ -94,14 +107,23 @@ function App() {
     }, [seller, loadAll]);
 
     const sellAs = airlines.find((a) => a.id === sellAsId) || airlines[0] || null;
+    const passedOn = (order) => declines.filter((d) => d.order_id === order.id);
+    const iPassed = (order) => passedOn(order).some((d) => d.seller_id === userId);
+    // Sellers who could still take the order if I pass on it now.
+    const othersLeft = (order) => teamSize - passedOn(order).filter((d) => d.seller_id !== userId).length - 1;
     const replaceOrder = (o) => setOrders((l) => l.map((x) => (x.id === o.id ? o : x)));
     const act = async (order, payload, success) => {
         try {
             const res = await api(`/api/orders/${order.id}`, payload);
             if (res.order) replaceOrder(res.order);
+            if (payload.action === 'decline' && res.declinedForEveryone === false) {
+                setDeclines((l) => [...l.filter((d) => !(d.order_id === order.id && d.seller_id === userId)),
+                    { order_id: order.id, seller_id: userId, seller_name: account?.display_name, note: payload.reason || null }]);
+            }
+            if (payload.action === 'claim') setDeclines((l) => l.filter((d) => !(d.order_id === order.id && d.seller_id === userId)));
             if (payload.action === 'delete') { setOrders((l) => l.filter((o) => o.id !== order.id)); closeDetail(); }
             if (payload.action === 'flag') setFlags((f) => ({ ...f, [order.id]: { order_id: order.id, status: payload.flagStatus, reason: payload.flagReason, flagged_by: account?.display_name } }));
-            if (success) toast(success, 'success');
+            if (success) toast(typeof success === 'function' ? success(res) : success, 'success');
             return true;
         } catch (err) {
             toast(err.message, 'error');
@@ -120,17 +142,40 @@ function App() {
         progress: (order) => setModal({ kind: 'progress', order }),
         flag: (order) => setModal({ kind: 'flag', order }),
         release: async (order) => {
-            if (await ask({ title: `Release ${order.id}?`, message: 'It goes back to the open queue for another seller. The buyer is told it is waiting again.', confirmLabel: 'Release order' })) {
-                act(order, { action: 'release' }, `${order.id} is back in the open queue.`);
-            }
+            const left = order.total_qty - order.filled;
+            const ok = order.filled > 0
+                ? await ask({ title: `Pass on the rest of ${order.id}?`, confirmLabel: 'Pass on the rest',
+                    message: `${order.filled} of ${order.total_qty} aircraft are delivered and stay counted. The remaining ${left} go back to the open queue as "partly delivered" for another seller to finish. The buyer is told.` })
+                : await ask({ title: `Release ${order.id}?`, confirmLabel: 'Release order',
+                    message: 'It goes back to the open queue for another seller. The buyer is told it is waiting again.' });
+            if (ok) act(order, { action: 'release' }, order.filled > 0 ? `The remaining ${left} aircraft are back in the open queue.` : `${order.id} is back in the open queue.`);
         },
         decline: async (order) => {
+            const left = othersLeft(order);
+            if (left > 0) {
+                const note = await ask({
+                    title: `Pass on ${order.id}?`, confirmLabel: 'Pass',
+                    message: `It disappears from your open queue but stays open for the other ${plural(left, 'seller')}. The buyer is not told. The order is only declined if every seller passes.`,
+                    input: { required: false, placeholder: 'Optional note for the other sellers (e.g. price too low for me)' }
+                });
+                if (note === false) return;
+                act(order, { action: 'decline', reason: note || '' }, (r) => r.declinedForEveryone ? `${order.id} declined.` : `You passed on ${order.id}. ${plural(r.sellersLeft, 'seller')} can still take it.`);
+            } else {
+                const reason = await ask({
+                    title: `Decline ${order.id} for good?`, danger: true, confirmLabel: 'Decline order',
+                    message: 'Every other seller has already passed, so declining closes the order. The buyer will see your reason. This cannot be undone.',
+                    input: { required: true, placeholder: 'e.g. Price level too low for this type right now' }
+                });
+                if (reason) act(order, { action: 'decline', reason }, `${order.id} declined.`);
+            }
+        },
+        forceDecline: async (order) => {
             const reason = await ask({
-                title: `Decline ${order.id}?`, danger: true, confirmLabel: 'Decline order',
-                message: 'The buyer will see this reason. This cannot be undone.',
-                input: { required: true, placeholder: 'e.g. Price level too low for this type right now' }
+                title: `Decline ${order.id} for everyone?`, danger: true, confirmLabel: 'Decline for everyone',
+                message: 'Admin action: closes the order for the whole seller team right away (for spam or rule breaks). The buyer will see your reason.',
+                input: { required: true, placeholder: 'Reason shown to the buyer' }
             });
-            if (reason) act(order, { action: 'decline', reason }, `${order.id} declined.`);
+            if (reason) act(order, { action: 'decline', reason, force: true }, `${order.id} declined for everyone.`);
         },
         remove: async (order) => {
             if (await ask({ title: `Delete ${order.id}?`, message: 'This permanently removes the order and its history for everyone, including the buyer. Prefer "Decline" unless this is spam.', confirmLabel: 'Delete forever', danger: true })) {
@@ -149,7 +194,7 @@ function App() {
     const matches = (o) => !q || [o.id, o.airline_name, o.alliance, o.buyer_name, o.seller_airline_name, o.buyer_note, o.seller_note,
         ...(o.items || []).map((i) => i.model)].join(' ').toLowerCase().includes(q);
     const tabs = {
-        open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' },
+        open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
         mine: { label: 'My orders', icon: 'briefcase', fn: (o) => o.seller_id === userId && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter }
     };
@@ -212,12 +257,14 @@ function App() {
             ${loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
-                text=${tab === 'open' ? 'New orders appear here instantly (and on Discord).' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
+                text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${list.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
+                passed=${passedOn(o)} teamSize=${teamSize}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}</div>`}
         </main>
 
         ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines}
+            passed=${passedOn(detail)} teamSize=${teamSize}
             actions=${actions} onClose=${closeDetail} />`}
         ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title="Order not found" size="sm">
             <p className="text-sm text-slate-400">${detailId} doesn't exist or was deleted.</p><//>`}
@@ -232,7 +279,7 @@ function App() {
         ${modal?.kind === 'progress' && html`<${ProgressModal} order=${modal.order} onClose=${() => setModal(null)}
             onSave=${async (payload) => {
                 let ok = true;
-                if (payload.filled !== modal.order.filled || payload.note) ok = await act(modal.order, { action: 'progress', filled: payload.filled, note: payload.note });
+                if (payload.changed || payload.note) ok = await act(modal.order, { action: 'progress', items: payload.items, note: payload.note });
                 if (ok && payload.sellerNote !== (modal.order.seller_note || '')) ok = await act(modal.order, { action: 'note', sellerNote: payload.sellerNote });
                 if (ok) { setModal(null); toast(`${modal.order.id} updated.`, 'success'); }
             }} />`}
@@ -313,9 +360,16 @@ function AllianceBadge({ airlines, order }) {
         <${Icon} name="users-round" className="w-3 h-3" />NO SHARED ALLIANCE</span>`;
 }
 
-function itemsSummary(order) {
-    const items = order.items || [];
-    return items.map((i) => `${i.qty}× ${i.model} @${i.pricePercent}%`).join(' · ');
+function itemsSummary(order, withDelivery = false) {
+    return orderLines(order).map((i) => `${i.qty}× ${i.model} @${i.pricePercent}%${withDelivery && i.filled ? ` (${i.filled}/${i.qty})` : ''}`).join(' · ');
+}
+
+function PassedBadge({ passed, userId, teamSize }) {
+    if (!passed?.length) return null;
+    const me = passed.some((d) => d.seller_id === userId);
+    return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black text-slate-300 border-slate-700 bg-slate-800/60"
+        title=${passed.map((d) => d.seller_name + (d.note ? `: ${d.note}` : '')).join('\n')}>
+        <${Icon} name="user-x" className="w-3 h-3" />${me ? 'YOU PASSED · ' : ''}${passed.length}/${teamSize} PASSED</span>`;
 }
 
 // Which buttons a seller gets for an order.
@@ -327,28 +381,30 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     return html`<div className="flex flex-wrap gap-1.5" onClick=${(e) => e.stopPropagation()}>
         ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>Take order<//>`}
         ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canManage && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>Update delivery<//>`}
-        ${order.status === 'CLAIMED' && order.filled === 0 && canManage && !compact && html`<${Button} size=${size} variant="secondary" icon="undo-2" onClick=${stop(actions.release)}>Release<//>`}
-        ${(order.status === 'PENDING' || (ACTIVE_STATUSES.includes(order.status) && canManage)) && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>Decline<//>`}
+        ${['CLAIMED', 'PARTIAL'].includes(order.status) && canManage && !compact && html`<${Button} size=${size} variant="secondary" icon=${order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${order.filled > 0 ? 'Pass on the rest' : 'Release'}<//>`}
+        ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>Decline<//>`}
+        ${seller.is_admin && ACTIVE_STATUSES.includes(order.status) && !compact && html`<${Button} size=${size} variant="ghost" icon="octagon-x" className="!text-rose-300" onClick=${stop(actions.forceDecline)}>Decline for all<//>`}
         ${!compact && html`<${Button} size=${size} variant="ghost" icon="flag" onClick=${stop(actions.flag)}>Flag<//>`}
         ${seller.is_admin && !compact && html`<${Button} size=${size} variant="ghost" icon="trash-2" className="!text-rose-300" onClick=${stop(actions.remove)}>Delete<//>`}
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize }) {
     const mine = order.seller_id === userId;
     return html`<article onClick=${onOpen} className=${`card p-4 cursor-pointer hover:border-slate-600 ${flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
         <div className="flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex-1 min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-slate-500">${order.id}</span>
-                    <${StatusBadge} status=${order.status} />
+                    <${StatusBadge} status=${displayStatus(order)} />
                     <${FlagBadge} flag=${flag} />
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
+                    ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-400/15 text-sky-300">YOURS</span>`}
                     <span className="text-[11px] text-slate-500">${timeAgo(order.created_at)}</span>
                 </div>
                 <p className="font-extrabold text-white truncate">${order.airline_name} <span className="text-slate-500 font-semibold text-sm">· ${order.alliance} · ${order.buyer_name}</span></p>
-                <p className="text-xs text-slate-400 truncate">${itemsSummary(order)}</p>
+                <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>
                 ${order.seller_airline_name && !mine && html`<p className="text-[11px] text-slate-500">Seller: ${order.seller_airline_name} (${order.seller_name})</p>`}
             </div>
             <div className="flex md:flex-col items-center md:items-end justify-between gap-2 shrink-0">
@@ -362,39 +418,47 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen }) {
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize }) {
     const [events, setEvents] = useState([]);
     useEffect(() => {
         sb.from('order_events').select('*').eq('order_id', order.id).order('created_at').then(({ data }) => setEvents(data || []));
     }, [order.id, order.updated_at]);
-    const items = order.items || [];
+    const items = orderLines(order);
+    const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${`${order.id} · ${order.airline_name}`}
         subtitle=${`${order.alliance} · ordered by ${order.buyer_name} · ${fmtDate(order.created_at)}`}
         footer=${html`<${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${false} />`}>
         <div className="space-y-5">
-            <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${order.status} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
+            <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${displayStatus(order)} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
+                ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                 ${order.buyer_discord_id && html`<span className="text-xs text-slate-400 flex items-center gap-1"><${DiscordLogo} className="w-3.5 h-3.5" /> ID ${order.buyer_discord_id}</span>`}
             </div>
             <${OrderStepper} order=${order} />
             ${order.seller_airline_name && html`<p className="text-sm text-slate-300">Seller: <b>${order.seller_airline_name}</b> (${order.seller_alliance}) — ${order.seller_name}${order.seller_id === userId ? ' (you)' : ''}</p>`}
+            ${previous.length > 0 && html`<p className="text-sm text-slate-300">Earlier sellers: ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
+                <span className="text-slate-400"> · delivered ${previous.map((p) => p.delivered).join(' + ')} before passing it on</span></p>`}
+            ${order.status === 'PENDING' && passed?.length > 0 && html`<div className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800">
+                <p className="font-bold text-slate-200">Passed by ${passed.length} of ${teamSize} sellers</p>
+                <ul className="text-xs text-slate-400 mt-1 space-y-0.5">${passed.map((d) => html`<li key=${d.seller_id}>${d.seller_name}${d.note ? ` — "${d.note}"` : ''}</li>`)}</ul>
+            </div>`}
             ${order.closed_reason && html`<p className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800"><b>Reason:</b> ${order.closed_reason}</p>`}
             ${flag && flag.status !== 'NORMAL' && html`<p className="text-sm p-3 rounded-2xl bg-rose-500/5 border border-rose-500/20 text-rose-100"><b>${flag.status}</b> by ${flag.flagged_by}: ${flag.reason || 'no reason given'} <span className="text-rose-300/60">(sellers only)</span></p>`}
             <div>
                 <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">Delivered</span><span className="font-bold">${order.filled} / ${order.total_qty}</span></div>
                 <${ProgressBar} value=${order.filled} max=${order.total_qty} />
             </div>
-            <table className="w-full text-sm">
-                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">Aircraft</th><th className="font-bold pb-2 text-right">Qty</th><th className="font-bold pb-2 text-right">Level</th><th className="font-bold pb-2 text-right">Total</th></tr></thead>
+            <div className="overflow-x-auto"><table className="w-full text-sm">
+                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">Aircraft</th><th className="font-bold pb-2 text-right">Delivered</th><th className="font-bold pb-2 text-right">Level</th><th className="font-bold pb-2 text-right">Total</th></tr></thead>
                 <tbody className="divide-y divide-slate-800">
                     ${items.map((it, i) => html`<tr key=${i}>
                         <td className="py-2 pr-2"><span className="text-slate-100">${it.model}</span> <span className="text-slate-500 text-xs">${it.code}</span>${it.note && html`<span className="block text-xs text-slate-400">“${it.note}”</span>`}</td>
-                        <td className="py-2 text-right font-bold">${it.qty}</td>
+                        <td className=${`py-2 text-right font-bold tabular-nums ${it.filled >= it.qty ? 'text-emerald-300' : ''}`}>${it.filled}/${it.qty}</td>
                         <td className="py-2 text-right">${it.pricePercent}%</td>
                         <td className="py-2 text-right">${fmtUSDShort(it.totalUSD)}</td>
                     </tr>`)}
-                    <tr><td className="pt-2 font-bold">Total</td><td className="pt-2 text-right font-bold">${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td></tr>
+                    <tr><td className="pt-2 font-bold">Total</td><td className="pt-2 text-right font-bold tabular-nums">${order.filled}/${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td></tr>
                 </tbody>
-            </table>
+            </table></div>
             ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
             ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">Seller note (buyer can see)</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
             <div>
@@ -439,29 +503,41 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
 }
 
 function ProgressModal({ order, onClose, onSave }) {
-    const [filled, setFilled] = useState(order.filled || 0);
+    const lines = orderLines(order);
+    const [counts, setCounts] = useState(() => lines.map((it) => it.filled));
     const [note, setNote] = useState('');
     const [sellerNote, setSellerNote] = useState(order.seller_note || '');
     const [busy, setBusy] = useState(false);
+    const setLine = (i, v) => setCounts((c) => c.map((n, j) => (j === i ? Math.max(lines[i].locked, Math.min(lines[i].qty, Math.floor(Number(v) || 0))) : n)));
+    const total = counts.reduce((a, b) => a + b, 0);
     const max = order.total_qty;
-    const set = (v) => setFilled(Math.max(0, Math.min(max, Math.floor(Number(v) || 0))));
-    const next = filled === 0 ? 'CLAIMED' : filled >= max ? 'FULFILLED' : 'PARTIAL';
-    return html`<${Modal} open=${true} onClose=${onClose} title=${`Update delivery · ${order.id}`} size="sm"
-        subtitle=${`${order.airline_name} · ${itemsSummary(order)}`}
+    const next = total === 0 ? 'CLAIMED' : total >= max ? 'FULFILLED' : 'PARTIAL';
+    const changed = counts.some((n, i) => n !== lines[i].filled);
+    return html`<${Modal} open=${true} onClose=${onClose} title=${`Update delivery · ${order.id}`} size="md"
+        subtitle=${`${order.airline_name} · ${plural(lines.length, 'aircraft type')}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ filled, note: note.trim(), sellerNote: sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
+            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ items: counts, changed, note: note.trim(), sellerNote: sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
         <div className="space-y-5">
-            <div>
-                <p className="field-label">Aircraft delivered in-game (total so far)</p>
-                <div className="flex items-center gap-2">
-                    <button className="stepper" aria-label="One less" onClick=${() => set(filled - 1)}><${Icon} name="minus" /></button>
-                    <input type="number" value=${filled} min="0" max=${max} onChange=${(e) => set(e.target.value)} className="input !w-24 text-center font-bold" />
-                    <button className="stepper" aria-label="One more" onClick=${() => set(filled + 1)}><${Icon} name="plus" /></button>
-                    <span className="text-sm text-slate-400">of ${max}</span>
-                    <button onClick=${() => set(max)} className="ml-auto px-3 py-2 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">All delivered</button>
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <p className="field-label !mb-0">Delivered in-game so far, per aircraft type</p>
+                    <button onClick=${() => setCounts(lines.map((it) => it.qty))} className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">Everything delivered</button>
                 </div>
-                <div className="mt-3"><${ProgressBar} value=${filled} max=${max} /></div>
-                <p className="text-xs text-slate-400 mt-2">New status: <b className="text-slate-200">${STATUS[next].label}</b></p>
+                ${lines.map((it, i) => html`<div key=${i} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-white min-w-0 truncate">${it.model} <span className="text-slate-500 font-medium">@${it.pricePercent}%</span></p>
+                        ${it.locked > 0 && html`<span className="text-[10px] text-slate-400 shrink-0">${it.locked} by earlier seller</span>`}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button className="stepper !w-9 !h-9" aria-label=${`One less ${it.model}`} disabled=${counts[i] <= it.locked} onClick=${() => setLine(i, counts[i] - 1)}><${Icon} name="minus" /></button>
+                        <input type="number" value=${counts[i]} min=${it.locked} max=${it.qty} onChange=${(e) => setLine(i, e.target.value)} className="input !w-20 !py-2 text-center font-bold" aria-label=${`${it.model} delivered`} />
+                        <button className="stepper !w-9 !h-9" aria-label=${`One more ${it.model}`} onClick=${() => setLine(i, counts[i] + 1)}><${Icon} name="plus" /></button>
+                        <span className="text-sm text-slate-400">of ${it.qty}</span>
+                        <button onClick=${() => setLine(i, it.qty)} className="ml-auto px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800">All</button>
+                    </div>
+                    <${ProgressBar} value=${counts[i]} max=${it.qty} />
+                </div>`)}
+                <p className="text-xs text-slate-400">Total ${total} of ${max} · new status: <b className="text-slate-200">${STATUS[next].label}</b></p>
             </div>
             <label className="block"><span className="field-label">Update message (optional, shown in the buyer's timeline)</span>
                 <input value=${note} maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder="e.g. First 5 delivered at WIII" /></label>

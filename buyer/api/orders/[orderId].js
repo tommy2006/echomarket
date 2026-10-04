@@ -1,4 +1,5 @@
-// POST /api/orders/:orderId  { action: 'cancel' } — buyer cancels an order nobody has taken yet.
+// POST /api/orders/:orderId  { action: 'cancel' } — buyer cancels an order nobody has taken yet
+// (and nothing has been delivered: a partly delivered order waiting for a new seller can't be cancelled).
 import { admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, HttpError } from '../../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
@@ -9,11 +10,14 @@ export default handler(['POST'], async (req, res) => {
 
     if (input.action !== 'cancel') throw new HttpError(400, 'Unknown action.');
 
+    if (order.filled > 0) {
+        throw new HttpError(409, 'Part of this order was already delivered, so it can no longer be cancelled here. Contact the sellers on Discord.');
+    }
     const reason = cleanText(input.reason, 300) || 'Cancelled by buyer';
     // Conditional update: only succeeds if no seller grabbed it in the meantime.
     const { data: updated, error } = await admin().from('orders')
         .update({ status: 'CANCELLED', closed_reason: reason })
-        .eq('id', order.id).eq('status', 'PENDING')
+        .eq('id', order.id).eq('status', 'PENDING').eq('filled', 0)
         .select();
     if (error) throw error;
     if (!updated?.length) {

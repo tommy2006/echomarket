@@ -113,6 +113,24 @@ export async function addEvent(order, kind, actor, extra = {}) {
     if (error) console.error('addEvent failed:', error.message);
 }
 
+// Order lines with per-type delivery. Each line carries:
+//   filled  aircraft of that type delivered so far
+//   locked  delivered before the current seller took over (they cannot lower it)
+// Orders from before per-type delivery only have a total, so it is spread over the lines in order.
+export function orderItems(order) {
+    const items = Array.isArray(order.items) ? order.items : [];
+    const hasPerLine = items.some((it) => typeof it.filled === 'number');
+    let rest = hasPerLine ? 0 : Number(order.filled) || 0;
+    return items.map((it) => {
+        let filled = Number(it.filled);
+        if (!hasPerLine) { filled = Math.min(it.qty, rest); rest -= filled; }
+        filled = Math.max(0, Math.min(it.qty, Math.floor(filled) || 0));
+        const locked = Math.max(0, Math.min(filled, Math.floor(Number(it.locked)) || 0));
+        return { ...it, filled, locked };
+    });
+}
+export const sumFilled = (items) => items.reduce((s, it) => s + it.filled, 0);
+
 const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US');
 
 // =====================================================================
@@ -136,16 +154,17 @@ const STATUS_META = {
     DECLINED:  { label: '⛔ Declined',             color: 0xE11D48, channel: null }
 };
 
-function buildEmbed(order, title, flag) {
-    const meta = STATUS_META[order.status] || STATUS_META.PENDING;
-    const items = Array.isArray(order.items) ? order.items : [];
+function buildEmbed(order, title, flag, declines = []) {
+    const handoff = order.status === 'PENDING' && order.filled > 0;
+    const meta = handoff ? { ...STATUS_META.PENDING, label: '🔁 Partly delivered — needs a new seller' } : (STATUS_META[order.status] || STATUS_META.PENDING);
+    const items = orderItems(order);
     const fields = [
         { name: 'Order', value: order.id, inline: true },
         { name: 'Buyer airline', value: `${order.airline_name}${order.alliance ? ` (${order.alliance})` : ''}`, inline: true },
         { name: 'Buyer', value: order.buyer_discord_id ? `<@${order.buyer_discord_id}>` : (order.buyer_name || '-'), inline: true },
         {
             name: `Aircraft (${items.length} type${items.length === 1 ? '' : 's'})`,
-            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)}${it.note ? `\n  _${it.note}_` : ''}`)
+            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)} · ${it.filled}/${it.qty} delivered${it.note ? `\n  _${it.note}_` : ''}`)
                 .join('\n').slice(0, 1000) || '-',
             inline: false
         },
@@ -155,6 +174,13 @@ function buildEmbed(order, title, flag) {
     ];
     if (order.seller_airline_name) {
         fields.push({ name: 'Seller', value: `${order.seller_airline_name}${order.seller_alliance ? ` (${order.seller_alliance})` : ''} — ${order.seller_name || ''}`, inline: false });
+    }
+    const prev = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
+    if (prev.length) {
+        fields.push({ name: 'Earlier sellers', value: prev.map((p) => `${p.seller_airline_name} — ${p.delivered} delivered`).join('\n').slice(0, 1000), inline: false });
+    }
+    if (declines.length && order.status === 'PENDING') {
+        fields.push({ name: `Passed by ${declines.length} seller${declines.length === 1 ? '' : 's'}`, value: declines.map((d) => d.seller_name).join(', ').slice(0, 1000), inline: false });
     }
     if (order.buyer_note) fields.push({ name: '📝 Buyer note', value: order.buyer_note.slice(0, 1000), inline: false });
     if (order.seller_note) fields.push({ name: '🔖 Seller note', value: order.seller_note.slice(0, 1000), inline: false });
@@ -197,10 +223,11 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
         const msgId = order.discord_message_id;
 
         const { data: flag } = await admin().from('order_flags').select('*').eq('order_id', order.id).maybeSingle();
+        const { data: declines } = await admin().from('order_declines').select('seller_name').eq('order_id', order.id);
         const ping = pingSellers && SELLER_ROLE_ID;
         const payload = {
             content: ping ? `<@&${SELLER_ROLE_ID}> ${title}` : undefined,
-            embeds: [buildEmbed(order, title, flag)],
+            embeds: [buildEmbed(order, title, flag, declines || [])],
             allowed_mentions: { roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
         };
 
@@ -292,10 +319,58 @@ export async function dmBuyer(order, kind, extra = '') {
             description: `${seller} will sell you ${order.total_qty} aircraft for **${order.airline_name}**. Watch for the sale in-game.` },
         PROGRESS: { title: `🟡 ${order.id}: ${order.filled} of ${order.total_qty} delivered`, color: 0xF1C40F,
             description: `${seller} delivered more aircraft to **${order.airline_name}**.${extra ? `\n> ${extra}` : ''}` },
+        HANDOFF: { title: `🔁 ${order.id}: looking for a new seller`, color: 0xF59E0B,
+            description: `${extra || 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
         FULFILLED: { title: `✅ Your order ${order.id} is complete`, color: 0x2ECC71,
             description: `All ${order.total_qty} aircraft were delivered to **${order.airline_name}** by ${seller}. Enjoy the new fleet!` },
         DECLINED: { title: `⛔ Your order ${order.id} was declined`, color: 0xE11D48,
             description: `Reason: ${extra || 'not given'}\nYou can place a new order any time.` }
     }[kind];
     if (lines) await sendDM(buyer, { ...lines, url });
+}
+
+// =====================================================================
+//  Web push ("order delivered" alerts on phones and browsers, even with
+//  the site closed). Needs VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY.
+// =====================================================================
+export const VAPID_PUBLIC_KEY = env('VAPID_PUBLIC_KEY');
+const VAPID_PRIVATE_KEY = env('VAPID_PRIVATE_KEY');
+export const PUSH_AVAILABLE = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+let webpushLib = null;
+async function webpush() {
+    if (!webpushLib) {
+        webpushLib = (await import('web-push')).default;
+        webpushLib.setVapidDetails(env('VAPID_SUBJECT') || BUYER_URL || 'mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    }
+    return webpushLib;
+}
+
+// Sends a notification to every device the account enabled alerts on.
+// Returns how many devices accepted it. Never throws.
+export async function sendPush(accountId, { title, body, tag, url }) {
+    if (!PUSH_AVAILABLE || !accountId) return 0;
+    try {
+        const { data: subs } = await admin().from('push_subscriptions').select('*').eq('account_id', accountId);
+        if (!subs?.length) return 0;
+        const wp = await webpush();
+        const payload = JSON.stringify({ title, body, tag, url: url || (BUYER_URL ? `${BUYER_URL}/#orders` : '/#orders') });
+        let sent = 0;
+        await Promise.all(subs.map(async (sub) => {
+            try {
+                await wp.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 60 * 60 * 24 });
+                sent++;
+            } catch (err) {
+                // 404/410: the browser dropped this subscription (app uninstalled, permission revoked…)
+                if (err.statusCode === 404 || err.statusCode === 410) {
+                    await admin().from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+                } else {
+                    console.error('push failed:', err.statusCode, err.body || err.message);
+                }
+            }
+        }));
+        return sent;
+    } catch (err) {
+        console.error('sendPush failed:', err.message);
+        return 0;
+    }
 }

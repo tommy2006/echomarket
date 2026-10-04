@@ -16,7 +16,7 @@ if (/sb_secret_|service_role/.test(key)) {
     process.exit(2);
 }
 
-const TABLES = ['accounts', 'alliances', 'airlines', 'sellers', 'orders', 'order_events', 'order_flags'];
+const TABLES = ['accounts', 'alliances', 'airlines', 'sellers', 'orders', 'order_events', 'order_flags', 'order_declines', 'push_subscriptions'];
 const ALLIANCES = ['Kyra', 'Proxima', 'Aegis', 'Elysium', 'Rhea', 'Vilis', 'Elion', 'Aura', 'Eos'];
 const headers = { apikey: key, Accept: 'application/json' };
 let failures = 0;
@@ -51,6 +51,10 @@ for (const t of TABLES) {
     line(exists, t.padEnd(13), exists ? '' : `missing (HTTP ${r.status} ${r.body?.code || ''})`);
 }
 
+// 1b. Columns added by later versions of schema.sql
+const col = await get('/rest/v1/orders?select=previous_sellers&limit=1');
+line(col.status === 200, 'orders.previous_sellers', col.status === 200 ? '' : 'missing: re-run supabase/schema.sql (safe to run again)');
+
 // 2. Seed data
 console.log('\nSeed data');
 const al = await get('/rest/v1/alliances?select=name&order=sort_order');
@@ -61,7 +65,7 @@ if (missing.length) console.log(`   missing: ${missing.join(', ')}`);
 
 // 3. Security: anonymous visitors must not see private rows
 console.log('\nSecurity (Row Level Security)');
-for (const t of ['accounts', 'airlines', 'orders', 'order_flags', 'sellers']) {
+for (const t of ['accounts', 'airlines', 'orders', 'order_flags', 'sellers', 'order_declines', 'push_subscriptions']) {
     const r = await get(`/rest/v1/${t}?select=*&limit=1`);
     if (r.status !== 200) continue;
     line(Array.isArray(r.body) && r.body.length === 0, `${t} hidden from anonymous visitors`);

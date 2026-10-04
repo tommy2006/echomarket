@@ -178,6 +178,12 @@ create index if not exists orders_buyer_idx   on public.orders (buyer_id, create
 create index if not exists orders_status_idx  on public.orders (status, created_at desc);
 create index if not exists orders_seller_idx  on public.orders (seller_id);
 
+-- Sellers who handed a partly delivered order back to the team:
+-- [{ seller_id, seller_name, seller_airline_name, seller_alliance, delivered, at }]
+alter table public.orders add column if not exists previous_sellers jsonb not null default '[]'::jsonb;
+-- Each entry of orders.items also carries "filled" (delivered so far for that aircraft type)
+-- and "locked" (delivered before the current seller took over, which they cannot undo).
+
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
 begin new.updated_at := now(); return new; end $$;
@@ -201,6 +207,28 @@ create table if not exists public.order_events (
 create index if not exists order_events_order_idx on public.order_events (order_id, created_at);
 create index if not exists order_events_buyer_idx on public.order_events (buyer_id, created_at desc);
 
+-- Sellers who passed on an open order. The order is only DECLINED for the buyer once every
+-- active seller has passed (the last one writes the reason). Buyers can never read this table.
+create table if not exists public.order_declines (
+    order_id    text not null references public.orders(id) on delete cascade,
+    seller_id   uuid not null references public.accounts(id) on delete cascade,
+    seller_name text,
+    note        text,
+    created_at  timestamptz not null default now(),
+    primary key (order_id, seller_id)
+);
+
+-- Phone / browser push subscriptions for "order delivered" alerts. Written by the API only.
+create table if not exists public.push_subscriptions (
+    endpoint   text primary key,
+    account_id uuid not null references public.accounts(id) on delete cascade,
+    p256dh     text not null,
+    auth       text not null,
+    user_agent text,
+    created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_account_idx on public.push_subscriptions (account_id);
+
 -- Seller-only moderation flags. Buyers can never read this table.
 create table if not exists public.order_flags (
     order_id   text primary key references public.orders(id) on delete cascade,
@@ -223,6 +251,8 @@ alter table public.sellers      enable row level security;
 alter table public.orders       enable row level security;
 alter table public.order_events enable row level security;
 alter table public.order_flags  enable row level security;
+alter table public.order_declines     enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 drop policy if exists "accounts: read own or seller" on public.accounts;
 create policy "accounts: read own or seller" on public.accounts
@@ -255,6 +285,14 @@ create policy "events: buyer or seller read" on public.order_events
     for select to authenticated using (buyer_id = auth.uid() or public.is_seller());
 
 drop policy if exists "flags: seller read" on public.order_flags;
+drop policy if exists "declines: seller read" on public.order_declines;
+create policy "declines: seller read" on public.order_declines
+    for select to authenticated using (public.is_seller());
+
+drop policy if exists "push: read own" on public.push_subscriptions;
+create policy "push: read own" on public.push_subscriptions
+    for select to authenticated using (account_id = auth.uid());
+
 create policy "flags: seller read" on public.order_flags
     for select to authenticated using (public.is_seller());
 
@@ -265,7 +303,8 @@ create policy "flags: seller read" on public.order_flags
 -- ---------------------------------------------------------------------
 grant usage on schema public to anon, authenticated, service_role;
 grant select on public.alliances to anon, authenticated;
-grant select on public.accounts, public.sellers, public.orders, public.order_events, public.order_flags to authenticated;
+grant select on public.accounts, public.sellers, public.orders, public.order_events, public.order_flags,
+    public.order_declines, public.push_subscriptions to authenticated;
 grant select, insert, update, delete on public.airlines to authenticated;
 grant execute on function public.is_seller() to anon, authenticated;
 grant all on all tables in schema public to service_role;
@@ -278,7 +317,7 @@ grant execute on all functions in schema public to service_role;
 do $$
 declare t text;
 begin
-    foreach t in array array['orders', 'order_events', 'order_flags'] loop
+    foreach t in array array['orders', 'order_events', 'order_flags', 'order_declines'] loop
         if not exists (
             select 1 from pg_publication_tables
             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t

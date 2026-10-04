@@ -1,6 +1,6 @@
 // GET /api/health — setup checklist. Shows WHAT is configured, never the secret values.
 // Open https://<your-site>/api/health in a browser after every setup step.
-import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, WEBHOOKS, DM_AVAILABLE, discordBot } from '../lib/server.js';
+import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, WEBHOOKS, DM_AVAILABLE, PUSH_AVAILABLE, discordBot } from '../lib/server.js';
 
 const has = (n) => Boolean(process.env[n]);
 
@@ -95,6 +95,10 @@ export default async function handler(req, res) {
     }
 
     // 'at least one seller' is done in Part 5 (after the sites exist), so it doesn't block 'ready'.
+    // --- Phone / browser alerts
+    add('Phone alerts', 'VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY', PUSH_AVAILABLE, PUSH_AVAILABLE ? 'set' : 'not set (optional)',
+        'Run "npx web-push generate-vapid-keys" and add both keys to BOTH Vercel projects (SETUP.md: "Phone alerts"), then redeploy.');
+
     const required = checks.filter((c) => ['Vercel env', 'Database', 'Discord login'].includes(c.step) && c.check !== 'at least one seller');
     const ready = required.every((c) => c.ok);
     const next = checks.find((c) => !c.ok && !String(c.detail).includes('optional'));
