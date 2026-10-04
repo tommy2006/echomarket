@@ -315,6 +315,8 @@ export async function dmBuyer(order, kind, extra = '') {
     const url = BUYER_URL ? `${BUYER_URL}/#orders` : undefined;
     const seller = order.seller_airline_name ? `**${order.seller_airline_name}**${order.seller_alliance ? ` (${order.seller_alliance})` : ''}` : 'a seller';
     const lines = {
+        CREATED: { title: `📦 Order ${order.id} received`, color: 0x94A3B8,
+            description: `Your order for ${order.total_qty} aircraft for **${order.airline_name}** (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
         CLAIMED: { title: `🤝 Your order ${order.id} was taken`, color: 0x38BDF8,
             description: `${seller} will sell you ${order.total_qty} aircraft for **${order.airline_name}**. Watch for the sale in-game.` },
         PROGRESS: { title: `🟡 ${order.id}: ${order.filled} of ${order.total_qty} delivered`, color: 0xF1C40F,
