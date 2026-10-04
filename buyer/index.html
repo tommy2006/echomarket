@@ -7,7 +7,7 @@
     <meta name="description" content="Order aircraft for your Echo UA airline. Sign in with Discord, create your airline, send your order.">
     <link rel="icon" type="image/png" href="echo_logo.png">
     <link rel="manifest" href="manifest.webmanifest">
-    <meta name="theme-color" content="#1B1033">
+    <meta name="theme-color" content="#070B1F">
     <link rel="apple-touch-icon" href="echo_logo.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,14 +24,15 @@
     <script src="/api/config"></script>
 
     <script>
-        // Buyer theme: purple. The app's classes use "slate" for surfaces/text and "sky" for the
-        // accent; this redefines both palettes so the whole UI turns purple without touching the JS.
+        // Buyer theme: dark navy "space". The app's classes use "slate" for surfaces/text and "sky" for
+        // the accent; this redefines both palettes (navy + periwinkle) without touching the JS.
+        // The starfield behind the content is in the <style> block below (body background).
         window.ECHO_THEME = {
-            page: '#1B1033',
-            slate: { 50: '#FAF7FD', 100: '#F3EEFA', 200: '#E5DCF3', 300: '#CFC1E6', 400: '#AB98CC', 500: '#8670AB',
-                     600: '#634C8E', 700: '#47316F', 800: '#352259', 900: '#261845', 950: '#150C29' },
-            sky:   { 50: '#FDFAFF', 100: '#FAF5FF', 200: '#F3E8FF', 300: '#E9D5FF', 400: '#D8B4FE', 500: '#C084FC',
-                     600: '#A855F7', 700: '#9333EA', 800: '#7E22CE', 900: '#6B21A8', 950: '#581C87' }
+            page: '#070B1F',
+            slate: { 50: '#F5F7FF', 100: '#E9EEFF', 200: '#D3DBF5', 300: '#B4C0E6', 400: '#8D9AC6', 500: '#6874A3',
+                     600: '#4A557F', 700: '#323C63', 800: '#222B4D', 900: '#141B38', 950: '#0C1229' },
+            sky:   { 50: '#F5F7FF', 100: '#EEF2FF', 200: '#E0E7FF', 300: '#C7D2FE', 400: '#A5B4FC', 500: '#818CF8',
+                     600: '#6366F1', 700: '#4F46E5', 800: '#4338CA', 900: '#3730A3', 950: '#1E1B4B' }
         };
     </script>
     <script>
@@ -57,6 +58,28 @@
     </script>
     <style type="text/tailwindcss">
         :root { color-scheme: dark; }
+        /* Space backdrop: tiled stars (four tile sizes so the pattern does not look regular) + two faint nebula glows, fixed behind the content. */
+        body {
+            background-image:
+                radial-gradient(1.5px 1.5px at 23px 41px, rgba(255,255,255,0.9), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 141px 97px, rgba(255,255,255,0.7), rgba(0,0,0,0)),
+                radial-gradient(2.5px 2.5px at 77px 173px, rgba(199,210,254,0.9), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 203px 211px, rgba(255,255,255,0.6), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 61px 263px, rgba(255,255,255,0.5), rgba(0,0,0,0)),
+                radial-gradient(3px 3px at 311px 59px, rgba(165,180,252,0.85), rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 367px 301px, rgba(255,255,255,0.7), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 113px 17px, rgba(255,255,255,0.65), rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 251px 143px, rgba(224,231,255,0.75), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 29px 389px, rgba(255,255,255,0.55), rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 433px 227px, rgba(255,255,255,0.6), rgba(0,0,0,0)),
+                radial-gradient(ellipse 60% 45% at 88% -8%, rgba(99,102,241,.32), transparent 70%),
+                radial-gradient(ellipse 50% 40% at -5% 105%, rgba(56,189,248,.18), transparent 70%);
+            background-size: 240px 240px, 240px 240px, 240px 240px, 240px 240px, 240px 240px,
+                             420px 420px, 420px 420px,
+                             330px 330px, 330px 330px, 510px 510px, 510px 510px, 100% 100%, 100% 100%;
+            background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat, no-repeat;
+            background-attachment: fixed;
+        }
         body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
         @layer components {
         .card { @apply bg-slate-900 border border-slate-800 rounded-3xl transition-colors; }

@@ -1,6 +1,6 @@
 // Shared UI helpers used by the buyer app (buyer/js/app.js) and the seller desk (seller/js/seller.js).
 // Colours: components use Tailwind's slate (surfaces/text) and sky (accent) names; each app's HTML
-// redefines those palettes (buyer: purple, seller: light white-grey), so one set of classes serves both looks.
+// redefines those palettes (buyer: dark navy space, seller: dark pink), so one set of classes serves both looks.
 // Source of truth: shared/js/ui.js. Run "npm run sync" at the repo root after editing.
 //
 // We use React + htm (JSX-like tagged templates) straight from a CDN, so there is
