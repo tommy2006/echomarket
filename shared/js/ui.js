@@ -1,4 +1,6 @@
 // Shared UI helpers used by the buyer app (buyer/js/app.js) and the seller desk (seller/js/seller.js).
+// Colours: components use Tailwind's slate (surfaces/text) and sky (accent) names; each app's HTML
+// redefines those palettes (buyer: purple, seller: light white-grey), so one set of classes serves both looks.
 // Source of truth: shared/js/ui.js. Run "npm run sync" at the repo root after editing.
 //
 // We use React + htm (JSX-like tagged templates) straight from a CDN, so there is
@@ -85,7 +87,7 @@ export const plural = (n, word) => `${n} ${word}${n === 1 || word === 'aircraft'
 // ------------------------------------------------------------ order status
 export const STATUS = {
     PENDING:   { label: 'Waiting for seller', short: 'Waiting',    tone: 'amber',   icon: 'hourglass' },
-    CLAIMED:   { label: 'Seller assigned',    short: 'Taken',      tone: 'sky',     icon: 'handshake' },
+    CLAIMED:   { label: 'Seller assigned',    short: 'Taken',      tone: 'cyan',     icon: 'handshake' },
     PARTIAL:   { label: 'Delivering',         short: 'Delivering', tone: 'violet',  icon: 'truck' },
     FULFILLED: { label: 'Delivered',          short: 'Delivered',  tone: 'emerald', icon: 'circle-check' },
     CANCELLED: { label: 'Cancelled',          short: 'Cancelled',  tone: 'slate',   icon: 'circle-x' },
@@ -96,7 +98,7 @@ export const CLOSED_STATUSES = ['CANCELLED', 'DECLINED'];
 
 const TONES = {
     amber: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
-    sky: 'bg-sky-500/10 text-sky-300 border-sky-500/30',
+    cyan: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30',
     violet: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
     emerald: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
     slate: 'bg-slate-500/10 text-slate-300 border-slate-500/30',
@@ -240,8 +242,8 @@ export function Button({ variant = 'primary', size = 'md', icon, busy, className
         white: 'bg-white text-slate-950 hover:bg-slate-200',
         secondary: 'bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700',
         ghost: 'text-slate-300 hover:text-white hover:bg-slate-800',
-        danger: 'bg-rose-500 text-white hover:bg-rose-400',
-        discord: 'bg-[#5865F2] text-white hover:bg-[#4752C4]'
+        danger: 'bg-rose-500 text-[#fff] hover:bg-rose-400',
+        discord: 'bg-[#5865F2] text-[#fff] hover:bg-[#4752C4]'
     };
     const sizes = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2.5 text-sm', lg: 'px-6 py-3.5 text-sm' };
     return html`<button ...${props} disabled=${props.disabled || busy}

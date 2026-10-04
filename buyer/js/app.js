@@ -240,7 +240,7 @@ function FullPageSpinner() {
 
 function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut }) {
     const [menu, setMenu] = useState(false);
-    return html`<header className="sticky top-0 z-40 bg-[#0B0F17]/85 backdrop-blur border-b border-slate-800/80">
+    return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
             <a href="#shop" className="flex items-center gap-2.5 shrink-0">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
@@ -286,7 +286,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
 
 function BottomNav({ view, cartCount, activeCount, onCart }) {
     const item = (active) => `flex-1 flex flex-col items-center gap-1 py-2 text-[10px] font-bold ${active ? 'text-white' : 'text-slate-500'}`;
-    return html`<nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0B0F17]/95 backdrop-blur border-t border-slate-800 flex px-2 pb-[env(safe-area-inset-bottom)]">
+    return html`<nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-page/95 backdrop-blur border-t border-slate-800 flex px-2 pb-[env(safe-area-inset-bottom)]">
         ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} className=${item(view === v.id)}>
             <span className="relative"><${Icon} name=${v.icon} className="w-5 h-5" />
                 ${v.id === 'orders' && activeCount > 0 && html`<span className="absolute -top-1 -right-2 w-4 h-4 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${activeCount}</span>`}

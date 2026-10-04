@@ -7,7 +7,7 @@
     <meta name="description" content="Order aircraft for your Echo UA airline. Sign in with Discord, create your airline, send your order.">
     <link rel="icon" type="image/png" href="echo_logo.png">
     <link rel="manifest" href="manifest.webmanifest">
-    <meta name="theme-color" content="#0B0F17">
+    <meta name="theme-color" content="#1B1033">
     <link rel="apple-touch-icon" href="echo_logo.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,9 +24,21 @@
     <script src="/api/config"></script>
 
     <script>
+        // Buyer theme: purple. The app's classes use "slate" for surfaces/text and "sky" for the
+        // accent; this redefines both palettes so the whole UI turns purple without touching the JS.
+        window.ECHO_THEME = {
+            page: '#1B1033',
+            slate: { 50: '#FAF7FD', 100: '#F3EEFA', 200: '#E5DCF3', 300: '#CFC1E6', 400: '#AB98CC', 500: '#8670AB',
+                     600: '#634C8E', 700: '#47316F', 800: '#352259', 900: '#261845', 950: '#150C29' },
+            sky:   { 50: '#FDFAFF', 100: '#FAF5FF', 200: '#F3E8FF', 300: '#E9D5FF', 400: '#D8B4FE', 500: '#C084FC',
+                     600: '#A855F7', 700: '#9333EA', 800: '#7E22CE', 900: '#6B21A8', 950: '#581C87' }
+        };
+    </script>
+    <script>
         tailwind.config = {
             theme: {
                 extend: {
+                    colors: window.ECHO_THEME,
                     fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'], mono: ['"JetBrains Mono"', 'monospace'] },
                     minWidth: { 4: '1rem', 5: '1.25rem' },
                     animation: {
@@ -44,7 +56,8 @@
         };
     </script>
     <style type="text/tailwindcss">
-        body { @apply bg-[#0B0F17] text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
+        :root { color-scheme: dark; }
+        body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
         @layer components {
         .card { @apply bg-slate-900 border border-slate-800 rounded-3xl transition-colors; }
         .label { @apply font-mono text-[10px] font-medium uppercase tracking-[0.16em]; }

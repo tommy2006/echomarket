@@ -162,7 +162,7 @@ function App() {
     const detail = orders.find((o) => o.id === detailId);
 
     return html`<div className="min-h-screen pb-12">
-        <header className="sticky top-0 z-40 bg-[#0B0F17]/85 backdrop-blur border-b border-slate-800/80">
+        <header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
             <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <div className="leading-tight">
