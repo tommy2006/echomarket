@@ -192,6 +192,49 @@ drop trigger if exists orders_touch on public.orders;
 create trigger orders_touch before update on public.orders
     for each row execute function public.touch_updated_at();
 
+-- Status timestamps, kept by the database itself so every status change is recorded:
+--   status_changed_at  when the current status started (for an open order: when it (re)entered the queue)
+--   status_history     [{ status, at }] for every change, oldest first
+--   fulfilled_at       when it was fully delivered
+alter table public.orders add column if not exists status_changed_at timestamptz;
+alter table public.orders add column if not exists status_history jsonb not null default '[]'::jsonb;
+alter table public.orders add column if not exists fulfilled_at timestamptz;
+
+create or replace function public.track_order_status()
+returns trigger language plpgsql as $$
+begin
+    if tg_op = 'INSERT' then
+        new.status_changed_at := coalesce(new.status_changed_at, new.created_at, now());
+        if coalesce(jsonb_array_length(new.status_history), 0) = 0 then
+            new.status_history := jsonb_build_array(jsonb_build_object('status', new.status, 'at', new.status_changed_at));
+        end if;
+        if new.status = 'FULFILLED' and new.fulfilled_at is null then new.fulfilled_at := new.status_changed_at; end if;
+    elsif new.status is distinct from old.status then
+        new.status_changed_at := now();
+        new.status_history := coalesce(old.status_history, '[]'::jsonb)
+            || jsonb_build_array(jsonb_build_object('status', new.status, 'at', now()));
+        new.fulfilled_at := case when new.status = 'FULFILLED' then now() else null end;
+    end if;
+    return new;
+end $$;
+
+drop trigger if exists orders_track_status on public.orders;
+create trigger orders_track_status before insert or update on public.orders
+    for each row execute function public.track_order_status();
+
+-- One-off backfill for orders placed before status tracking existed (best guess from what's stored).
+update public.orders set
+    status_changed_at = case when status = 'PENDING' and filled = 0 then created_at else updated_at end,
+    status_history = case
+        when status = 'PENDING' and filled = 0 then jsonb_build_array(jsonb_build_object('status', 'PENDING', 'at', created_at))
+        else jsonb_build_array(jsonb_build_object('status', 'PENDING', 'at', created_at),
+                               jsonb_build_object('status', status, 'at', updated_at))
+    end,
+    fulfilled_at = case when status = 'FULFILLED' then updated_at end
+where status_changed_at is null;
+
+create index if not exists orders_queue_idx on public.orders (status, status_changed_at);
+
 -- Order timeline. Everything here is visible to the buyer of the order.
 create table if not exists public.order_events (
     id         bigint generated always as identity primary key,

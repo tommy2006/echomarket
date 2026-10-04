@@ -74,6 +74,15 @@ export function fmtUSDShort(n) {
     return fmtUSD(v);
 }
 export const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+// 45m · 3h 12m · 2d 4h
+export function fmtDuration(ms) {
+    const m = Math.max(0, Math.floor((Number(ms) || 0) / 60000));
+    if (m < 1) return '<1m';
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ${m % 60}m`;
+    return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
 export function timeAgo(iso) {
     const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
     if (s < 60) return 'just now';

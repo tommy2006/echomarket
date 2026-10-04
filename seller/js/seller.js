@@ -5,11 +5,45 @@
 import {
     html, useState, useEffect, useMemo, useCallback, sb, isConfigured, CONFIG, api, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES,
-    StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
+    StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo, fmtDuration, toneClass,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress
 } from './ui.js';
 
 const LS_SELL_AS = 'echo_seller_airline_v2';
+const LS_PAGE_SIZE = 'echo_seller_page_size_v1';
+const PAGE_SIZES = [5, 10, 25, 50, 'all'];
+
+// ---- order timing (status_changed_at / status_history are kept by the database)
+const ms = (iso) => (iso ? new Date(iso).getTime() : null);
+// When the order (last) entered the open queue: new orders, released and passed-on orders.
+const queuedSince = (o) => {
+    const history = Array.isArray(o.status_history) ? o.status_history : [];
+    const lastPending = [...history].reverse().find((h) => h.status === 'PENDING');
+    return (o.status === 'PENDING' ? ms(o.status_changed_at) : null) || ms(lastPending?.at) || ms(o.created_at);
+};
+function timing(o, now) {
+    switch (o.status) {
+        case 'PENDING': {
+            const wait = now - queuedSince(o);
+            return { tone: wait > 24 * 36e5 ? 'rose' : wait > 6 * 36e5 ? 'amber' : 'slate', text: `Waiting ${fmtDuration(wait)}` };
+        }
+        case 'CLAIMED':
+        case 'PARTIAL': {
+            const taken = ms(o.claimed_at);
+            const waited = taken ? taken - queuedSince(o) : null;
+            return { tone: 'slate', text: `${waited != null ? `Taken after ${fmtDuration(waited)} · ` : ''}with seller ${fmtDuration(now - (taken || ms(o.status_changed_at) || now))}` };
+        }
+        case 'FULFILLED':
+            return { tone: 'emerald', text: `Done in ${fmtDuration((ms(o.fulfilled_at) || ms(o.status_changed_at) || now) - ms(o.created_at))}` };
+        default:
+            return { tone: 'slate', text: `Closed after ${fmtDuration((ms(o.status_changed_at) || now) - ms(o.created_at))}` };
+    }
+}
+function WaitChip({ order, now }) {
+    const t = timing(order, now);
+    return html`<span className=${`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${toneClass(t.tone)}`}>
+        <${Icon} name="timer" className="w-3 h-3" />${t.text}</span>`;
+}
 const FLAG_META = {
     NORMAL: { label: 'Normal', cls: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10', icon: 'shield-check' },
     SUSPICIOUS: { label: 'Suspicious', cls: 'text-amber-300 border-amber-500/30 bg-amber-500/10', icon: 'flag' },
@@ -29,6 +63,10 @@ function App() {
     const [loading, setLoading] = useState(true);
 
     const [tab, setTab] = useState('open');
+    const [pageSize, setPageSize] = useState(() => { const v = store.get(LS_PAGE_SIZE, 5); return PAGE_SIZES.includes(v) ? v : 5; });
+    const [now, setNow] = useState(() => Date.now());   // ticks every minute so wait times stay current
+    useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
+    useEffect(() => { store.set(LS_PAGE_SIZE, pageSize); }, [pageSize]);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [query, setQuery] = useState('');
     const [sellAsId, setSellAsId] = useState(() => store.get(LS_SELL_AS, null));
@@ -204,6 +242,10 @@ function App() {
         all: orders.length
     };
     const list = orders.filter((o) => tabs[tab].fn(o) && matches(o));
+    // Open queue: longest-waiting first. Other tabs stay newest first.
+    if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
+    // All orders: show the first N, the rest behind "Show more".
+    const paged = tab === 'all' && pageSize !== 'all' ? list.slice(0, pageSize) : list;
     const detail = orders.find((o) => o.id === detailId);
 
     return html`<div className="min-h-screen pb-12">
@@ -258,12 +300,14 @@ function App() {
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
-            : html`<div className="space-y-2">${list.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
-                passed=${passedOn(o)} teamSize=${teamSize}
-                seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}</div>`}
+            : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
+                passed=${passedOn(o)} teamSize=${teamSize} now=${now}
+                seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
+                ${tab === 'all' && list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
+            </div>`}
         </main>
 
-        ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines}
+        ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines} now=${now}
             passed=${passedOn(detail)} teamSize=${teamSize}
             actions=${actions} onClose=${closeDetail} />`}
         ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title="Order not found" size="sm">
@@ -389,7 +433,7 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now }) {
     const mine = order.seller_id === userId;
     return html`<article onClick=${onOpen} className=${`card p-4 cursor-pointer hover:border-slate-600 ${flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
         <div className="flex flex-col md:flex-row md:items-center gap-3">
@@ -401,7 +445,8 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-400/15 text-sky-300">YOURS</span>`}
-                    <span className="text-[11px] text-slate-500">${timeAgo(order.created_at)}</span>
+                    <${WaitChip} order=${order} now=${now} />
+                    <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>ordered ${timeAgo(order.created_at)}</span>
                 </div>
                 <p className="font-extrabold text-white truncate">${order.airline_name} <span className="text-slate-500 font-semibold text-sm">· ${order.alliance} · ${order.buyer_name}</span></p>
                 <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>
@@ -418,7 +463,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now }) {
     const [events, setEvents] = useState([]);
     useEffect(() => {
         sb.from('order_events').select('*').eq('order_id', order.id).order('created_at').then(({ data }) => setEvents(data || []));
@@ -462,6 +507,10 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
             ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">Seller note (buyer can see)</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
             <div>
+                <p className="label text-slate-500 mb-2">Status history</p>
+                <${StatusHistory} order=${order} now=${now} />
+            </div>
+            <div>
                 <p className="label text-slate-500 mb-2">Timeline</p>
                 <ol className="space-y-2 border-l border-slate-800 pl-4">
                     ${events.map((e) => html`<li key=${e.id} className="relative">
@@ -473,6 +522,46 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             </div>
         </div>
     <//>`;
+}
+
+function StatusHistory({ order, now }) {
+    const history = Array.isArray(order.status_history) && order.status_history.length
+        ? order.status_history : [{ status: order.status, at: order.created_at }];
+    return html`<div className="space-y-2">
+        <div className="flex flex-wrap gap-2"><${WaitChip} order=${order} now=${now} /></div>
+        <ol className="text-sm divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
+            ${history.map((h, i) => {
+                const next = history[i + 1];
+                const lasted = (next ? ms(next.at) : (CLOSED.includes(h.status) ? null : now)) - ms(h.at);
+                const label = h.status === 'PENDING' && i > 0 ? 'Back in the open queue' : (STATUS[h.status]?.label || h.status);
+                return html`<li key=${i} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0"><span className="font-bold text-slate-100">${label}</span>
+                        <span className="block text-[11px] text-slate-500">${fmtDate(h.at)}</span></span>
+                    ${Number.isFinite(lasted) && html`<span className="text-xs text-slate-400 shrink-0 tabular-nums">${next ? '' : 'for '}${fmtDuration(lasted)}${next ? '' : ' so far'}</span>`}
+                </li>`;
+            })}
+        </ol>
+    </div>`;
+}
+const CLOSED = ['FULFILLED', 'CANCELLED', 'DECLINED'];
+
+// "Showing 5 of 23" + Show 5 / 10 / 25 / 50 / All, and a "Show N more" button.
+function PageSizeBar({ total, shown, pageSize, setPageSize }) {
+    const hidden = total - shown;
+    const options = PAGE_SIZES.filter((p) => p === 'all' || p < total);
+    const nextSize = PAGE_SIZES.find((p) => p !== 'all' && p > shown && p < total) || 'all';
+    return html`<div className="card p-3 flex flex-wrap items-center gap-3">
+        <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total} orders${hidden > 0 ? ` · ${hidden} hidden` : ''}</span>
+        ${hidden > 0 && html`<${Button} size="sm" variant="secondary" icon="chevron-down" onClick=${() => setPageSize(nextSize)}>
+            Show ${nextSize === 'all' ? `all ${total}` : `${Math.min(nextSize, total) - shown} more`}<//>`}
+        <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">Show</span>
+            <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800">
+                ${options.map((p) => html`<button key=${p} onClick=${() => setPageSize(p)} aria-pressed=${pageSize === p}
+                    className=${`px-3 py-1 rounded-full text-xs font-bold ${pageSize === p ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${p === 'all' ? 'All' : p}</button>`)}
+            </div>
+        </div>
+    </div>`;
 }
 
 function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
