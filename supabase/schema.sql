@@ -117,10 +117,15 @@ create trigger airlines_trim before update on public.airlines
     for each row execute function public.trim_airline_name();
 
 -- ---------------------------------------------------------------------
---  4. Sellers — the curated list. Add people with:
+--  4. Sellers — the curated list.
+--     Automatic: anyone with the seller role (DISCORD_ROLE_ID) in a server the bot is in is added
+--     when they open the seller desk (source 'discord_role'), and removed again if they lose the role.
+--     By hand:
 --     insert into public.sellers (user_id)
 --       select id from public.accounts where discord_id = '<DISCORD USER ID>';
 --  (the person must have signed in with Discord once first)
+--     To block someone who has the role: update public.sellers set active = false, source = 'manual'
+--       where user_id = (select id from public.accounts where discord_id = '<DISCORD USER ID>');
 -- ---------------------------------------------------------------------
 create table if not exists public.sellers (
     user_id  uuid primary key references public.accounts(id) on delete cascade,
@@ -129,6 +134,8 @@ create table if not exists public.sellers (
     note     text,
     added_at timestamptz not null default now()
 );
+-- 'manual' (added by hand: never changed automatically) or 'discord_role' (follows the Discord role)
+alter table public.sellers add column if not exists source text not null default 'manual';
 
 create or replace function public.is_seller()
 returns boolean language sql stable security definer set search_path = public as $$
@@ -234,6 +241,33 @@ update public.orders set
 where status_changed_at is null;
 
 create index if not exists orders_queue_idx on public.orders (status, status_changed_at);
+
+-- Order serial number: #1, #2, #3 … in the order orders were placed (shown next to the ECH- code).
+create sequence if not exists public.order_serial_seq;
+alter table public.orders add column if not exists serial bigint;
+do $$
+declare base bigint;
+begin
+    if exists (select 1 from public.orders where serial is null) then
+        -- Number older orders by when they were placed. Triggers are paused so their updated_at stays put.
+        alter table public.orders disable trigger orders_touch;
+        alter table public.orders disable trigger orders_track_status;
+        select coalesce(max(serial), 0) into base from public.orders;
+        update public.orders o set serial = base + n.rn
+        from (select id, row_number() over (order by created_at, id) as rn from public.orders where serial is null) n
+        where o.id = n.id;
+        alter table public.orders enable trigger orders_touch;
+        alter table public.orders enable trigger orders_track_status;
+    end if;
+    -- The next order gets the highest number used so far + 1 (or #1 when there are none yet).
+    -- Numbers of deleted orders are never reused.
+    select greatest(coalesce((select max(serial) from public.orders), 0),
+                    (select case when is_called then last_value else 0 end from public.order_serial_seq)) into base;
+    perform setval('public.order_serial_seq', greatest(base, 1), base > 0);
+end $$;
+alter table public.orders alter column serial set default nextval('public.order_serial_seq');
+alter sequence public.order_serial_seq owned by public.orders.serial;
+create unique index if not exists orders_serial_uq on public.orders (serial);
 
 -- Order timeline. Everything here is visible to the buyer of the order.
 create table if not exists public.order_events (

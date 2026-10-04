@@ -1,6 +1,7 @@
 // Shared UI helpers used by the buyer app (buyer/js/app.js) and the seller desk (seller/js/seller.js).
 // Colours: components use Tailwind's slate (surfaces/text) and sky (accent) names; each app's HTML
-// redefines those palettes (buyer: dark navy space, seller: dark pink), so one set of classes serves both looks.
+// redefines those palettes (both: black/white/grey surfaces; accent purple for buyers, pink for sellers),
+// so one set of classes serves both looks.
 // Source of truth: shared/js/ui.js. Run "npm run sync" at the repo root after editing.
 //
 // We use React + htm (JSX-like tagged templates) straight from a CDN, so there is
@@ -91,9 +92,23 @@ export function timeAgo(iso) {
     const d = Math.round(h / 24); if (d < 30) return `${d} d ago`;
     return new Date(iso).toLocaleDateString();
 }
+// Local-time greeting (used on the buyer home page and the seller desk).
+export function greetingFor(date) {
+    const h = date.getHours();
+    if (h < 5) return { text: 'Up late', icon: 'moon' };
+    if (h < 12) return { text: 'Good morning', icon: 'sunrise' };
+    if (h < 17) return { text: 'Good afternoon', icon: 'sun' };
+    return { text: 'Good evening', icon: 'sunset' };
+}
 export const plural = (n, word) => `${n} ${word}${n === 1 || word === 'aircraft' ? '' : 's'}`;
 
 // ------------------------------------------------------------ order status
+// Orders have a serial number (#1, #2, … in the order they were placed) and a code (ECH-1A2B3C4D).
+export const orderRef = (order) => (order?.serial ? `#${order.serial}` : order?.id || '');
+export function OrderCode({ order, className = '' }) {
+    return html`<span className=${`inline-flex items-baseline gap-1.5 font-mono text-xs whitespace-nowrap ${className}`}>
+        ${order.serial && html`<b className="text-slate-100 font-bold">#${order.serial}</b>`}<span className="text-slate-500">${order.id}</span></span>`;
+}
 export const STATUS = {
     PENDING:   { label: 'Waiting for seller', short: 'Waiting',    tone: 'amber',   icon: 'hourglass' },
     CLAIMED:   { label: 'Seller assigned',    short: 'Taken',      tone: 'cyan',     icon: 'handshake' },
@@ -248,7 +263,7 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
     return html`<div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center">
         <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade" onClick=${onClose}></div>
         <div role="dialog" aria-modal="true" className=${`relative w-full ${width} max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-t-3xl md:rounded-3xl shadow-2xl animate-pop`}>
-            <div className="flex items-start justify-between gap-4 p-5 border-b border-slate-800">
+            <div className="flex items-start justify-between gap-4 p-4 md:p-5 border-b border-slate-800">
                 <div className="min-w-0">
                     <h2 className="text-lg font-extrabold text-white">${title}</h2>
                     ${subtitle && html`<p className="text-xs text-slate-400 mt-0.5">${subtitle}</p>`}
@@ -257,8 +272,8 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
                     <${Icon} name="x" className="w-5 h-5" />
                 </button>
             </div>
-            <div className="p-5 overflow-y-auto">${children}</div>
-            ${footer && html`<div className="p-4 border-t border-slate-800 flex flex-wrap justify-end gap-2">${footer}</div>`}
+            <div className="p-4 md:p-5 overflow-y-auto">${children}</div>
+            ${footer && html`<div className="p-3 md:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-800 flex flex-wrap justify-end gap-2">${footer}</div>`}
         </div>
     </div>`;
 }
@@ -289,7 +304,8 @@ export function DialogHost() {
 // ----------------------------------------------------------------- buttons
 export function Button({ variant = 'primary', size = 'md', icon, busy, className = '', children, ...props }) {
     const variants = {
-        primary: 'bg-sky-400 text-slate-950 hover:bg-sky-300',
+        primary: 'bg-white text-slate-950 hover:bg-slate-200',
+        accent: 'bg-sky-500 text-[#fff] hover:bg-sky-400',
         white: 'bg-white text-slate-950 hover:bg-slate-200',
         secondary: 'bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700',
         ghost: 'text-slate-300 hover:text-white hover:bg-slate-800',

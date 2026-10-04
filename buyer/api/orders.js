@@ -1,6 +1,6 @@
 // POST /api/orders — a signed-in buyer places an order.
 // Body: { airlineId, buyerNote, items: [{ model, qty, pricePercent, note }] }
-import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, HttpError } from '../lib/server.js';
+import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, HttpError } from '../lib/server.js';
 import { priceItems, orderListValue, DAILY_LIMIT_USD } from '../lib/pricing.js';
 
 export default handler(['POST'], async (req, res) => {
@@ -45,7 +45,7 @@ export default handler(['POST'], async (req, res) => {
     if (error) throw error;
 
     await addEvent(order, 'CREATED', account, { message: `Order sent for ${airline.name}.` });
-    await syncDiscord(order, `📦 New order ${order.id}`, { pingSellers: true });
+    await syncDiscord(order, `📦 New order ${orderRef(order)}`, { pingSellers: true });
     await dmBuyer(order, 'CREATED');
 
     res.status(201).json({ ok: true, order });

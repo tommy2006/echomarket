@@ -49,6 +49,9 @@ The old app lived in two repos and two Vercel projects owned by falcc00 (github.
 | **Delivery per aircraft type** | Each line in `orders.items` has `filled` (delivered so far) and `locked` (delivered before the current seller took over). Sellers update each type separately; buyers see one bar per type. |
 | **Team decline** | **Decline** on an open order is a *pass* for that seller only, stored in `order_declines` and visible only to sellers. The order is declined for the buyer only when every active seller has passed; the last one must write the reason the buyer sees. Admins can still decline for everyone (spam, rule breaks). A seller who passed can change their mind and take the order. |
 | **Pass on the rest** | A seller who can't finish clicks **Pass on the rest**. The order goes back to the open queue as *Partly delivered · needs seller*, delivered aircraft stay counted and locked, and the seller is recorded in `orders.previous_sellers`. The buyer gets a DM and can no longer cancel. |
+| **Order numbers** | Every order has a serial number (`orders.serial`, #1, #2, … in the order they were placed) next to its code (ECH-…). Both show on both sites, in Discord posts and in DMs. Older orders were numbered by date when the schema was re-run. Numbers of deleted orders are not reused. |
+| **Sellers from the Discord role** | `seller/api/enroll.js`, called when someone opens the seller desk: having the seller role (`DISCORD_ROLE_ID`) in a server the bot is in adds them (`sellers.source = 'discord_role'`); losing it switches them off. Rows added by hand (`source = 'manual'`) are never touched, which is also how to block someone who has the role. |
+| **Buyer info for sellers** | Clicking the buyer's airline name (or the Buyer card in an order) shows their Discord profile, ID, a copyable @mention, whether bot DMs reach them, and all their orders. |
 | **Phone & browser alerts** | Web push (`buyer/sw.js`, `push_subscriptions`, `/api/push`) when an order is **fully delivered**. Needs the VAPID keys (SETUP.md Part 10). iPhone users must add the site to their Home Screen first. |
 
 ## Decisions you made (October 2026)
@@ -63,7 +66,7 @@ The old app lived in two repos and two Vercel projects owned by falcc00 (github.
 
 ## Ideas for later
 
-- **Admin page to add and remove sellers** instead of asking Claude or using SQL.
+- **Admin page to add and remove sellers** (most sellers now come in through the Discord role; admins are still added by SQL).
 - **Account-level blacklist,** blocking a player from ordering at all. Today flags are per order.
 - **Seller DMs for new orders** (opt-in), using the same bot.
 - **Custom domain** (e.g. `market.yourdomain.com`). Vercel supports this for free if you own a domain.

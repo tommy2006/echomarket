@@ -13,7 +13,7 @@
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, getSeller, accountName, body, cleanText,
-    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, BUYER_URL, HttpError
+    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, BUYER_URL, HttpError
 } from '../../lib/server.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
@@ -30,6 +30,7 @@ export default handler(['POST'], async (req, res) => {
     const db = admin();
     const order = await loadOrder(req.query.orderId);
     const items = orderItems(order);
+    const ref = orderRef(order);   // "#42 · ECH-…" for Discord and alerts
     const isOwner = order.seller_id === account.id;
     const mustOwn = () => {
         if (!isOwner && !seller.is_admin) {
@@ -73,7 +74,7 @@ export default handler(['POST'], async (req, res) => {
                     ? `${airline.name} takes over the remaining ${order.total_qty - filled} aircraft.`
                     : `${airline.name} will sell you this order.`
             });
-            await syncDiscord(updated, `🤝 ${order.id} taken by ${airline.name}`);
+            await syncDiscord(updated, `🤝 ${ref} taken by ${airline.name}`);
             await dmBuyer(updated, 'CLAIMED');
             return res.json({ ok: true, order: updated });
         }
@@ -103,11 +104,11 @@ export default handler(['POST'], async (req, res) => {
                     filled: updated.filled,
                     message: `${order.seller_airline_name} passed on the remaining ${left} aircraft. Waiting for a new seller.`
                 });
-                await syncDiscord(updated, `🔁 ${order.id} needs a new seller — ${left} of ${order.total_qty} left`, { pingSellers: true });
+                await syncDiscord(updated, `🔁 ${ref} needs a new seller — ${left} of ${order.total_qty} left`, { pingSellers: true });
                 await dmBuyer(updated, 'HANDOFF', order.seller_airline_name);
             } else {
                 await addEvent(updated, 'RELEASED', account, { message: 'The seller released this order. Waiting for another seller.' });
-                await syncDiscord(updated, `↩️ ${order.id} is open again`, { pingSellers: true });
+                await syncDiscord(updated, `↩️ ${ref} is open again`, { pingSellers: true });
             }
             return res.json({ ok: true, order: updated });
         }
@@ -136,14 +137,14 @@ export default handler(['POST'], async (req, res) => {
                 filled,
                 message: [note, changes.length ? changes.join(' · ') : null].filter(Boolean).join(' — ') || `${filled} of ${order.total_qty} aircraft delivered.`
             });
-            const title = status === 'FULFILLED' ? `✅ ${order.id} fulfilled` : `🟡 ${order.id}: ${filled}/${order.total_qty} delivered`;
+            const title = status === 'FULFILLED' ? `✅ ${ref} fulfilled` : `🟡 ${ref}: ${filled}/${order.total_qty} delivered`;
             await syncDiscord(updated, title);
             // Notify only when more aircraft were delivered (not for corrections downwards).
             if (filled > order.filled) {
                 await dmBuyer(updated, status === 'FULFILLED' ? 'FULFILLED' : 'PROGRESS', note);
                 if (status === 'FULFILLED') {
                     await sendPush(updated.buyer_id, {
-                        title: `✅ Order ${order.id} delivered`,
+                        title: `✅ Order ${ref} delivered`,
                         body: `All ${order.total_qty} aircraft for ${order.airline_name} have been delivered by ${order.seller_airline_name}.`,
                         tag: order.id,
                         url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
@@ -158,7 +159,7 @@ export default handler(['POST'], async (req, res) => {
             const sellerNote = cleanText(input.sellerNote, 1000);
             const updated = await update({ seller_note: sellerNote || null });
             if (sellerNote) await addEvent(updated, 'NOTE', account, { message: sellerNote });
-            await syncDiscord(updated, `🔖 ${order.id}: seller note updated`);
+            await syncDiscord(updated, `🔖 ${ref}: seller note updated`);
             return res.json({ ok: true, order: updated });
         }
 
@@ -169,7 +170,7 @@ export default handler(['POST'], async (req, res) => {
                 if (!reason) throw new HttpError(400, 'Tell the buyer why the order is declined.');
                 const updated = await update({ status: 'DECLINED', closed_reason: reason }, ['PENDING', ...ACTIVE]);
                 await addEvent(updated, 'DECLINED', account, { message: reason });
-                await syncDiscord(updated, `⛔ ${order.id} declined`);
+                await syncDiscord(updated, `⛔ ${ref} declined`);
                 await dmBuyer(updated, 'DECLINED', reason);
                 return res.json({ ok: true, order: updated, declinedForEveryone: true, sellersLeft: 0 });
             };
@@ -196,7 +197,7 @@ export default handler(['POST'], async (req, res) => {
                 order_id: order.id, seller_id: account.id, seller_name: accountName(account), note: reason || null
             });
             if (error) throw error;
-            await syncDiscord(order, `👋 ${accountName(account)} passed on ${order.id} — ${sellersLeft} seller${sellersLeft === 1 ? '' : 's'} left`);
+            await syncDiscord(order, `👋 ${accountName(account)} passed on ${ref} — ${sellersLeft} seller${sellersLeft === 1 ? '' : 's'} left`);
             return res.json({ ok: true, order, declinedForEveryone: false, sellersLeft });
         }
 
@@ -211,7 +212,7 @@ export default handler(['POST'], async (req, res) => {
                 flagged_at: new Date().toISOString()
             });
             if (error) throw error;
-            await syncDiscord(order, status === 'NORMAL' ? `🟢 ${order.id}: flag cleared` : `🚩 ${order.id} flagged ${status}`);
+            await syncDiscord(order, status === 'NORMAL' ? `🟢 ${ref}: flag cleared` : `🚩 ${ref} flagged ${status}`);
             return res.json({ ok: true, order });
         }
 

@@ -88,6 +88,19 @@ export default async function handler(req, res) {
                 const names = (guilds.json || []).map((g) => g.name);
                 add('Discord DMs', 'bot is in your server', guilds.ok && names.length > 0, names.length ? `in: ${names.join(', ')}` : 'in no servers',
                     'Ask a server admin to open the bot invite link (guide step "Invite the bot").');
+                // Seller role → automatic seller desk access (see seller/api/enroll.js)
+                const roleId = process.env.DISCORD_ROLE_ID;
+                if (roleId && guilds.ok) {
+                    let found = null;
+                    for (const g of guilds.json || []) {
+                        const roles = await discordBot(`/guilds/${g.id}/roles`);
+                        const role = roles.ok && (roles.json || []).find((r) => r.id === roleId);
+                        if (role) { found = `@${role.name} in ${g.name}`; break; }
+                    }
+                    add('Discord DMs', 'seller role → seller desk', Boolean(found),
+                        found ? `${found}: members get the seller desk automatically` : 'the bot is not in the server that has this role',
+                        'Invite the bot to the server that has the seller role, and check DISCORD_ROLE_ID.');
+                }
             }
         } catch (err) {
             add('Discord DMs', 'bot reachable', false, err.message, 'Check DISCORD_BOT_TOKEN.');

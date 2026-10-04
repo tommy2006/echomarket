@@ -7,7 +7,7 @@ import {
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
-    pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush
+    pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
@@ -47,6 +47,9 @@ const navTo = (view) => (e) => {
     go('home');
 };
 const viewHref = (view) => (view === 'home' ? '/' : '#' + view);
+// ECH- code → "#42", kept up to date from the loaded orders (notifications only know the code).
+let SERIALS = {};
+const refFor = (orderId) => (SERIALS[orderId] ? `#${SERIALS[orderId]}` : orderId);
 
 // =========================================================================
 function App() {
@@ -140,7 +143,7 @@ function App() {
                 if (ev.actor_id !== userId) {
                     const text = describeEvent(ev);
                     toast(text, ev.kind === 'DECLINED' ? 'error' : 'success');
-                    notifyBrowser(`Order ${ev.order_id}`, text, ev.order_id);
+                    notifyBrowser(`Order ${refFor(ev.order_id)}`, text, ev.order_id);
                 }
             })
             .subscribe();
@@ -161,6 +164,7 @@ function App() {
     const endTour = () => { setTourOpen(false); store.set(LS_TOUR + userId, true); };
 
     // ---------------- derived
+    SERIALS = Object.fromEntries(orders.filter((o) => o.serial).map((o) => [o.id, o.serial]));
     const defaultAirline = airlines.find((a) => a.id === defaultAirlineId) || airlines[0] || null;
     const cartCount = cart.reduce((s, it) => s + it.qty, 0);
     const lastSeen = account?.notifications_seen_at || new Date(0).toISOString();
@@ -237,7 +241,7 @@ function App() {
                 setCart([]); setCartOpen(false);
                 setOrders((list) => [order, ...list.filter((o) => o.id !== order.id)]);
                 setHighlightOrder(order.id); go('orders'); loadAll();
-                toast(`Order ${order.id} sent! Sellers have been notified — you'll see here when one takes it.`, 'success');
+                toast(`Order ${orderRef(order)} sent! Sellers have been notified — you'll see here when one takes it.`, 'success');
             }} />
 
         <${NotificationsPanel} open=${notifOpen} inbox=${inbox} lastSeen=${lastSeen} account=${account} setAccount=${setAccount}
@@ -354,6 +358,10 @@ function Tour({ name, hasAirline, onDone }) {
 }
 
 function describeEvent(ev) {
+    const ev2 = { ...ev, order_id: refFor(ev.order_id) };
+    return describe(ev2);
+}
+function describe(ev) {
     switch (ev.kind) {
         case 'CLAIMED': return `${ev.order_id}: ${ev.message || 'A seller took your order.'}`;
         case 'RELEASED': return `${ev.order_id}: the seller released it — waiting for another seller.`;
@@ -377,7 +385,7 @@ function FullPageSpinner() {
 function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour }) {
     const [menu, setMenu] = useState(false);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
-        <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
             <a href="/" onClick=${navTo('home')} className="flex items-center gap-2.5 shrink-0">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <span className="font-extrabold tracking-tight text-white">Echo Market</span>
@@ -494,14 +502,6 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 // =========================================================================
 //  Home
 // =========================================================================
-function greetingFor(date) {
-    const h = date.getHours();
-    if (h < 5) return { text: 'Up late', icon: 'moon' };
-    if (h < 12) return { text: 'Good morning', icon: 'sunrise' };
-    if (h < 17) return { text: 'Good afternoon', icon: 'sun' };
-    return { text: 'Good evening', icon: 'sunset' };
-}
-
 function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder }) {
     const [now, setNow] = useState(() => new Date());
     useEffect(() => {
@@ -545,7 +545,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
             <div className="min-w-0">
                 <p className="label text-sky-300 flex items-center gap-2"><${Icon} name=${g.icon} className="w-4 h-4" />${date} · ${clock}</p>
-                <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
+                <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
                 <p className="text-sm text-slate-400 mt-1">${!dataReady ? 'Loading your fleet…'
                     : activeOrders.length ? `You have ${plural(activeOrders.length, 'order')} in progress.`
                     : orders.length ? 'No orders in progress right now.' : 'Welcome to Echo Market.'}</p>
@@ -579,7 +579,8 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                     className="card w-full text-left p-4 hover:border-slate-600 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                            <p className="font-bold text-white truncate">${o.airline_name} <span className="font-mono text-[11px] text-slate-500">${o.id}</span></p>
+                            <p className="font-bold text-white truncate">${o.airline_name}</p>
+                            <${OrderCode} order=${o} className="text-[11px]" />
                             <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}`
                                 : o.filled > 0 ? 'Partly delivered · waiting for a new seller' : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
                         </div>
@@ -925,20 +926,20 @@ function OrderCard({ order, events, highlight, onChanged }) {
     const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
 
     const cancel = async () => {
-        const ok = await ask({ title: `Cancel ${order.id}?`, message: 'Sellers will no longer see this order. You can only cancel while no seller has taken it.', confirmLabel: 'Cancel order', danger: true });
+        const ok = await ask({ title: `Cancel order ${orderRef(order)}?`, message: 'Sellers will no longer see this order. You can only cancel while no seller has taken it.', confirmLabel: 'Cancel order', danger: true });
         if (!ok) return;
         setBusy(true);
         try {
             const { order: updated } = await api(`/api/orders/${order.id}`, { action: 'cancel' });
             onChanged(updated);
-            toast(`${order.id} cancelled.`);
+            toast(`Order ${orderRef(order)} cancelled.`);
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
 
-    return html`<article id=${'order-' + order.id} className=${`card p-4 md:p-5 space-y-4 ${highlight ? 'ring-2 ring-sky-400/60' : ''}`}>
+    return html`<article id=${'order-' + order.id} className=${`card p-4 md:p-5 space-y-3 md:space-y-4 ${highlight ? 'ring-2 ring-sky-400/60' : ''}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-                <p className="font-mono text-xs text-slate-500">${order.id} · ${fmtDate(order.created_at)}</p>
+                <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-500"><${OrderCode} order=${order} /><span>${fmtDate(order.created_at)}</span></p>
                 <h3 className="font-extrabold text-white mt-0.5">${order.airline_name} <span className="text-slate-500 font-semibold text-sm">· ${order.alliance}</span></h3>
                 <p className="text-sm text-slate-400">${plural(order.total_qty, 'aircraft')} · ${fmtUSD(order.total_usd)}</p>
             </div>

@@ -132,6 +132,8 @@ export function orderItems(order) {
 export const sumFilled = (items) => items.reduce((s, it) => s + it.filled, 0);
 
 const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US');
+// "#42 · ECH-1A2B3C4D": the order's serial number (counts up from 1) plus its code.
+export const orderRef = (order) => (order.serial ? `#${order.serial} · ${order.id}` : order.id);
 
 // =====================================================================
 //  Discord channel messages (webhooks) — one message per order, moved
@@ -159,7 +161,7 @@ function buildEmbed(order, title, flag, declines = []) {
     const meta = handoff ? { ...STATUS_META.PENDING, label: '🔁 Partly delivered — needs a new seller' } : (STATUS_META[order.status] || STATUS_META.PENDING);
     const items = orderItems(order);
     const fields = [
-        { name: 'Order', value: order.id, inline: true },
+        { name: 'Order', value: orderRef(order), inline: true },
         { name: 'Buyer airline', value: `${order.airline_name}${order.alliance ? ` (${order.alliance})` : ''}`, inline: true },
         { name: 'Buyer', value: order.buyer_discord_id ? `<@${order.buyer_discord_id}>` : (order.buyer_name || '-'), inline: true },
         {
@@ -193,7 +195,7 @@ function buildEmbed(order, title, flag, declines = []) {
         url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined,
         color: meta.color,
         fields,
-        footer: { text: `Echo Market • ${order.id}` },
+        footer: { text: `Echo Market • ${orderRef(order)}` },
         timestamp: new Date().toISOString()
     };
 }
@@ -314,21 +316,56 @@ export async function dmBuyer(order, kind, extra = '') {
     if (!buyer) return;
     const url = BUYER_URL ? `${BUYER_URL}/#orders` : undefined;
     const seller = order.seller_airline_name ? `**${order.seller_airline_name}**${order.seller_alliance ? ` (${order.seller_alliance})` : ''}` : 'a seller';
+    const ref = orderRef(order);
     const lines = {
-        CREATED: { title: `📦 Order ${order.id} received`, color: 0x94A3B8,
+        CREATED: { title: `📦 Order ${ref} received`, color: 0x94A3B8,
             description: `Your order for ${order.total_qty} aircraft for **${order.airline_name}** (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
-        CLAIMED: { title: `🤝 Your order ${order.id} was taken`, color: 0x38BDF8,
+        CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: 0x38BDF8,
             description: `${seller} will sell you ${order.total_qty} aircraft for **${order.airline_name}**. Watch for the sale in-game.` },
-        PROGRESS: { title: `🟡 ${order.id}: ${order.filled} of ${order.total_qty} delivered`, color: 0xF1C40F,
+        PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: 0xF1C40F,
             description: `${seller} delivered more aircraft to **${order.airline_name}**.${extra ? `\n> ${extra}` : ''}` },
-        HANDOFF: { title: `🔁 ${order.id}: looking for a new seller`, color: 0xF59E0B,
+        HANDOFF: { title: `🔁 ${ref}: looking for a new seller`, color: 0xF59E0B,
             description: `${extra || 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
-        FULFILLED: { title: `✅ Your order ${order.id} is complete`, color: 0x2ECC71,
+        FULFILLED: { title: `✅ Your order ${ref} is complete`, color: 0x2ECC71,
             description: `All ${order.total_qty} aircraft were delivered to **${order.airline_name}** by ${seller}. Enjoy the new fleet!` },
-        DECLINED: { title: `⛔ Your order ${order.id} was declined`, color: 0xE11D48,
+        DECLINED: { title: `⛔ Your order ${ref} was declined`, color: 0xE11D48,
             description: `Reason: ${extra || 'not given'}\nYou can place a new order any time.` }
     }[kind];
     if (lines) await sendDM(buyer, { ...lines, url });
+}
+
+// =====================================================================
+//  Seller role → seller desk access. Anyone with the seller role (DISCORD_ROLE_ID, the same role new
+//  orders ping) in a Discord server the bot is in can use the seller desk. DISCORD_GUILD_ID can pin
+//  it to one server; otherwise every server the bot is in is checked.
+// =====================================================================
+export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && SELLER_ROLE_ID);
+
+// true / false = has the role or not; null = couldn't tell (Discord down, bad token…). Never throws.
+export async function hasSellerRole(discordId) {
+    if (!SELLER_ROLE_SYNC || !discordId) return null;
+    try {
+        let guildIds = env('DISCORD_GUILD_ID').split(',').map((s) => s.trim()).filter(Boolean);
+        if (!guildIds.length) {
+            const guilds = await discordBot('/users/@me/guilds');
+            if (!guilds.ok) return null;
+            guildIds = (guilds.json || []).map((g) => g.id);
+        }
+        let known = false;
+        for (const id of guildIds) {
+            const m = await discordBot(`/guilds/${id}/members/${discordId}`);
+            if (m.ok) {
+                known = true;
+                if ((m.json.roles || []).includes(SELLER_ROLE_ID)) return true;
+            } else if (m.status === 404) {
+                known = true;   // not in this server
+            }
+        }
+        return known ? false : null;
+    } catch (err) {
+        console.error('hasSellerRole failed:', err.message);
+        return null;
+    }
 }
 
 // =====================================================================

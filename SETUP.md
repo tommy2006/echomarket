@@ -387,11 +387,15 @@ When the admins add the bot to the main server later, nothing else changes. A bo
 
 Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app`.
 
-**8.2 Add the other sellers.** For each seller:
-1. They sign in on the seller site and send you the Discord ID shown there.
-2. 💬 *"Add Discord ID 123… as a seller."* Add *"…as an admin"* if they should be able to delete orders and manage any order.
+**8.2 Sellers get in through the Discord seller role (automatic).**
+Anyone with the seller role (`DISCORD_ROLE_ID`, the same role new orders ping) in a server the bot is in gets the seller desk the first time they sign in there. Take the role away and they lose access the next time they open it. Nothing goes through you.
+- Requirements: the bot is in that server (Part 6) and `DISCORD_ROLE_ID` is set in the **seller** Vercel project. `/api/health` shows a line **"seller role → seller desk"**.
+- Got the role a minute ago? On the "not on the seller list" screen, click **Check again**.
+- Only one server should count? Add `DISCORD_GUILD_ID` (right-click the server icon → **Copy Server ID**) to the seller project.
 
-To remove a seller: 💬 *"Deactivate seller with Discord ID 123…"*. Their history is kept.
+By hand, for people without the role, or for admins: 💬 *"Add Discord ID 123… as a seller."* Add *"…as an admin"* if they should be able to delete orders and manage any order. People added by hand are never changed by the role check.
+
+To block someone who still has the role: 💬 *"Block seller with Discord ID 123… (set active = false, source = manual)."* Their history is kept.
 
 ---
 
@@ -421,7 +425,7 @@ Every push to GitHub redeploys both sites, usually within a minute.
 | After login you land on the **wrong site or an error page** | Supabase **Site URL / Redirect URLs** (4.5). Both sites must be listed. |
 | The "Seller desk" link or "Create airline" button goes nowhere | `BUYER_URL` / `SELLER_URL` are missing in that project. Check `/api/health`. |
 | Login works but **"Market account not found"** | `schema.sql` didn't run fully. Run it again; that's safe. |
-| Seller site says **not on the seller list** | Add the Discord ID (5.4 / 8.2). |
+| Seller site says **not on the seller list** | Give them the seller role on Discord, then **Check again** (8.2). Or add the Discord ID by hand (5.4). |
 | **No Discord channel posts** | `/api/health → Discord channels` on *both* sites. Both need the webhooks. |
 | **No DMs** | `/api/health → Discord DMs` on both sites. The bot must be in the server, and the player must allow DMs from server members. |
 | A site was idle for a week and now **fails to load data** | Supabase Free pauses inactive projects. Go to Dashboard → project → **Restore**. No data is lost. |

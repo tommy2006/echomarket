@@ -1,6 +1,6 @@
 // POST /api/orders/:orderId  { action: 'cancel' } — buyer cancels an order nobody has taken yet
 // (and nothing has been delivered: a partly delivered order waiting for a new seller can't be cancelled).
-import { admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, orderRef, HttpError } from '../../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -25,6 +25,6 @@ export default handler(['POST'], async (req, res) => {
     }
 
     await addEvent(updated[0], 'CANCELLED', account, { message: reason });
-    await syncDiscord(updated[0], `✖️ Order ${order.id} cancelled by buyer`);
+    await syncDiscord(updated[0], `✖️ Order ${orderRef(order)} cancelled by buyer`);
     res.json({ ok: true, order: updated[0] });
 });
