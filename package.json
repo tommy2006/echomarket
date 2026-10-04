@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "sync": "node scripts/sync-shared.mjs",
-    "check": "node scripts/sync-shared.mjs --check"
+    "check": "node scripts/sync-shared.mjs --check",
+    "check-db": "node scripts/check-supabase.mjs"
   }
 }

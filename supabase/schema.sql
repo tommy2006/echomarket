@@ -259,6 +259,20 @@ create policy "flags: seller read" on public.order_flags
     for select to authenticated using (public.is_seller());
 
 -- ---------------------------------------------------------------------
+--  Table access for the website. Newer Supabase projects can have
+--  "automatically expose new tables" switched off, so grant explicitly.
+--  Row Level Security above still decides WHICH rows each person sees.
+-- ---------------------------------------------------------------------
+grant usage on schema public to anon, authenticated, service_role;
+grant select on public.alliances to anon, authenticated;
+grant select on public.accounts, public.sellers, public.orders, public.order_events, public.order_flags to authenticated;
+grant select, insert, update, delete on public.airlines to authenticated;
+grant execute on function public.is_seller() to anon, authenticated;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+
+-- ---------------------------------------------------------------------
 --  7. Realtime (live order updates in both apps)
 -- ---------------------------------------------------------------------
 do $$
