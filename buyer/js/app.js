@@ -31,7 +31,22 @@ const viewFromHash = () => {
     const h = window.location.hash.replace('#', '').split('/')[0];
     return VIEWS.some((v) => v.id === h) ? h : 'home';
 };
-const go = (view) => { window.location.hash = view; };
+// Home lives at the plain address (no "#home"); other views use #shop, #orders, #airlines.
+const homeUrl = () => window.location.pathname + window.location.search;
+const go = (view) => {
+    if (view !== 'home') { window.location.hash = view; return; }
+    if (window.location.hash) {
+        history.pushState(null, '', homeUrl());
+        window.dispatchEvent(new HashChangeEvent('hashchange'));   // tell the app the view changed
+    }
+};
+// Click handler for links to a view: Home is switched in place instead of following href="/".
+const navTo = (view) => (e) => {
+    if (view !== 'home' || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    go('home');
+};
+const viewHref = (view) => (view === 'home' ? '/' : '#' + view);
 
 // =========================================================================
 function App() {
@@ -66,12 +81,17 @@ function App() {
         try { navigator.serviceWorker?.register('/sw.js').catch(() => {}); } catch { /* unsupported */ }
         fetch('aircraft_pricelist.json').then((r) => r.json()).then(setPricelist)
             .catch(() => toast('Could not load the aircraft catalog. Refresh the page.', 'error'));
-        const onHash = () => setView(viewFromHash());
+        if (window.location.hash === '#home') history.replaceState(null, '', homeUrl());
+        const onHash = () => {
+            if (window.location.hash === '#home') history.replaceState(null, '', homeUrl());
+            setView(viewFromHash());
+        };
         window.addEventListener('hashchange', onHash);
+        window.addEventListener('popstate', onHash);
 
         sb.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
         const { data: sub } = sb.auth.onAuthStateChange((_event, s) => setSession(s));
-        return () => { window.removeEventListener('hashchange', onHash); sub.subscription.unsubscribe(); };
+        return () => { window.removeEventListener('hashchange', onHash); window.removeEventListener('popstate', onHash); sub.subscription.unsubscribe(); };
     }, []);
 
     useEffect(() => store.set(LS_CART, cart), [cart]);
@@ -358,12 +378,12 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
     const [menu, setMenu] = useState(false);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
-            <a href="#home" className="flex items-center gap-2.5 shrink-0">
+            <a href="/" onClick=${navTo('home')} className="flex items-center gap-2.5 shrink-0">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <span className="font-extrabold tracking-tight text-white">Echo Market</span>
             </a>
             <nav className="hidden md:flex items-center gap-1 ml-6">
-                ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} data-tour=${v.id}
+                ${VIEWS.map((v) => html`<a key=${v.id} href=${viewHref(v.id)} onClick=${navTo(v.id)} data-tour=${v.id}
                     className=${`px-3.5 py-2 rounded-full text-sm font-bold flex items-center gap-2 transition-colors ${view === v.id ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>
                     ${v.label}
                     ${v.id === 'orders' && activeCount > 0 && html`<span className="text-[10px] px-1.5 rounded-full bg-sky-400 text-slate-950">${activeCount}</span>`}
@@ -404,7 +424,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
 function BottomNav({ view, cartCount, activeCount, onCart }) {
     const item = (active) => `flex-1 flex flex-col items-center gap-1 py-2 text-[10px] font-bold ${active ? 'text-white' : 'text-slate-500'}`;
     return html`<nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-page/95 backdrop-blur border-t border-slate-800 flex px-2 pb-[env(safe-area-inset-bottom)]">
-        ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} data-tour=${v.id} className=${item(view === v.id)}>
+        ${VIEWS.map((v) => html`<a key=${v.id} href=${viewHref(v.id)} onClick=${navTo(v.id)} data-tour=${v.id} className=${item(view === v.id)}>
             <span className="relative"><${Icon} name=${v.icon} className="w-5 h-5" />
                 ${v.id === 'orders' && activeCount > 0 && html`<span className="absolute -top-1 -right-2 w-4 h-4 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${activeCount}</span>`}
             </span>${v.label}
