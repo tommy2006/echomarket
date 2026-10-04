@@ -19,6 +19,7 @@ const DAILY_LIMIT_USD = 10_000_000_000;
 const LS_CART = 'echo_cart_v2';
 const LS_DEFAULT_AIRLINE = 'echo_default_airline_v2';
 const LS_PRICE_LEVEL = 'echo_price_level_v2';
+const LS_TOUR = 'echo_tour_done_v1:';   // + user id
 
 const VIEWS = [
     { id: 'home', label: 'Home', icon: 'house' },
@@ -55,6 +56,7 @@ function App() {
     const [sheetModel, setSheetModel] = useState(null);
     const [airlineForm, setAirlineForm] = useState(null); // { airline? }
     const [highlightOrder, setHighlightOrder] = useState(null);
+    const [tourOpen, setTourOpen] = useState(false);
 
     const userId = session?.user?.id;
 
@@ -128,6 +130,16 @@ function App() {
         return () => { sb.removeChannel(channel); document.removeEventListener('visibilitychange', onVisible); };
     }, [userId, loadAll]);
 
+    // ---------------- first-time walkthrough
+    // Shown once to new buyers: account under 7 days old, no orders yet, not finished/skipped on this device.
+    useEffect(() => {
+        if (!dataReady || !account || !userId) return;
+        if (store.get(LS_TOUR + userId, false)) return;
+        const isNew = Date.now() - new Date(account.created_at).getTime() < 7 * 864e5;
+        if (isNew && orders.length === 0) setTourOpen(true);
+    }, [dataReady, account?.id, userId]);
+    const endTour = () => { setTourOpen(false); store.set(LS_TOUR + userId, true); };
+
     // ---------------- derived
     const defaultAirline = airlines.find((a) => a.id === defaultAirlineId) || airlines[0] || null;
     const cartCount = cart.reduce((s, it) => s + it.qty, 0);
@@ -169,7 +181,7 @@ function App() {
     return html`<div className="min-h-screen pb-28 md:pb-12">
         <${Header} ...${shared} view=${view} cartCount=${cartCount} unread=${unread} isSeller=${isSeller}
             defaultAirline=${defaultAirline} activeCount=${activeOrders.length}
-            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} />
+            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} onTour=${() => setTourOpen(true)} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-8 space-y-6">
             ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
@@ -222,8 +234,102 @@ function App() {
                 if (isNew && airlines.length === 0) go('shop');
             }} />
 
+        ${tourOpen && html`<${Tour} name=${account?.display_name || account?.discord_username || ''} hasAirline=${airlines.length > 0}
+            onDone=${(createAirline) => { endTour(); if (createAirline) { go('airlines'); setAirlineForm({}); } }} />`}
+
         <${Toasts} />
         <${DialogHost} />
+    </div>`;
+}
+
+// =========================================================================
+//  First-time walkthrough: spotlights the real buttons, one short step each.
+// =========================================================================
+const TOUR_STEPS = [
+    { target: null, icon: 'plane-takeoff', title: (n) => `Welcome to Echo Market${n ? `, ${n}` : ''}!`,
+      text: 'A 30-second tour of how ordering works. You can skip it any time.' },
+    { target: 'airlines', icon: 'building-2', title: () => '1 · Create your airline',
+      text: 'Orders are placed on behalf of an airline. Make one here (up to 20), each with its alliance.' },
+    { target: 'shop', icon: 'plane', title: () => '2 · Pick aircraft',
+      text: 'Choose a model, how many, and a price level: the % of the in-game list price you pay.' },
+    { target: 'cart', icon: 'shopping-cart', title: () => '3 · Review and send',
+      text: 'Your picks collect here. Choose the airline and send the order to the seller team.' },
+    { target: 'bell', icon: 'bell', title: () => '4 · Follow your order',
+      text: "A seller takes it and sells you the aircraft in-game. Updates land here; turn on Discord DMs to get them even when you're away." }
+];
+
+// The visible element for a tour anchor (desktop top bar or phone bottom bar).
+function tourTarget(key) {
+    if (!key) return null;
+    return [...document.querySelectorAll(`[data-tour="${key}"]`)].find((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }) || null;
+}
+
+function Tour({ name, hasAirline, onDone }) {
+    const [i, setI] = useState(0);
+    const [rect, setRect] = useState(null);
+    const step = TOUR_STEPS[i];
+    const last = i === TOUR_STEPS.length - 1;
+
+    useEffect(() => {
+        const measure = () => {
+            const el = tourTarget(step.target);
+            setRect(el ? el.getBoundingClientRect() : null);
+        };
+        measure();
+        // Re-measure on resize, rotation and layout changes (the target moves between top and bottom bars).
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        ro?.observe(document.documentElement);
+        window.addEventListener('resize', measure);
+        window.addEventListener('scroll', measure, true);
+        return () => { ro?.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
+    }, [i]);
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key === 'Escape') onDone(false);
+            if (e.key === 'ArrowRight' && !last) setI(i + 1);
+            if (e.key === 'ArrowLeft' && i > 0) setI(i - 1);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [i]);
+
+    // Card goes below the target, or above it when the target is near the bottom (phone nav bar).
+    const pad = 8, vw = window.innerWidth, vh = window.innerHeight, cardW = Math.min(340, vw - 32);
+    let cardStyle = { width: cardW + 'px' };
+    if (rect) {
+        const left = Math.max(16, Math.min(vw - cardW - 16, rect.left + rect.width / 2 - cardW / 2));
+        cardStyle = rect.top > vh / 2
+            ? { ...cardStyle, left: left + 'px', bottom: (vh - rect.top + pad + 10) + 'px' }
+            : { ...cardStyle, left: left + 'px', top: (rect.bottom + pad + 10) + 'px' };
+    }
+
+    return html`<div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Echo Market tour">
+        ${rect ? html`<div className="absolute rounded-2xl ring-2 ring-sky-300 transition-all duration-300 pointer-events-none"
+            style=${{ left: rect.left - pad + 'px', top: rect.top - pad + 'px', width: rect.width + pad * 2 + 'px', height: rect.height + pad * 2 + 'px',
+                boxShadow: '0 0 0 9999px rgba(3, 6, 20, 0.72)' }}></div>`
+            : html`<div className="absolute inset-0 bg-[rgba(3,6,20,0.72)]"></div>`}
+        <div className=${`absolute card !bg-slate-900 p-5 shadow-2xl animate-pop ${rect ? '' : 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'}`} style=${cardStyle}>
+            <div className="flex items-start gap-3">
+                <span className="w-10 h-10 shrink-0 rounded-xl bg-sky-400/15 text-sky-300 flex items-center justify-center"><${Icon} name=${step.icon} className="w-5 h-5" /></span>
+                <div className="min-w-0">
+                    <h2 className="font-extrabold text-white leading-snug">${step.title(name)}</h2>
+                    <p className="text-sm text-slate-300 mt-1 leading-relaxed">${step.text}</p>
+                </div>
+            </div>
+            <div className="flex items-center gap-2 mt-4">
+                <div className="flex gap-1 mr-auto" aria-label=${`Step ${i + 1} of ${TOUR_STEPS.length}`}>
+                    ${TOUR_STEPS.map((_, j) => html`<span key=${j} className=${`h-1.5 rounded-full transition-all ${j === i ? 'w-5 bg-sky-400' : 'w-1.5 bg-slate-700'}`}></span>`)}
+                </div>
+                ${!last && html`<${Button} variant="ghost" size="sm" onClick=${() => onDone(false)}>Skip<//>`}
+                ${i > 0 && html`<${Button} variant="secondary" size="sm" onClick=${() => setI(i - 1)}>Back<//>`}
+                ${last
+                    ? html`<${Button} size="sm" icon=${hasAirline ? 'check' : 'plus'} onClick=${() => onDone(!hasAirline)}>${hasAirline ? 'Done' : 'Create my airline'}<//>`
+                    : html`<${Button} size="sm" onClick=${() => setI(i + 1)}>${i === 0 ? 'Show me' : 'Next'}<//>`}
+            </div>
+        </div>
     </div>`;
 }
 
@@ -248,7 +354,7 @@ function FullPageSpinner() {
     return html`<div className="min-h-screen flex items-center justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
 }
 
-function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut }) {
+function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour }) {
     const [menu, setMenu] = useState(false);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
@@ -257,7 +363,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                 <span className="font-extrabold tracking-tight text-white">Echo Market</span>
             </a>
             <nav className="hidden md:flex items-center gap-1 ml-6">
-                ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id}
+                ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} data-tour=${v.id}
                     className=${`px-3.5 py-2 rounded-full text-sm font-bold flex items-center gap-2 transition-colors ${view === v.id ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>
                     ${v.label}
                     ${v.id === 'orders' && activeCount > 0 && html`<span className="text-[10px] px-1.5 rounded-full bg-sky-400 text-slate-950">${activeCount}</span>`}
@@ -265,11 +371,11 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
             </nav>
             <div className="flex-1"></div>
             ${session ? html`
-                <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open your order">
+                <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open your order" data-tour="cart">
                     <${Icon} name="shopping-cart" className="w-5 h-5" />
                     ${cartCount > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-sky-400 text-slate-950 text-[10px] font-black flex items-center justify-center">${cartCount}</span>`}
                 </button>
-                <button onClick=${onBell} className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Notifications">
+                <button onClick=${onBell} className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Notifications" data-tour="bell">
                     <${Icon} name="bell" className="w-5 h-5" />
                     ${unread > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">${unread}</span>`}
                 </button>
@@ -285,6 +391,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                         </div>
                         <a href="#airlines" className="menu-item"><${Icon} name="building-2" /> My airlines</a>
                         <a href="#orders" className="menu-item"><${Icon} name="package" /> My orders</a>
+                        <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
                         ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> Seller dashboard</a>`}
                         <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
                     </div>`}
@@ -297,12 +404,12 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
 function BottomNav({ view, cartCount, activeCount, onCart }) {
     const item = (active) => `flex-1 flex flex-col items-center gap-1 py-2 text-[10px] font-bold ${active ? 'text-white' : 'text-slate-500'}`;
     return html`<nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-page/95 backdrop-blur border-t border-slate-800 flex px-2 pb-[env(safe-area-inset-bottom)]">
-        ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} className=${item(view === v.id)}>
+        ${VIEWS.map((v) => html`<a key=${v.id} href=${'#' + v.id} data-tour=${v.id} className=${item(view === v.id)}>
             <span className="relative"><${Icon} name=${v.icon} className="w-5 h-5" />
                 ${v.id === 'orders' && activeCount > 0 && html`<span className="absolute -top-1 -right-2 w-4 h-4 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${activeCount}</span>`}
             </span>${v.label}
         </a>`)}
-        <button onClick=${onCart} className=${item(false)} aria-label="Buy: open your order">
+        <button onClick=${onCart} className=${item(false)} aria-label="Buy: open your order" data-tour="cart">
             <span className="relative"><${Icon} name="shopping-cart" className="w-5 h-5" />
                 ${cartCount > 0 && html`<span className="absolute -top-1 -right-2 min-w-4 h-4 px-0.5 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${cartCount}</span>`}
             </span>Buy
