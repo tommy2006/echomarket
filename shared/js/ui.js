@@ -108,7 +108,7 @@ export const toneClass = (tone) => TONES[tone] || TONES.slate;
 
 export function StatusBadge({ status }) {
     const meta = STATUS[status] || STATUS.PENDING;
-    return html`<span className=${`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold ${toneClass(meta.tone)}`}>
+    return html`<span className=${`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold ${toneClass(meta.tone)}`}>
         <${Icon} name=${meta.icon} className="w-3.5 h-3.5" />${meta.label}
     </span>`;
 }

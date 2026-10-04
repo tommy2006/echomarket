@@ -20,13 +20,14 @@ const LS_DEFAULT_AIRLINE = 'echo_default_airline_v2';
 const LS_PRICE_LEVEL = 'echo_price_level_v2';
 
 const VIEWS = [
+    { id: 'home', label: 'Home', icon: 'house' },
     { id: 'shop', label: 'Shop', icon: 'plane' },
     { id: 'orders', label: 'Orders', icon: 'package' },
     { id: 'airlines', label: 'Airlines', icon: 'building-2' }
 ];
 const viewFromHash = () => {
     const h = window.location.hash.replace('#', '').split('/')[0];
-    return VIEWS.some((v) => v.id === h) ? h : 'shop';
+    return VIEWS.some((v) => v.id === h) ? h : 'home';
 };
 const go = (view) => { window.location.hash = view; };
 
@@ -157,7 +158,7 @@ function App() {
         setAccount((a) => a && { ...a, notifications_seen_at: now });
         await sb.from('accounts').update({ notifications_seen_at: now }).eq('id', userId);
     };
-    const signOut = async () => { await sb.auth.signOut(); go('shop'); };
+    const signOut = async () => { await sb.auth.signOut(); go('home'); };
 
     if (!authReady) return html`<${FullPageSpinner} />`;
 
@@ -169,8 +170,14 @@ function App() {
             onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-8 space-y-6">
-            <${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
-                onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />
+            ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
+                onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`}
+
+            ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox}
+                spent24h=${spent24h} cartCount=${cartCount} onOpenCart=${() => setCartOpen(true)}
+                onOpenOrder=${(id) => { setHighlightOrder(id); go('orders'); }}
+                guide=${html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
+                    onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`} />`}
 
             ${view === 'shop' && html`<${ShopView} ...${shared} setPriceLevel=${setPriceLevel}
                 onPick=${(model) => (requireAirline() ? setSheetModel(model) : null)} />`}
@@ -242,7 +249,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
     const [menu, setMenu] = useState(false);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
-            <a href="#shop" className="flex items-center gap-2.5 shrink-0">
+            <a href="#home" className="flex items-center gap-2.5 shrink-0">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <span className="font-extrabold tracking-tight text-white">Echo Market</span>
             </a>
@@ -255,16 +262,16 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
             </nav>
             <div className="flex-1"></div>
             ${session ? html`
-                <button onClick=${onCart} className="hidden md:flex relative p-2.5 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open order">
+                <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open your order">
                     <${Icon} name="shopping-cart" className="w-5 h-5" />
                     ${cartCount > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-sky-400 text-slate-950 text-[10px] font-black flex items-center justify-center">${cartCount}</span>`}
                 </button>
-                <button onClick=${onBell} className="relative p-2.5 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Notifications">
+                <button onClick=${onBell} className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Notifications">
                     <${Icon} name="bell" className="w-5 h-5" />
                     ${unread > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">${unread}</span>`}
                 </button>
                 <div className="relative">
-                    <button onClick=${() => setMenu(!menu)} aria-label="Account menu" className="flex items-center gap-2 p-1 pr-2 rounded-full hover:bg-slate-800">
+                    <button onClick=${() => setMenu(!menu)} aria-label="Account menu" className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
                         <${Avatar} account=${account} />
                         <${Icon} name="chevron-down" className="w-4 h-4 text-slate-500" />
                     </button>
@@ -292,10 +299,10 @@ function BottomNav({ view, cartCount, activeCount, onCart }) {
                 ${v.id === 'orders' && activeCount > 0 && html`<span className="absolute -top-1 -right-2 w-4 h-4 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${activeCount}</span>`}
             </span>${v.label}
         </a>`)}
-        <button onClick=${onCart} className=${item(false)}>
+        <button onClick=${onCart} className=${item(false)} aria-label="Buy: open your order">
             <span className="relative"><${Icon} name="shopping-cart" className="w-5 h-5" />
                 ${cartCount > 0 && html`<span className="absolute -top-1 -right-2 min-w-4 h-4 px-0.5 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${cartCount}</span>`}
-            </span>Order
+            </span>Buy
         </button>
     </nav>`;
 }
@@ -319,7 +326,7 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
             </ol>
             <div className="mt-7 flex flex-wrap items-center gap-3">
                 <${Button} variant="discord" size="lg" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in with Discord<//>
-                <span className="text-xs text-slate-500">Browsing the catalog below doesn't need an account.</span>
+                <span className="text-xs text-slate-500">Browsing the catalog doesn't need an account.</span>
             </div>
         </section>`;
     }
@@ -334,7 +341,7 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
         step = { n: 3, title: 'Pick aircraft from the catalog', text: 'Choose a model, quantity and price level, then send the order.', action: html`<${Button} icon="plane" onClick=${() => go('shop')}>Open catalog<//>` };
     } else if (!orders.length) {
         step = { n: 3, title: 'Pick aircraft below', text: 'Tap "Add" on any aircraft. When you are done, review and send your order.' };
-    } else if (activeOrders.length && view !== 'orders') {
+    } else if (activeOrders.length && view !== 'orders' && view !== 'home') {
         step = { n: null, title: `${plural(activeOrders.length, 'order')} in progress`, text: 'See which seller took them and how many aircraft were delivered.', action: html`<${Button} variant="secondary" icon="package" onClick=${() => go('orders')}>Track orders<//>` };
     }
     if (!step) return null;
@@ -351,6 +358,130 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
             </div>
         </div>
         ${step.action && html`<div className="shrink-0">${step.action}</div>`}
+    </section>`;
+}
+
+// =========================================================================
+//  Home
+// =========================================================================
+function greetingFor(date) {
+    const h = date.getHours();
+    if (h < 5) return { text: 'Up late', icon: 'moon' };
+    if (h < 12) return { text: 'Good morning', icon: 'sunrise' };
+    if (h < 17) return { text: 'Good afternoon', icon: 'sun' };
+    return { text: 'Good evening', icon: 'sunset' };
+}
+
+function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder }) {
+    const [now, setNow] = useState(() => new Date());
+    useEffect(() => {
+        const t = setInterval(() => setNow(new Date()), 30000);
+        return () => clearInterval(t);
+    }, []);
+
+    if (!session) {
+        return html`<section className="space-y-4">
+            ${guide}
+            <div className="flex flex-wrap gap-2">
+                <${Button} variant="secondary" icon="plane" onClick=${() => go('shop')}>Browse the catalog<//>
+            </div>
+        </section>`;
+    }
+
+    const g = greetingFor(now);
+    const name = account?.display_name || account?.discord_username || '';
+    const clock = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const date = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+
+    const waiting = activeOrders.filter((o) => o.status === 'PENDING').length;
+    const inDelivery = activeOrders.length - waiting;
+    const fulfilled = orders.filter((o) => o.status === 'FULFILLED');
+    const received = orders.filter((o) => !CLOSED_STATUSES.includes(o.status)).reduce((s, o) => s + o.filled, 0);
+    const activeQty = activeOrders.reduce((s, o) => s + o.total_qty, 0);
+    const activeFilled = activeOrders.reduce((s, o) => s + o.filled, 0);
+    const activePct = activeQty ? Math.round((activeFilled / activeQty) * 100) : 0;
+    const budgetPct = Math.min(100, Math.round((spent24h / DAILY_LIMIT_USD) * 100));
+
+    const tile = (icon, label, value, sub, extra) => html`<div className="card p-4 md:p-5 flex flex-col gap-1 min-w-0">
+        <div className="flex items-center justify-between text-slate-400">
+            <span className="text-xs font-bold">${label}</span><${Icon} name=${icon} className="w-4 h-4" />
+        </div>
+        <p className="text-3xl font-black text-white tabular-nums">${value}</p>
+        <p className="text-xs text-slate-400 leading-snug">${sub}</p>
+        ${extra}
+    </div>`;
+
+    return html`<section className="space-y-6">
+        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+            <div className="min-w-0">
+                <p className="label text-sky-300 flex items-center gap-2"><${Icon} name=${g.icon} className="w-4 h-4" />${date} · ${clock}</p>
+                <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
+                <p className="text-sm text-slate-400 mt-1">${!dataReady ? 'Loading your fleet…'
+                    : activeOrders.length ? `You have ${plural(activeOrders.length, 'order')} in progress.`
+                    : orders.length ? 'No orders in progress right now.' : 'Welcome to Echo Market.'}</p>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0">
+                ${cartCount > 0 && html`<${Button} icon="shopping-cart" onClick=${onOpenCart}>Review order (${cartCount})<//>`}
+                <${Button} variant=${cartCount > 0 ? 'secondary' : 'primary'} icon="plane" onClick=${() => go('shop')}>Buy aircraft<//>
+            </div>
+        </header>
+
+        ${guide}
+
+        ${dataReady && orders.length > 0 && html`<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            ${tile('package', 'Active orders', activeOrders.length, `${waiting} waiting · ${inDelivery} with a seller`)}
+            ${tile('circle-check', 'Delivered orders', fulfilled.length, `${plural(received, 'aircraft')} received in total`)}
+            ${tile('plane-landing', 'Active progress', activeQty ? `${activePct}%` : '–',
+                activeQty ? `${activeFilled} of ${plural(activeQty, 'aircraft')} delivered` : 'nothing in delivery',
+                activeQty > 0 && html`<div className="mt-2"><${ProgressBar} value=${activeFilled} max=${activeQty} /></div>`)}
+            ${tile('wallet', '24-hour budget', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used`,
+                html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} /></div>`)}
+        </div>`}
+
+        ${dataReady && orders.length > 0 && html`<div className="grid lg:grid-cols-5 gap-4">
+            <div className="lg:col-span-3 space-y-3 min-w-0">
+                <div className="flex items-center justify-between">
+                    <h2 className="font-extrabold text-white">Orders in progress</h2>
+                    <a href="#orders" className="text-xs font-bold text-slate-400 hover:text-white">All orders →</a>
+                </div>
+                ${!activeOrders.length ? html`<div className="card p-5 text-sm text-slate-400">Nothing in progress. Your delivered orders are under <a href="#orders" className="underline">Orders</a>.</div>`
+                : activeOrders.slice(0, 4).map((o) => html`<button key=${o.id} onClick=${() => onOpenOrder(o.id)}
+                    className="card w-full text-left p-4 hover:border-slate-600 space-y-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="font-bold text-white truncate">${o.airline_name} <span className="font-mono text-[11px] text-slate-500">${o.id}</span></p>
+                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}` : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
+                        </div>
+                        <${StatusBadge} status=${o.status} />
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <div className="flex-1"><${ProgressBar} value=${o.filled} max=${o.total_qty} /></div>
+                        <span className="text-xs font-bold text-slate-300 tabular-nums">${o.filled}/${o.total_qty}</span>
+                    </div>
+                </button>`)}
+                ${activeOrders.length > 4 && html`<a href="#orders" className="block text-center text-xs font-bold text-slate-400 hover:text-white">+ ${activeOrders.length - 4} more in progress</a>`}
+            </div>
+            <div className="lg:col-span-2 space-y-3 min-w-0">
+                <h2 className="font-extrabold text-white">Latest updates</h2>
+                <div className="card p-2">
+                    ${!inbox.length ? html`<p className="text-sm text-slate-400 p-3">No updates yet. You'll see here when a seller takes or delivers your order.</p>`
+                    : html`<ul className="divide-y divide-slate-800">${inbox.slice(0, 5).map((e) => html`<li key=${e.id}>
+                        <button onClick=${() => onOpenOrder(e.order_id)} className="w-full text-left p-3 rounded-xl hover:bg-slate-800/40">
+                            <span className="block text-sm text-slate-200">${describeEvent(e)}</span>
+                            <span className="block text-[11px] text-slate-500 mt-0.5">${timeAgo(e.created_at)}</span>
+                        </button>
+                    </li>`)}</ul>`}
+                </div>
+                <a href="#airlines" className="card flex items-center gap-3 p-4 hover:border-slate-600">
+                    <span className="w-9 h-9 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name="building-2" /></span>
+                    <span className="flex-1 min-w-0">
+                        <span className="block font-bold text-white text-sm">Your airlines</span>
+                        <span className="block text-xs text-slate-400 truncate">${airlines.length ? airlines.map((a) => a.name).join(', ') : 'None yet'}</span>
+                    </span>
+                    <span className="text-xs font-bold text-slate-400 tabular-nums">${airlines.length}/${MAX_AIRLINES}</span>
+                </a>
+            </div>
+        </div>`}
     </section>`;
 }
 
