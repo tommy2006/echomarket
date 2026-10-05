@@ -196,10 +196,15 @@ export function ItemProgress({ order, compact = false }) {
     </ul>`;
 }
 
-export function ProgressBar({ value, max }) {
+// usage: a limit being used up (accent until 75%, then yellow, orange from 90%, red when full),
+// instead of progress towards a goal (accent, green when done).
+export function ProgressBar({ value, max, usage = false }) {
     const pct = max ? Math.round((value / max) * 100) : 0;
+    const fill = usage
+        ? (pct >= 100 ? 'bg-red-500' : pct >= 90 ? 'bg-orange-500' : pct >= 75 ? 'bg-yellow-400' : 'bg-sky-400')
+        : (pct >= 100 ? 'bg-emerald-400' : 'bg-sky-400');
     return html`<div className="h-2 rounded-full bg-slate-800 overflow-hidden">
-        <div className=${`h-full rounded-full transition-all ${pct >= 100 ? 'bg-emerald-400' : 'bg-sky-400'}`} style=${{ width: pct + '%' }}></div>
+        <div className=${`h-full rounded-full transition-all ${fill}`} style=${{ width: Math.min(100, pct) + '%' }}></div>
     </div>`;
 }
 

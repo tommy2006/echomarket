@@ -565,7 +565,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                 activeQty ? `${activeFilled} of ${plural(activeQty, 'aircraft')} delivered` : 'nothing in delivery',
                 activeQty > 0 && html`<div className="mt-2"><${ProgressBar} value=${activeFilled} max=${activeQty} /></div>`)}
             ${tile('wallet', '24-hour limit', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used, at list price`,
-                html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} /></div>`)}
+                html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} usage=${true} /></div>`)}
         </div>`}
 
         ${dataReady && orders.length > 0 && html`<div className="grid lg:grid-cols-5 gap-4">
@@ -856,7 +856,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                 </div>
                 ${session && html`<div>
                     <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>24-hour limit, at list price</span><span>${fmtUSDShort(spent24h + listTotal)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
-                    <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} />
+                    <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} usage=${true} />
                 </div>`}
                 ${problems.length > 0 && cart.length > 0 && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="info" className="w-3.5 h-3.5 mt-px" />${problems[0]}</p>`}
                 ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in to send<//>`
