@@ -147,13 +147,22 @@ export const WEBHOOKS = {
 };
 const SELLER_ROLE_ID = env('DISCORD_ROLE_ID');
 
+// Embed side-bar colours, used for channel posts and DMs alike.
+// Black is 0x010101: Discord treats 0x000000 as "no colour" and would show its default grey.
+export const EMBED_COLORS = {
+    request: 0xFFFFFF,     // new / back in the queue: white
+    progress: 0x808080,    // taken / partly delivered: grey, halfway between black and white
+    fulfilled: 0x010101,   // fully delivered: black
+    declined: 0xED4245,    // declined for everyone: Discord red
+    cancelled: 0x64748B
+};
 const STATUS_META = {
-    PENDING:   { label: '⏳ Waiting for a seller', color: 0x94A3B8, channel: 'request' },
-    CLAIMED:   { label: '🤝 Taken by a seller',    color: 0x38BDF8, channel: 'progress' },
-    PARTIAL:   { label: '🟡 Partially delivered',  color: 0xF1C40F, channel: 'progress' },
-    FULFILLED: { label: '✅ Fulfilled',            color: 0x2ECC71, channel: 'fulfilled' },
-    CANCELLED: { label: '✖️ Cancelled by buyer',   color: 0x64748B, channel: null },
-    DECLINED:  { label: '⛔ Declined',             color: 0xE11D48, channel: null }
+    PENDING:   { label: '⏳ Waiting for a seller', color: EMBED_COLORS.request,   channel: 'request' },
+    CLAIMED:   { label: '🤝 Taken by a seller',    color: EMBED_COLORS.progress,  channel: 'progress' },
+    PARTIAL:   { label: '🟡 Partially delivered',  color: EMBED_COLORS.progress,  channel: 'progress' },
+    FULFILLED: { label: '✅ Fulfilled',            color: EMBED_COLORS.fulfilled, channel: 'fulfilled' },
+    CANCELLED: { label: '✖️ Cancelled by buyer',   color: EMBED_COLORS.cancelled, channel: null },
+    DECLINED:  { label: '⛔ Declined',             color: EMBED_COLORS.declined,  channel: null }
 };
 
 function buildEmbed(order, title, flag, declines = []) {
@@ -278,7 +287,7 @@ export async function discordBot(path, method = 'GET', payload) {
 }
 
 // Returns 'sent' | 'blocked' | 'off' | 'unavailable' | 'error'. Never throws.
-export async function sendDM(account, { title, description, color = 0x38BDF8, url, fields = [] }) {
+export async function sendDM(account, { title, description, color = EMBED_COLORS.progress, url, fields = [] }) {
     if (!BOT_TOKEN) return 'unavailable';
     if (!account?.discord_id) return 'error';
     if (account.dm_enabled === false) return 'off';
@@ -318,17 +327,17 @@ export async function dmBuyer(order, kind, extra = '') {
     const seller = order.seller_airline_name ? `**${order.seller_airline_name}**${order.seller_alliance ? ` (${order.seller_alliance})` : ''}` : 'a seller';
     const ref = orderRef(order);
     const lines = {
-        CREATED: { title: `📦 Order ${ref} received`, color: 0x94A3B8,
+        CREATED: { title: `📦 Order ${ref} received`, color: EMBED_COLORS.request,
             description: `Your order for ${order.total_qty} aircraft for **${order.airline_name}** (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
-        CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: 0x38BDF8,
+        CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: EMBED_COLORS.progress,
             description: `${seller} will sell you ${order.total_qty} aircraft for **${order.airline_name}**. Watch for the sale in-game.` },
-        PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: 0xF1C40F,
+        PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: EMBED_COLORS.progress,
             description: `${seller} delivered more aircraft to **${order.airline_name}**.${extra ? `\n> ${extra}` : ''}` },
-        HANDOFF: { title: `🔁 ${ref}: looking for a new seller`, color: 0xF59E0B,
+        HANDOFF: { title: `🔁 ${ref}: looking for a new seller`, color: EMBED_COLORS.request,
             description: `${extra || 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
-        FULFILLED: { title: `✅ Your order ${ref} is complete`, color: 0x2ECC71,
+        FULFILLED: { title: `✅ Your order ${ref} is complete`, color: EMBED_COLORS.fulfilled,
             description: `All ${order.total_qty} aircraft were delivered to **${order.airline_name}** by ${seller}. Enjoy the new fleet!` },
-        DECLINED: { title: `⛔ Your order ${ref} was declined`, color: 0xE11D48,
+        DECLINED: { title: `⛔ Your order ${ref} was declined`, color: EMBED_COLORS.declined,
             description: `Reason: ${extra || 'not given'}\nYou can place a new order any time.` }
     }[kind];
     if (lines) await sendDM(buyer, { ...lines, url });
