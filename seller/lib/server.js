@@ -175,7 +175,7 @@ function buildEmbed(order, title, flag, declines = []) {
         { name: 'Buyer', value: order.buyer_discord_id ? `<@${order.buyer_discord_id}>` : (order.buyer_name || '-'), inline: true },
         {
             name: `Aircraft (${items.length} type${items.length === 1 ? '' : 's'})`,
-            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)} · ${it.filled}/${it.qty} delivered${it.note ? `\n  _${it.note}_` : ''}`)
+            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)}${it.note ? `\n  _${it.note}_` : ''}`)
                 .join('\n').slice(0, 1000) || '-',
             inline: false
         },
