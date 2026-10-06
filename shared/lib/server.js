@@ -118,6 +118,33 @@ export async function getSeller(accountId) {
     return data && data.active ? data : null;
 }
 
+// For seller ACTIONS: like getSeller(), but people who are sellers because of their Discord role must
+// still have that role. Re-checked with Discord at most every ROLE_RECHECK_MINUTES; losing the role
+// switches the seller off immediately. If Discord can't be reached, a check from the last hour still counts.
+const ROLE_RECHECK_MINUTES = 10;
+export async function requireActiveSeller(account) {
+    const seller = await getSeller(account.id);
+    if (!seller) throw new HttpError(403, 'You are not on the seller list.');
+    if (seller.source !== 'discord_role') return seller;
+    const age = seller.role_checked_at ? Date.now() - new Date(seller.role_checked_at).getTime() : Infinity;
+    if (age < ROLE_RECHECK_MINUTES * 60e3) return seller;
+    const has = account.discord_id ? await hasSellerRole(account.discord_id) : false;
+    if (has === false) {
+        await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
+        throw new HttpError(403, 'You no longer have the seller role on Discord, so your seller access was switched off.');
+    }
+    if (has === null) {
+        if (age < 60 * 60e3) return seller;
+        throw new HttpError(503, "Couldn't confirm your seller role with Discord right now. Try again in a minute.");
+    }
+    await markRoleChecked(account.id);
+    return seller;
+}
+export async function markRoleChecked(accountId) {
+    const { error } = await admin().from('sellers').update({ role_checked_at: new Date().toISOString() }).eq('user_id', accountId);
+    if (error) console.warn('role_checked_at not saved (re-run schema.sql?):', error.message);
+}
+
 export function accountName(account) {
     return account.display_name || account.discord_username || 'Unknown';
 }
@@ -172,7 +199,15 @@ export const sumFilled = (items) => items.reduce((s, it) => s + it.filled, 0);
 const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US');
 // Player-typed text shown on Discord: escape markdown so nobody can post masked links ([text](url)),
 // fake formatting or mentions inside an official Echo Market message.
-export const md = (value) => String(value ?? '').replace(/([\\*_~`|>\[\]()#<-])/g, '\\$1').replace(/@/g, '@\u200b');
+// Discord turns "https://…", "www.…" and "discord.gg/…" into clickable links even inside embeds.
+// An invisible zero-width space after "://" and after dots between letters stops that, so player text
+// (airline names, notes, reasons) always shows as plain text. Use plain() where markdown isn't parsed
+// (embed titles), md() everywhere else.
+export const plain = (value) => String(value ?? '')
+    .replace(/:\/\//g, ':\u200b//')
+    .replace(/([A-Za-z0-9])\.(?=[A-Za-z0-9])/g, '$1.\u200b')
+    .replace(/@/g, '@\u200b');
+export const md = (value) => plain(value).replace(/([\\*_~`|>\[\]()#<-])/g, '\\$1');
 // All buyer airlines an order may be delivered to (older orders: just the one).
 export function orderAirlines(order) {
     const list = Array.isArray(order.airlines) ? order.airlines.filter((a) => a && a.name) : [];

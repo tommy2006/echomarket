@@ -2,7 +2,7 @@
 // Called by the seller desk on sign-in. Anyone with the seller role (DISCORD_ROLE_ID) in a server
 // the bot is in gets a sellers row (source 'discord_role'); losing the role switches it off again.
 // Rows added by hand (source 'manual', e.g. admins or blocked people) are never changed here.
-import { admin, handler, requireUser, hasSellerRole, rateLimit, SELLER_ROLE_SYNC } from '../lib/server.js';
+import { admin, handler, requireUser, hasSellerRole, markRoleChecked, rateLimit, SELLER_ROLE_SYNC } from '../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -20,18 +20,23 @@ export default handler(['POST'], async (req, res) => {
     const has = account.discord_id ? await hasSellerRole(account.discord_id) : false;
     // Discord didn't answer: keep whatever they had.
     if (has === null) return reply(Boolean(row?.active), false, { unknown: true });
+    // Seller access through the role needs a recent check (see is_seller() and requireActiveSeller()).
+    const confirm = async () => { if (has) await markRoleChecked(account.id); };
 
     if (!row && has) {
         const { error: insErr } = await db.from('sellers').insert({
             user_id: account.id, source: 'discord_role', active: true, note: 'Added automatically (Discord seller role)'
         });
         if (insErr && insErr.code !== '23505') throw insErr;   // 23505: added by a parallel request
+        await confirm();
         return reply(true, true, { source: 'discord_role' });
     }
     if (row && row.active !== has) {
         const { error: updErr } = await db.from('sellers').update({ active: has }).eq('user_id', account.id);
         if (updErr) throw updErr;
+        await confirm();
         return reply(has, true, { source: 'discord_role' });
     }
+    await confirm();
     return reply(has, false, { source: 'discord_role' });
 });

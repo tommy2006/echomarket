@@ -54,7 +54,7 @@ for (const t of TABLES) {
 // 1b. Columns added by later versions of schema.sql
 const col = await get('/rest/v1/orders?select=previous_sellers&limit=1');
 line(col.status === 200, 'orders.previous_sellers', col.status === 200 ? '' : 'missing: re-run supabase/schema.sql (safe to run again)');
-for (const [table, column] of [['orders', 'status_history'], ['orders', 'serial'], ['orders', 'airlines'], ['sellers', 'source']]) {
+for (const [table, column] of [['orders', 'status_history'], ['orders', 'serial'], ['orders', 'airlines'], ['sellers', 'source'], ['sellers', 'role_checked_at']]) {
     const c = await get(`/rest/v1/${table}?select=${column}&limit=1`);
     line(c.status === 200, `${table}.${column}`, c.status === 200 ? '' : 'missing: re-run supabase/schema.sql (safe to run again)');
 }

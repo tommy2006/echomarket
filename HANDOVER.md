@@ -77,6 +77,13 @@ A player took over seller access by editing their own Supabase user metadata (`s
 | Rate limits per account: 3 test DMs and 3 test alerts per 10 minutes, 20 alert sign-ups per hour, 30 seller-role checks per 10 minutes, 120 seller actions per 10 minutes. | `public.hit_rate_limit()`, `rateLimit()` |
 | Database: every function pins its `search_path` (Supabase security advisor 0011), and the browser roles have no write access to tables the website never writes, even if a policy is added by mistake. | schema.sql |
 | Tapping a phone alert only ever opens a page of the market itself. | buyer/sw.js |
+| **Role sellers must keep the role.** Sellers who got in through the Discord role are re-checked with Discord before seller actions (at most every 10 minutes) and lose access as soon as the role is gone. They can only read orders while the role was confirmed in the last hour; the seller desk refreshes the check when it opens. (Security report MKT-01) | `requireActiveSeller()`, `is_seller()`, `sellers.role_checked_at` |
+| **No links in Discord posts from player text.** Web addresses, `www.` and invite links in airline names, notes and reasons are broken up with an invisible character, so they show as plain text and can't be clicked. New airline names can't contain links at all. (MKT-06) | `plain()` / `md()` in server.js, `airlines_name_no_links` |
+| **Public health page shows no names or numbers.** Set `HEALTH_TOKEN` (any long random text) in a Vercel project and open `/api/health?token=…` for the full view. (MKT-02) | health.js |
+| **Seller role server pinned.** Set `DISCORD_GUILD_ID` in the seller project to the Echo Alliances server ID, and keep the bot's **Public Bot** setting OFF after inviting it. The health page shows whether it's set. (MKT-03) | seller Vercel env, Discord Developer Portal |
+| **Order cap can't be raced.** "5 orders per 10 minutes" uses the database counter, so orders sent at the same moment can't all get through. (MKT-04) | buyer/api/orders.js |
+| **Owner-only order changes are checked by the database.** Delivery updates, releases and seller notes only apply if the order still belongs to that seller (or an admin) at the moment of saving. (MKT-05) | seller/api/orders/[orderId].js |
+| **Only Discord sign-in.** The health page fails if any other sign-in method (email, anonymous, other providers) is switched on in Supabase. (MKT-07) | health.js |
 
 ## Decisions you made (October 2026)
 

@@ -76,7 +76,7 @@ function App() {
     const [buyerOf, setBuyerOf] = useState(null); // order whose buyer's Discord info is open
 
     const userId = session?.user?.id;
-    const roleChecked = useRef(false);   // seller role re-checked once per visit
+    const roleChecked = useRef(false);   // seller role re-checked at least once per visit
 
     useEffect(() => {
         sb.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
@@ -105,9 +105,15 @@ function App() {
                     me = again.data?.active ? again.data : null;
                     if (me) toast('Welcome to the seller desk! You were added because you have the seller role on Discord.', 'success');
                 }
-            } else if (!roleChecked.current) {
-                roleChecked.current = true;
-                api('/api/enroll').then((r) => { if (r?.changed && !r.seller) setSeller(null); }).catch(() => {});
+            } else {
+                // Role sellers can only read orders while their role was confirmed in the last hour, so refresh
+                // the check first when it's older than 30 minutes (or once per visit).
+                const age = me.role_checked_at ? Date.now() - new Date(me.role_checked_at).getTime() : Infinity;
+                if (!roleChecked.current || age > 30 * 60e3) {
+                    roleChecked.current = true;
+                    const r = await api('/api/enroll').catch(() => null);
+                    if (r && !r.seller) me = null;
+                }
             }
         }
         setSeller(me);

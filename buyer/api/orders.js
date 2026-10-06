@@ -2,7 +2,7 @@
 // Body: { airlineIds: [id, …], buyerNote, items: [{ model, qty, pricePercent, note }] }
 //   airlineIds  every one of the buyer's airlines the aircraft may be delivered to (the first one is the
 //               main airline). The older form { airlineId } is still accepted.
-import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, HttpError } from '../lib/server.js';
+import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, HttpError } from '../lib/server.js';
 import { priceItems, orderListValue, DAILY_LIMIT_USD } from '../lib/pricing.js';
 
 // Every new order pings the seller role on Discord, so placing orders is rate limited per account.
@@ -25,6 +25,7 @@ export default handler(['POST'], async (req, res) => {
 
     const { items, totalQty, totalUSD, listTotalUSD } = priceItems(input.items);
 
+    // Cheap first check on the orders already placed (also covers a database without the rate-limit function).
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const { count: recentCount, error: countErr } = await db.from('orders').select('id', { count: 'exact', head: true })
         .eq('buyer_id', account.id).gte('created_at', tenMinAgo);
@@ -50,6 +51,11 @@ export default handler(['POST'], async (req, res) => {
     };
     const used = await usedNow();
     if (used + listTotalUSD > DAILY_LIMIT_USD) throw overLimit(used);
+
+    // Atomic counter in the database, so orders sent at the same moment can't all slip under the cap.
+    // Counted here, after every other check, so refused orders don't use up the allowance.
+    await rateLimit('orders:' + account.id, MAX_ORDERS_PER_10_MIN, 600,
+        `You can send at most ${MAX_ORDERS_PER_10_MIN} orders per 10 minutes. Put more aircraft in one order instead.`);
 
     const row = {
         buyer_id: account.id,

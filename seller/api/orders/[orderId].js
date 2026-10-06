@@ -12,7 +12,7 @@
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   delete    {}                       admins only — removes the order completely
 import {
-    admin, handler, requireUser, getSeller, accountName, body, cleanText,
+    admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, BUYER_URL, HttpError
 } from '../../lib/server.js';
 
@@ -23,8 +23,8 @@ const statusFor = (filled, total) => (filled >= total ? 'FULFILLED' : filled > 0
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
-    const seller = await getSeller(account.id);
-    if (!seller) throw new HttpError(403, 'You are not on the seller list.');
+    // Sellers who are in through the Discord role must still have it (re-checked every few minutes).
+    const seller = await requireActiveSeller(account);
     await rateLimit('seller:' + account.id, 120, 600, 'Too many changes in a short time. Wait a minute and try again.');
 
     const input = body(req);
@@ -38,10 +38,15 @@ export default handler(['POST'], async (req, res) => {
             throw new HttpError(403, `This order is handled by ${order.seller_airline_name || 'another seller'}.`);
         }
     };
-    // Conditional update: fails (409) if someone changed the order's status meanwhile.
-    const update = async (patch, expectedStatuses) => {
+    // Conditional update: fails (409) if someone changed the order's status meanwhile. For actions only the
+    // order's seller (or an admin) may do, the database also checks the seller hasn't changed in between.
+    const update = async (patch, expectedStatuses, { owned = false } = {}) => {
         let q = db.from('orders').update(patch).eq('id', order.id);
         if (expectedStatuses) q = q.in('status', expectedStatuses);
+        if (owned) {
+            const sellerId = seller.is_admin ? order.seller_id : account.id;
+            q = sellerId ? q.eq('seller_id', sellerId) : q.is('seller_id', null);
+        }
         const { data, error } = await q.select();
         if (error) throw error;
         if (!data?.length) throw new HttpError(409, 'This order was just changed by someone else. Refresh and try again.');
@@ -75,7 +80,7 @@ export default handler(['POST'], async (req, res) => {
                     ? `${airline.name} takes over the remaining ${order.total_qty - filled} aircraft.`
                     : `${airline.name} will sell you this order.`
             });
-            await syncDiscord(updated, `🤝 ${ref} taken by ${airline.name}`);
+            await syncDiscord(updated, `🤝 ${ref} taken by ${plain(airline.name)}`);
             await dmBuyer(updated, 'CLAIMED');
             return res.json({ ok: true, order: updated });
         }
@@ -98,7 +103,7 @@ export default handler(['POST'], async (req, res) => {
                 }] : previous,
                 seller_id: null, seller_name: null, seller_airline_id: null,
                 seller_airline_name: null, seller_alliance: null, claimed_at: null
-            }, ACTIVE);
+            }, ACTIVE, { owned: true });
             const left = order.total_qty - updated.filled;
             if (updated.filled > 0) {
                 await addEvent(updated, 'HANDOFF', account, {
@@ -129,7 +134,7 @@ export default handler(['POST'], async (req, res) => {
             const next = items.map((it, i) => ({ ...it, filled: Math.max(it.locked, Math.min(it.qty, wanted[i])) }));
             const filled = sumFilled(next);
             const status = statusFor(filled, order.total_qty);
-            const updated = await update({ items: next, filled, status }, [...ACTIVE, 'FULFILLED']);
+            const updated = await update({ items: next, filled, status }, [...ACTIVE, 'FULFILLED'], { owned: true });
 
             const changes = next.filter((it, i) => it.filled !== items[i].filled)
                 .map((it, i) => `${it.model}: ${it.filled}/${it.qty}`);
@@ -158,7 +163,7 @@ export default handler(['POST'], async (req, res) => {
         case 'note': {
             mustOwn();
             const sellerNote = cleanText(input.sellerNote, 1000);
-            const updated = await update({ seller_note: sellerNote || null });
+            const updated = await update({ seller_note: sellerNote || null }, null, { owned: true });
             if (sellerNote) await addEvent(updated, 'NOTE', account, { message: sellerNote });
             await syncDiscord(updated, `🔖 ${ref}: seller note updated`);
             return res.json({ ok: true, order: updated });
@@ -198,7 +203,7 @@ export default handler(['POST'], async (req, res) => {
                 order_id: order.id, seller_id: account.id, seller_name: accountName(account), note: reason || null
             });
             if (error) throw error;
-            await syncDiscord(order, `👋 ${accountName(account)} passed on ${ref} — ${sellersLeft} seller${sellersLeft === 1 ? '' : 's'} left`);
+            await syncDiscord(order, `👋 ${plain(accountName(account))} passed on ${ref} — ${sellersLeft} seller${sellersLeft === 1 ? '' : 's'} left`);
             return res.json({ ok: true, order, declinedForEveryone: false, sellersLeft });
         }
 

@@ -176,7 +176,7 @@ One Discord "application" powers **Sign in with Discord** on both sites. Its **b
 1. Developer portal → **Bot**.
 2. Click **Reset Token**, then **Yes, do it!**, and copy the 🔒 **token**. Discord shows it **only once**, but you can reset it again any time.
 3. Settings on the same page:
-   - **Public Bot: ON**, so an admin can add it with your link.
+   - **Public Bot: ON** only while it is being invited. Once it is in the Echo Alliances server, turn it **OFF** so nobody else can add it to their own servers (security report MKT-03).
    - **Requires OAuth2 Code Grant: OFF.**
    - **Privileged Gateway Intents: all OFF.**
 4. Click **Save Changes**.

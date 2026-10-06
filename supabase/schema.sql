@@ -136,6 +136,16 @@ begin
     return new;
 end $$;
 
+-- Airline names are shown in official Discord posts: no web addresses or invite links in them.
+-- (NOT VALID: only new and edited names are checked, existing ones are left alone.)
+do $$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'airlines_name_no_links') then
+        alter table public.airlines add constraint airlines_name_no_links
+            check (name !~* '(://|www\.|discord\.(gg|com/invite)|\.(com|net|org|gg|io|xyz|ru|ly)(/|$))') not valid;
+    end if;
+end $$;
+
 drop trigger if exists airlines_limit on public.airlines;
 create trigger airlines_limit before insert on public.airlines
     for each row execute function public.enforce_airline_limit();
@@ -172,10 +182,17 @@ create table if not exists public.sellers (
 );
 -- 'manual' (added by hand: never changed automatically) or 'discord_role' (follows the Discord role)
 alter table public.sellers add column if not exists source text not null default 'manual';
+-- When a 'discord_role' seller's role was last confirmed with Discord. Their access only counts while
+-- this is recent (1 hour for reading orders, 10 minutes for seller actions; see is_seller() and the API).
+alter table public.sellers add column if not exists role_checked_at timestamptz;
 
 create or replace function public.is_seller()
 returns boolean language sql stable security definer set search_path = public as $$
-    select exists (select 1 from public.sellers where user_id = auth.uid() and active);
+    select exists (
+        select 1 from public.sellers
+        where user_id = auth.uid() and active
+          and (source <> 'discord_role' or role_checked_at > now() - interval '1 hour')
+    );
 $$;
 
 -- ---------------------------------------------------------------------
