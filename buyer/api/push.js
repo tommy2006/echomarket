@@ -2,7 +2,7 @@
 //   { action: 'subscribe', subscription }   save this device (subscription = PushSubscription.toJSON())
 //   { action: 'unsubscribe', endpoint }     forget this device
 //   { action: 'test' }                      send a test alert to all of this account's devices
-import { admin, handler, requireUser, body, sendPush, pushEndpointAllowed, PUSH_AVAILABLE, BUYER_URL, HttpError } from '../lib/server.js';
+import { admin, handler, requireUser, body, sendPush, pushEndpointAllowed, rateLimit, PUSH_AVAILABLE, BUYER_URL, HttpError } from '../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -11,6 +11,7 @@ export default handler(['POST'], async (req, res) => {
     const db = admin();
 
     if (input.action === 'subscribe') {
+        await rateLimit('push-sub:' + account.id, 20, 3600);
         const sub = input.subscription || {};
         const endpoint = typeof sub.endpoint === 'string' ? sub.endpoint : '';
         if (!pushEndpointAllowed(endpoint) || !sub.keys?.p256dh || !sub.keys?.auth) throw new HttpError(400, 'Invalid subscription.');
@@ -32,6 +33,7 @@ export default handler(['POST'], async (req, res) => {
     }
 
     if (input.action === 'test') {
+        await rateLimit('push-test:' + account.id, 3, 600, 'You can send 3 test alerts per 10 minutes. Try again a bit later.');
         const sent = await sendPush(account.id, {
             title: '🛫 Echo Market alerts work!',
             body: "You'll get an alert like this when an order is fully delivered.",

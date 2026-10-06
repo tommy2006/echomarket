@@ -2,10 +2,11 @@
 // Called by the seller desk on sign-in. Anyone with the seller role (DISCORD_ROLE_ID) in a server
 // the bot is in gets a sellers row (source 'discord_role'); losing the role switches it off again.
 // Rows added by hand (source 'manual', e.g. admins or blocked people) are never changed here.
-import { admin, handler, requireUser, hasSellerRole, SELLER_ROLE_SYNC } from '../lib/server.js';
+import { admin, handler, requireUser, hasSellerRole, rateLimit, SELLER_ROLE_SYNC } from '../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
+    await rateLimit('enroll:' + account.id, 30, 600);   // each check calls Discord
     const db = admin();
     const { data: row, error } = await db.from('sellers').select('*').eq('user_id', account.id).maybeSingle();
     if (error) throw error;

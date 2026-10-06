@@ -55,7 +55,10 @@ export function handler(methods, fn) {
         } catch (err) {
             const status = err instanceof HttpError ? err.status : 500;
             if (status >= 500) console.error(err);
-            res.status(status).json({ ok: false, error: err.message || 'Server error' });
+            // Our own errors (HttpError) are written for players. Anything else (database, Discord, bugs) can
+            // reveal internals, so the browser only gets a generic message; the details are in the Vercel logs.
+            const message = err instanceof HttpError ? err.message : 'Something went wrong on the server. Try again in a moment.';
+            res.status(status).json({ ok: false, error: message });
         }
     };
 }
@@ -100,6 +103,14 @@ export function discordIdentity(user) {
         name: d.custom_claims?.global_name || d.full_name || d.name || null,
         username: d.user_name || d.name || d.full_name || null
     };
+}
+
+// Per-account rate limit, counted in the database (public.hit_rate_limit). Throws 429 when over.
+// If the database function isn't installed yet (schema not re-run), it lets the request through.
+export async function rateLimit(key, max, seconds, message = 'Too many tries. Wait a few minutes and try again.') {
+    const { data, error } = await admin().rpc('hit_rate_limit', { p_key: key, p_max: max, p_seconds: seconds });
+    if (error) { console.warn('rate limit unavailable:', error.message); return; }
+    if (data === false) throw new HttpError(429, message);
 }
 
 export async function getSeller(accountId) {

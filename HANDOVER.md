@@ -69,6 +69,14 @@ A player took over seller access by editing their own Supabase user metadata (`s
 | Phone-alert subscriptions must point at a real browser push service. | `pushEndpointAllowed()` |
 | At most 5 orders per account per 10 minutes (each pings the seller role). Orders sent at the same moment can't get around the 24-hour limit. | buyer/api/orders.js |
 | `/api/health` is cached for a minute, so reloading it can't run the bot into Discord's rate limit. | health.js |
+| **Browser security headers** on every page: a Content-Security-Policy that only runs scripts from the site itself and only talks to Supabase; no framing (clickjacking); no MIME sniffing; strict referrer; camera/mic/location off. | `headers` in buyer/ and seller/ vercel.json |
+| **No third-party scripts.** React, htm, lucide, supabase-js and Tailwind are served from each site (`vendor/`, copied from `shared/vendor` by `npm run sync`), so a hacked CDN can't change the code. To upgrade one, replace the file in `shared/vendor`, update its `<script>` tag, run `npm run sync`. | `shared/vendor` |
+| **No inline scripts.** Theme colours are in each app's `js/theme.js`, Tailwind settings in `js/tailwind-config.js`. A `<script>` block written inside the HTML will be blocked. Loading images or fonts from a new site needs that site added to the policy in vercel.json. | |
+| Server code in `lib/` is never served to browsers (redirect in vercel.json). | vercel.json |
+| Unexpected server errors show a generic message; details only go to the Vercel logs. | `handler()` in server.js |
+| Rate limits per account: 3 test DMs and 3 test alerts per 10 minutes, 20 alert sign-ups per hour, 30 seller-role checks per 10 minutes, 120 seller actions per 10 minutes. | `public.hit_rate_limit()`, `rateLimit()` |
+| Database: every function pins its `search_path` (Supabase security advisor 0011), and the browser roles have no write access to tables the website never writes, even if a policy is added by mistake. | schema.sql |
+| Tapping a phone alert only ever opens a page of the market itself. | buyer/sw.js |
 
 ## Decisions you made (October 2026)
 

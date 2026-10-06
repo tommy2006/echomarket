@@ -141,7 +141,7 @@ create trigger airlines_limit before insert on public.airlines
     for each row execute function public.enforce_airline_limit();
 
 create or replace function public.trim_airline_name()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin
     new.name := btrim(new.name);
     new.owner_id := old.owner_id;  -- ownership can never be transferred
@@ -185,7 +185,7 @@ $$;
 --                   DECLINED  (by a seller, with a reason)
 -- ---------------------------------------------------------------------
 create or replace function public.new_order_id()
-returns text language sql volatile as $$
+returns text language sql volatile set search_path = public as $$
     select 'ECH-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
 $$;
 
@@ -232,7 +232,7 @@ alter table public.orders add column if not exists airlines jsonb not null defau
 -- and "locked" (delivered before the current seller took over, which they cannot undo).
 
 create or replace function public.touch_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin new.updated_at := now(); return new; end $$;
 
 drop trigger if exists orders_touch on public.orders;
@@ -248,7 +248,7 @@ alter table public.orders add column if not exists status_history jsonb not null
 alter table public.orders add column if not exists fulfilled_at timestamptz;
 
 create or replace function public.track_order_status()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin
     if tg_op = 'INSERT' then
         new.status_changed_at := coalesce(new.status_changed_at, new.created_at, now());
@@ -346,6 +346,30 @@ create table if not exists public.push_subscriptions (
 );
 create index if not exists push_subscriptions_account_idx on public.push_subscriptions (account_id);
 
+-- Per-account rate limits for API actions that call Discord or push services (test DMs, test alerts,
+-- seller-role checks). Only the Vercel API (service role) can use hit_rate_limit().
+create table if not exists public.rate_limits (
+    key          text primary key,     -- e.g. 'test-dm:<account id>'
+    window_start timestamptz not null default now(),
+    hits         int not null default 0
+);
+alter table public.rate_limits enable row level security;   -- no policies: API only
+
+-- Counts one hit for "key"; true while there are at most p_max hits in the current p_seconds window.
+create or replace function public.hit_rate_limit(p_key text, p_max int, p_seconds int)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+    insert into public.rate_limits as r (key, window_start, hits) values (p_key, now(), 1)
+    on conflict (key) do update set
+        hits = case when r.window_start < now() - make_interval(secs => p_seconds) then 1 else r.hits + 1 end,
+        window_start = case when r.window_start < now() - make_interval(secs => p_seconds) then now() else r.window_start end
+    returning hits into n;
+    return n <= p_max;
+end $$;
+revoke all on function public.hit_rate_limit(text, int, int) from public, anon, authenticated;
+revoke all on public.rate_limits from anon, authenticated;
+
 -- Seller-only moderation flags. Buyers can never read this table.
 create table if not exists public.order_flags (
     order_id   text primary key references public.orders(id) on delete cascade,
@@ -424,6 +448,17 @@ grant select on public.accounts, public.sellers, public.orders, public.order_eve
     public.order_declines, public.push_subscriptions to authenticated;
 grant select, insert, update, delete on public.airlines to authenticated;
 grant execute on function public.is_seller() to anon, authenticated;
+-- Defence in depth: Supabase gives the browser roles every privilege on new tables by default and relies
+-- on RLS alone. Take away what the website never does, so a future policy mistake can't open a write path.
+-- (Orders, events, flags, declines, sellers and push devices are only written by the Vercel API.)
+revoke insert, update, delete, truncate, references, trigger on
+    public.orders, public.order_events, public.order_flags, public.order_declines,
+    public.push_subscriptions, public.sellers, public.alliances
+    from anon, authenticated;
+revoke insert, delete, truncate, references, trigger on public.accounts from anon, authenticated;
+revoke all on public.airlines from anon;
+revoke truncate, references, trigger on public.airlines from authenticated;
+revoke execute on function public.new_order_id() from anon, authenticated;
 grant all on all tables in schema public to service_role;
 grant all on all sequences in schema public to service_role;
 grant execute on all functions in schema public to service_role;
@@ -460,6 +495,7 @@ create table if not exists public.security_repairs (
     repaired_at        timestamptz not null default now()
 );
 alter table public.security_repairs enable row level security;   -- no policies: SQL Editor / service role only
+revoke all on public.security_repairs from anon, authenticated;
 
 insert into public.security_repairs (account_id, display_name, claimed_discord_id, real_discord_id, seller_removed)
 select a.id, a.display_name, a.discord_id, i.provider_id,

@@ -13,7 +13,7 @@
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, getSeller, accountName, body, cleanText,
-    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, BUYER_URL, HttpError
+    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, BUYER_URL, HttpError
 } from '../../lib/server.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
@@ -25,6 +25,7 @@ export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const seller = await getSeller(account.id);
     if (!seller) throw new HttpError(403, 'You are not on the seller list.');
+    await rateLimit('seller:' + account.id, 120, 600, 'Too many changes in a short time. Wait a minute and try again.');
 
     const input = body(req);
     const db = admin();

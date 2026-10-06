@@ -4,12 +4,14 @@
 // lives once in shared/ and is copied into each app. Edit files in shared/, then run:
 //   npm run sync      copy shared/ → buyer/ and seller/
 //   npm run check     fail if any copy differs from shared/ (run before committing)
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['lib/server.js', 'js/ui.js', 'api/config.js', 'api/health.js'];
+// Shared code, plus the browser libraries in vendor/ (each site serves its own copy; see SECURITY in HANDOVER.md).
+const VENDOR = readdirSync(join(ROOT, 'shared', 'vendor')).map((f) => 'vendor/' + f);
+const FILES = ['lib/server.js', 'js/ui.js', 'js/tailwind-config.js', 'api/config.js', 'api/health.js', ...VENDOR];
 const APPS = ['buyer', 'seller'];
 const check = process.argv.includes('--check');
 
