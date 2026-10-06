@@ -82,6 +82,8 @@ export async function requireUser(req) {
         if (identity.id) await db.from('accounts').update({ discord_id: null }).eq('discord_id', identity.id).neq('id', account.id);
         await db.from('accounts').update({ discord_id: identity.id }).eq('id', account.id);
         account.discord_id = identity.id;
+        // Seller access that came from the borrowed ID's Discord role is gone until the real one has the role.
+        await db.from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
     }
     if (identity.name) account.display_name = identity.name;
     if (identity.username) account.discord_username = identity.username;
