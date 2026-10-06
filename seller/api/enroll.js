@@ -14,7 +14,9 @@ export default handler(['POST'], async (req, res) => {
     if (row && row.source !== 'discord_role') return reply(row.active, false, { source: row.source });
     if (!SELLER_ROLE_SYNC) return reply(Boolean(row?.active), false, { sync: false });
 
-    const has = await hasSellerRole(account.discord_id);
+    // account.discord_id is checked against the Discord login in requireUser(), so it can't be borrowed.
+    // No Discord login at all = no role.
+    const has = account.discord_id ? await hasSellerRole(account.discord_id) : false;
     // Discord didn't answer: keep whatever they had.
     if (has === null) return reply(Boolean(row?.active), false, { unknown: true });
 

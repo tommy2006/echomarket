@@ -30,31 +30,67 @@ create table if not exists public.accounts (
     created_at            timestamptz not null default now()
 );
 
-create or replace function public.sync_account_from_auth()
-returns trigger language plpgsql security definer set search_path = public as $$
+-- SECURITY: the Discord ID, name and avatar come ONLY from auth.identities, which Supabase writes
+-- during the Discord login itself. Never read auth.users.raw_user_meta_data here: any signed-in user
+-- can rewrite it from the browser (supabase.auth.updateUser({ data: { provider_id: … } })) and
+-- would become someone else on the market (their DMs, their seller role).
+create or replace function public.sync_account(uid uuid)
+returns void language plpgsql security definer set search_path = public, auth as $$
 declare
-    m jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
+    pid text;
+    d jsonb;
+    avatar text;
 begin
+    if not exists (select 1 from auth.users where id = uid) then return; end if;   -- user being deleted
+    select i.provider_id, i.identity_data into pid, d
+    from auth.identities i
+    where i.user_id = uid and i.provider = 'discord'
+    order by i.created_at
+    limit 1;
+    d := coalesce(d, '{}'::jsonb);
+    avatar := d->>'avatar_url';
+    if avatar !~ '^https://cdn\.discordapp\.com/' then avatar := null; end if;   -- no tracking pixels
+    -- A Discord account belongs to exactly one market account: take it back from anyone else holding it.
+    if pid is not null then
+        update public.accounts set discord_id = null where discord_id = pid and id <> uid;
+    end if;
     insert into public.accounts (id, discord_id, discord_username, display_name, avatar_url)
     values (
-        new.id,
-        coalesce(m->>'provider_id', m->>'sub'),
-        coalesce(m->>'user_name', m->>'name', m->>'full_name'),
-        coalesce(m->'custom_claims'->>'global_name', m->>'full_name', m->>'name'),
-        m->>'avatar_url'
+        uid, pid,
+        coalesce(d->>'user_name', d->>'name', d->>'full_name'),
+        coalesce(d->'custom_claims'->>'global_name', d->>'full_name', d->>'name'),
+        avatar
     )
     on conflict (id) do update set
-        discord_id       = coalesce(excluded.discord_id, accounts.discord_id),
+        discord_id       = excluded.discord_id,
         discord_username = coalesce(excluded.discord_username, accounts.discord_username),
         display_name     = coalesce(excluded.display_name, accounts.display_name),
         avatar_url       = coalesce(excluded.avatar_url, accounts.avatar_url);
+end $$;
+revoke all on function public.sync_account(uuid) from public, anon, authenticated;
+
+create or replace function public.sync_account_from_auth()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+    perform public.sync_account(new.id);
     return new;
+end $$;
+
+create or replace function public.sync_account_from_identity()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+    perform public.sync_account(coalesce(new.user_id, old.user_id));
+    return coalesce(new, old);
 end $$;
 
 drop trigger if exists on_auth_user_saved on auth.users;
 create trigger on_auth_user_saved
-    after insert or update of raw_user_meta_data on auth.users
+    after insert on auth.users
     for each row execute function public.sync_account_from_auth();
+drop trigger if exists on_auth_identity_saved on auth.identities;
+create trigger on_auth_identity_saved
+    after insert or update or delete on auth.identities
+    for each row execute function public.sync_account_from_identity();
 
 -- ---------------------------------------------------------------------
 --  2. Alliances (lookup table — add/rename rows here)
@@ -188,6 +224,10 @@ create index if not exists orders_seller_idx  on public.orders (seller_id);
 -- Sellers who handed a partly delivered order back to the team:
 -- [{ seller_id, seller_name, seller_airline_name, seller_alliance, delivered, at }]
 alter table public.orders add column if not exists previous_sellers jsonb not null default '[]'::jsonb;
+-- Every buyer airline the aircraft may be delivered to (the buyer can accept several, in different
+-- alliances): [{ id, name, alliance }]. The first one is also in airline_id / airline_name / alliance.
+-- Empty for older orders, which only have that one airline.
+alter table public.orders add column if not exists airlines jsonb not null default '[]'::jsonb;
 -- Each entry of orders.items also carries "filled" (delivered so far for that aircraft type)
 -- and "locked" (delivered before the current seller took over, which they cannot undo).
 
@@ -405,7 +445,55 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
---  8. Make the API notice new tables/columns right away (otherwise it can
+--  8. Security repair (October 2026, safe to re-run).
+--     Accounts used to take their Discord ID from user-editable metadata. Every account whose stored
+--     Discord ID differs from its real Discord login is logged in public.security_repairs, loses any
+--     seller access it got through the Discord role, and gets its real identity back.
+--     See who was affected:  select * from public.security_repairs order by repaired_at;
+-- ---------------------------------------------------------------------
+create table if not exists public.security_repairs (
+    account_id         uuid,
+    display_name       text,
+    claimed_discord_id text,
+    real_discord_id    text,
+    seller_removed     boolean,
+    repaired_at        timestamptz not null default now()
+);
+alter table public.security_repairs enable row level security;   -- no policies: SQL Editor / service role only
+
+insert into public.security_repairs (account_id, display_name, claimed_discord_id, real_discord_id, seller_removed)
+select a.id, a.display_name, a.discord_id, i.provider_id,
+       exists (select 1 from public.sellers s where s.user_id = a.id and s.source = 'discord_role')
+from public.accounts a
+left join auth.identities i on i.user_id = a.id and i.provider = 'discord'
+where a.discord_id is distinct from i.provider_id;
+
+delete from public.sellers s
+using public.security_repairs r
+where s.user_id = r.account_id and s.source = 'discord_role' and r.claimed_discord_id is distinct from r.real_discord_id;
+
+-- Re-read every account from its real Discord login (fixes the ID, name and avatar).
+update public.accounts set discord_id = null
+where id in (select account_id from public.security_repairs where claimed_discord_id is distinct from real_discord_id);
+select public.sync_account(u.id) from auth.users u;
+
+-- Orders keep a copy of the buyer's Discord ID (for Discord mentions): bring those back in line too.
+do $$
+begin
+    if exists (select 1 from public.orders o join public.accounts a on a.id = o.buyer_id
+               where o.buyer_discord_id is distinct from a.discord_id) then
+        alter table public.orders disable trigger orders_touch;
+        alter table public.orders disable trigger orders_track_status;
+        update public.orders o set buyer_discord_id = a.discord_id
+        from public.accounts a
+        where a.id = o.buyer_id and o.buyer_discord_id is distinct from a.discord_id;
+        alter table public.orders enable trigger orders_touch;
+        alter table public.orders enable trigger orders_track_status;
+    end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+--  9. Make the API notice new tables/columns right away (otherwise it can
 --     briefly report "could not find the ... column in the schema cache").
 -- ---------------------------------------------------------------------
 notify pgrst, 'reload schema';

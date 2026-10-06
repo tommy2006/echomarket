@@ -2,7 +2,7 @@
 //   { action: 'subscribe', subscription }   save this device (subscription = PushSubscription.toJSON())
 //   { action: 'unsubscribe', endpoint }     forget this device
 //   { action: 'test' }                      send a test alert to all of this account's devices
-import { admin, handler, requireUser, body, sendPush, PUSH_AVAILABLE, BUYER_URL, HttpError } from '../lib/server.js';
+import { admin, handler, requireUser, body, sendPush, pushEndpointAllowed, PUSH_AVAILABLE, BUYER_URL, HttpError } from '../lib/server.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -13,7 +13,7 @@ export default handler(['POST'], async (req, res) => {
     if (input.action === 'subscribe') {
         const sub = input.subscription || {};
         const endpoint = typeof sub.endpoint === 'string' ? sub.endpoint : '';
-        if (!/^https:\/\//.test(endpoint) || !sub.keys?.p256dh || !sub.keys?.auth) throw new HttpError(400, 'Invalid subscription.');
+        if (!pushEndpointAllowed(endpoint) || !sub.keys?.p256dh || !sub.keys?.auth) throw new HttpError(400, 'Invalid subscription.');
         // One device = one endpoint. If another account used this browser before, it now belongs to this one.
         const { error } = await db.from('push_subscriptions').upsert({
             endpoint,

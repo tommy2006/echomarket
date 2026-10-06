@@ -7,7 +7,7 @@ import {
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo, fmtDuration, toneClass,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
-    orderRef, OrderCode, greetingFor
+    orderRef, OrderCode, greetingFor, orderAirlines, airlineNames, orderAlliances, deliverableTo
 } from './ui.js';
 
 const LS_SELL_AS = 'echo_seller_airline_v2';
@@ -137,8 +137,8 @@ function App() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => {
                 if (p.eventType === 'DELETE') return setOrders((l) => l.filter((o) => o.id !== p.old.id));
                 if (p.eventType === 'INSERT') {
-                    toast(`New order ${orderRef(p.new)} from ${p.new.airline_name}`, 'success');
-                    notifyBrowser('New Echo Market order', `${p.new.airline_name}: ${plural(p.new.total_qty, 'aircraft')}`);
+                    toast(`New order ${orderRef(p.new)} from ${airlineNames(p.new)}`, 'success');
+                    notifyBrowser('New Echo Market order', `${airlineNames(p.new)}: ${plural(p.new.total_qty, 'aircraft')}`);
                 }
                 setOrders((l) => [p.new, ...l.filter((o) => o.id !== p.new.id)].sort((a, b) => b.created_at.localeCompare(a.created_at)));
             })
@@ -247,7 +247,7 @@ function App() {
 
     // ---- filtering
     const q = query.trim().toLowerCase();
-    const matches = (o) => !q || [o.id, o.serial ? '#' + o.serial : '', o.airline_name, o.alliance, o.buyer_name, o.seller_airline_name, o.buyer_note, o.seller_note,
+    const matches = (o) => !q || [o.id, o.serial ? '#' + o.serial : '', ...orderAirlines(o).flatMap((a) => [a.name, a.alliance]), o.buyer_name, o.seller_airline_name, o.buyer_note, o.seller_note,
         ...(o.items || []).map((i) => i.model)].join(' ').toLowerCase().includes(q);
     const tabs = {
         open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
@@ -446,7 +446,7 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs }) {
 function BuyerLink({ order, onBuyer }) {
     return html`<button type="button" title="See the buyer's Discord info"
         onClick=${(e) => { e.stopPropagation(); onBuyer(order); }}
-        className="font-[inherit] text-left underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-sky-300 hover:decoration-sky-400">${order.airline_name}</button>`;
+        className="font-[inherit] text-left underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-sky-300 hover:decoration-sky-400">${airlineNames(order)}</button>`;
 }
 
 // Who is behind an order: Discord profile, plus everything they've ordered so far.
@@ -460,12 +460,12 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder }) {
     const name = buyer?.display_name || buyer?.discord_username || order.buyer_name || 'Unknown buyer';
     const theirs = orders.filter((o) => (order.buyer_id ? o.buyer_id === order.buyer_id : o.buyer_discord_id === discordId));
     const count = (fn) => theirs.filter(fn).length;
-    const airlines = [...new Map(theirs.map((o) => [o.airline_name + '|' + o.alliance, o])).values()];
+    const airlines = [...new Map(theirs.flatMap(orderAirlines).map((a) => [a.name + '|' + a.alliance, a])).values()];
     const flagged = theirs.filter((o) => flags[o.id] && flags[o.id].status !== 'NORMAL');
     const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
     const dm = !buyer ? null : buyer.dm_enabled === false ? 'turned off' : buyer.dm_status === 'blocked' ? "can't reach them (DMs closed or not in the server)" : buyer.dm_status === 'ok' ? 'on' : 'on (not tried yet)';
 
-    return html`<${Modal} open=${true} onClose=${onClose} size="md" title="Buyer" subtitle=${`From ${orderRef(order)} · ${order.airline_name}`}>
+    return html`<${Modal} open=${true} onClose=${onClose} size="md" title="Buyer" subtitle=${`From ${orderRef(order)} · ${airlineNames(order)}`}>
         <div className="space-y-5">
             <div className="flex items-center gap-4">
                 ${buyer === undefined ? html`<span className="w-14 h-14 rounded-full bg-slate-800 animate-pulse"></span>`
@@ -510,14 +510,14 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder }) {
 
             ${airlines.length > 0 && html`<div>
                 <p className="label text-slate-500 mb-2">Airlines they ordered for</p>
-                <div className="flex flex-wrap gap-1.5">${airlines.map((o) => html`<span key=${o.airline_name + o.alliance} className="px-2.5 py-1 rounded-full bg-slate-800 text-xs font-bold text-slate-200">${o.airline_name} <span className="text-slate-500">${o.alliance}</span></span>`)}</div>
+                <div className="flex flex-wrap gap-1.5">${airlines.map((a) => html`<span key=${a.name + a.alliance} className="px-2.5 py-1 rounded-full bg-slate-800 text-xs font-bold text-slate-200">${a.name} <span className="text-slate-500">${a.alliance}</span></span>`)}</div>
             </div>`}
 
             ${theirs.length > 0 && html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
                 ${theirs.slice(0, 8).map((o) => html`<li key=${o.id}>
                     <button onClick=${() => onOpenOrder(o.id)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-800/40">
                         <span className="flex-1 min-w-0"><${OrderCode} order=${o} />
-                            <span className="block text-xs text-slate-400 truncate">${o.airline_name} · ${plural(o.total_qty, 'aircraft')} · ${timeAgo(o.created_at)}</span></span>
+                            <span className="block text-xs text-slate-400 truncate">${airlineNames(o)} · ${plural(o.total_qty, 'aircraft')} · ${timeAgo(o.created_at)}</span></span>
                         <${StatusBadge} status=${displayStatus(o)} />
                     </button>
                 </li>`)}
@@ -552,12 +552,12 @@ function FlagBadge({ flag }) {
 }
 
 // Does any of the seller's airlines share the buyer's alliance?
-const sharesAlliance = (airlines, order) => !order.alliance || airlines.some((a) => a.alliance === order.alliance);
+const sharesAlliance = (airlines, order) => !orderAlliances(order).length || airlines.some((a) => orderAlliances(order).includes(a.alliance));
 
 function AllianceBadge({ airlines, order }) {
     if (!airlines.length || sharesAlliance(airlines, order)) return null;
     return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black text-amber-300 border-amber-500/30 bg-amber-500/10"
-        title=${`None of your airlines is in the ${order.alliance} alliance`}>
+        title=${`None of your airlines is in ${orderAlliances(order).join(' or ')}`}>
         <${Icon} name="users-round" className="w-3 h-3" />NO SHARED ALLIANCE</span>`;
 }
 
@@ -605,7 +605,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     <${WaitChip} order=${order} now=${now} />
                     <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>ordered ${timeAgo(order.created_at)}</span>
                 </div>
-                <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${order.alliance} · ${order.buyer_name}</span></p>
+                <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${orderAlliances(order).join(', ')} · ${order.buyer_name}</span></p>
                 <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>
                 ${order.seller_airline_name && !mine && html`<p className="text-[11px] text-slate-500">Seller: ${order.seller_airline_name} (${order.seller_name})</p>`}
             </div>
@@ -628,7 +628,7 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
     const items = orderLines(order);
     const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${html`${orderRef(order)} · <${BuyerLink} order=${order} onBuyer=${onBuyer} />`}
-        subtitle=${`${order.id} · ${order.alliance} · ordered by ${order.buyer_name} · ${fmtDate(order.created_at)}`}
+        subtitle=${`${order.id} · ${orderAlliances(order).join(', ')} · ordered by ${order.buyer_name} · ${fmtDate(order.created_at)}`}
         footer=${html`<${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${false} />`}>
         <div className="space-y-5">
             <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${displayStatus(order)} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
@@ -642,6 +642,14 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                 </span>
                 <span className="text-xs font-bold text-slate-300 shrink-0 flex items-center gap-1">Discord info <${Icon} name="chevron-right" /></span>
             </button>
+            ${orderAirlines(order).length > 1 && html`<div>
+                <p className="label text-slate-500 mb-1.5">Buyer accepts delivery to any of</p>
+                <div className="flex flex-wrap gap-1.5">${orderAirlines(order).map((a) => {
+                    const match = airlines.some((x) => x.alliance === a.alliance);
+                    return html`<span key=${a.name + a.alliance} className=${`px-2.5 py-1 rounded-full text-xs font-bold ${match ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-200'}`}
+                        title=${match ? 'You have an airline in this alliance' : ''}>${a.name} <span className="opacity-60">${a.alliance}</span></span>`;
+                })}</div>
+            </div>`}
             <${OrderStepper} order=${order} />
             ${order.seller_airline_name && html`<p className="text-sm text-slate-300">Seller: <b>${order.seller_airline_name}</b> (${order.seller_alliance}) — ${order.seller_name}${order.seller_id === userId ? ' (you)' : ''}</p>`}
             ${previous.length > 0 && html`<p className="text-sm text-slate-300">Earlier sellers: ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
@@ -729,14 +737,15 @@ function PageSizeBar({ total, shown, pageSize, setPageSize }) {
 }
 
 function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
-    const same = (a) => a.alliance === order.alliance;
+    const buyerAlliances = orderAlliances(order);
+    const same = (a) => buyerAlliances.includes(a.alliance);
     const sorted = [...airlines].sort((a, b) => same(b) - same(a));
     const [airlineId, setAirlineId] = useState(() =>
         (sellAs && same(sellAs) ? sellAs : sorted.find(same) || sellAs || sorted[0])?.id);
     const [busy, setBusy] = useState(false);
     const chosen = airlines.find((a) => a.id === airlineId);
     return html`<${Modal} open=${true} onClose=${onClose} title=${`Take ${orderRef(order)}`} size="sm"
-        subtitle=${`${plural(order.total_qty, 'aircraft')} for ${order.airline_name} · ${fmtUSDShort(order.total_usd)}`}
+        subtitle=${`${plural(order.total_qty, 'aircraft')} for ${airlineNames(order)} · ${fmtUSDShort(order.total_usd)}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
             <${Button} icon="hand" busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>Take order<//>`}>
         <p className="field-label">Sell as airline</p>
@@ -748,9 +757,10 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
                 ${airlineId === a.id && html`<${Icon} name="check" className="w-4 h-4 text-sky-300" />`}
             </button>`)}
         </div>
-        ${chosen && !same(chosen) && order.alliance && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px" />
-            ${sorted.some(same) ? `${chosen.name} (${chosen.alliance}) is not in the buyer's alliance (${order.alliance}).`
-                : `You share no alliance with this buyer (${order.alliance}).`} You can still take the order.</p>`}
+        ${chosen && same(chosen) && html`<p className="text-xs text-emerald-300 mt-4">Deliver to the buyer's <b>${deliverableTo(order, chosen.alliance).map((a) => a.name).join(' or ')}</b> (${chosen.alliance}).</p>`}
+        ${chosen && !same(chosen) && buyerAlliances.length > 0 && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px" />
+            ${sorted.some(same) ? `${chosen.name} (${chosen.alliance}) is not in any of the buyer's alliances (${buyerAlliances.join(', ')}).`
+                : `You share no alliance with this buyer (${buyerAlliances.join(', ')}).`} You can still take the order.</p>`}
         <p className="text-xs text-slate-400 mt-4">The buyer gets notified that <b className="text-slate-200">${chosen?.name}</b> is selling to them. Sell the aircraft in-game, then record deliveries here.</p>
     <//>`;
 }
@@ -767,7 +777,7 @@ function ProgressModal({ order, onClose, onSave }) {
     const next = total === 0 ? 'CLAIMED' : total >= max ? 'FULFILLED' : 'PARTIAL';
     const changed = counts.some((n, i) => n !== lines[i].filled);
     return html`<${Modal} open=${true} onClose=${onClose} title=${`Update delivery · ${orderRef(order)}`} size="md"
-        subtitle=${`${order.airline_name} · ${plural(lines.length, 'aircraft type')}`}
+        subtitle=${`${airlineNames(order)} · ${plural(lines.length, 'aircraft type')}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
             <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ items: counts, changed, note: note.trim(), sellerNote: sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
         <div className="space-y-5">

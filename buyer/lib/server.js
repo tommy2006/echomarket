@@ -72,7 +72,32 @@ export async function requireUser(req) {
 
     const { data: account } = await db.from('accounts').select('*').eq('id', data.user.id).maybeSingle();
     if (!account) throw new HttpError(403, 'Market account not found. Sign out and sign in with Discord again.');
+
+    // SECURITY: who someone is on Discord comes only from their Discord login (auth identities, written by
+    // Supabase during OAuth). user_metadata is editable by the user, so it is never used. If the stored row
+    // disagrees (an account tampered with before the schema fix), trust the login and repair the row.
+    const identity = discordIdentity(data.user);
+    if (account.discord_id !== identity.id) {
+        console.warn(`Account ${account.id}: stored Discord ID ${account.discord_id} != login ${identity.id}. Using the login.`);
+        if (identity.id) await db.from('accounts').update({ discord_id: null }).eq('discord_id', identity.id).neq('id', account.id);
+        await db.from('accounts').update({ discord_id: identity.id }).eq('id', account.id);
+        account.discord_id = identity.id;
+    }
+    if (identity.name) account.display_name = identity.name;
+    if (identity.username) account.discord_username = identity.username;
     return account;
+}
+
+// The Discord account a Supabase user signed in with. Only fields Supabase sets during the OAuth login.
+export function discordIdentity(user) {
+    const ident = (user?.identities || []).find((i) => i.provider === 'discord');
+    const d = ident?.identity_data || {};
+    const id = String(d.provider_id || d.sub || ident?.id || '').trim();
+    return {
+        id: /^\d{5,25}$/.test(id) ? id : null,
+        name: d.custom_claims?.global_name || d.full_name || d.name || null,
+        username: d.user_name || d.name || d.full_name || null
+    };
 }
 
 export async function getSeller(accountId) {
@@ -132,6 +157,15 @@ export function orderItems(order) {
 export const sumFilled = (items) => items.reduce((s, it) => s + it.filled, 0);
 
 const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US');
+// Player-typed text shown on Discord: escape markdown so nobody can post masked links ([text](url)),
+// fake formatting or mentions inside an official Echo Market message.
+export const md = (value) => String(value ?? '').replace(/([\\*_~`|>\[\]()#<-])/g, '\\$1').replace(/@/g, '@\u200b');
+// All buyer airlines an order may be delivered to (older orders: just the one).
+export function orderAirlines(order) {
+    const list = Array.isArray(order.airlines) ? order.airlines.filter((a) => a && a.name) : [];
+    return list.length ? list : [{ id: order.airline_id, name: order.airline_name, alliance: order.alliance }];
+}
+const airlineList = (order) => orderAirlines(order).map((a) => `**${md(a.name)}**${a.alliance ? ` (${md(a.alliance)})` : ''}`);
 // "#42 · ECH-1A2B3C4D": the order's serial number (counts up from 1) plus its code.
 export const orderRef = (order) => (order.serial ? `#${order.serial} · ${order.id}` : order.id);
 
@@ -171,11 +205,11 @@ function buildEmbed(order, title, flag, declines = []) {
     const items = orderItems(order);
     const fields = [
         { name: 'Order', value: orderRef(order), inline: true },
-        { name: 'Buyer airline', value: `${order.airline_name}${order.alliance ? ` (${order.alliance})` : ''}`, inline: true },
-        { name: 'Buyer', value: order.buyer_discord_id ? `<@${order.buyer_discord_id}>` : (order.buyer_name || '-'), inline: true },
+        { name: orderAirlines(order).length > 1 ? 'Deliver to any of' : 'Buyer airline', value: airlineList(order).join('\n').slice(0, 1000), inline: true },
+        { name: 'Buyer', value: /^\d+$/.test(order.buyer_discord_id || '') ? `<@${order.buyer_discord_id}>` : md(order.buyer_name || '-'), inline: true },
         {
             name: `Aircraft (${items.length} type${items.length === 1 ? '' : 's'})`,
-            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)}${it.note ? `\n  _${it.note}_` : ''}`)
+            value: items.map((it) => `• **${it.qty}×** ${it.model} @ ${it.pricePercent}% — ${usd(it.totalUSD)}${it.note ? `\n  _${md(it.note)}_` : ''}`)
                 .join('\n').slice(0, 1000) || '-',
             inline: false
         },
@@ -184,20 +218,20 @@ function buildEmbed(order, title, flag, declines = []) {
         { name: 'Status', value: meta.label, inline: true }
     ];
     if (order.seller_airline_name) {
-        fields.push({ name: 'Seller', value: `${order.seller_airline_name}${order.seller_alliance ? ` (${order.seller_alliance})` : ''} — ${order.seller_name || ''}`, inline: false });
+        fields.push({ name: 'Seller', value: `${md(order.seller_airline_name)}${order.seller_alliance ? ` (${md(order.seller_alliance)})` : ''} — ${md(order.seller_name || '')}`, inline: false });
     }
     const prev = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
     if (prev.length) {
-        fields.push({ name: 'Earlier sellers', value: prev.map((p) => `${p.seller_airline_name} — ${p.delivered} delivered`).join('\n').slice(0, 1000), inline: false });
+        fields.push({ name: 'Earlier sellers', value: prev.map((p) => `${md(p.seller_airline_name)} — ${p.delivered} delivered`).join('\n').slice(0, 1000), inline: false });
     }
     if (declines.length && order.status === 'PENDING') {
-        fields.push({ name: `Passed by ${declines.length} seller${declines.length === 1 ? '' : 's'}`, value: declines.map((d) => d.seller_name).join(', ').slice(0, 1000), inline: false });
+        fields.push({ name: `Passed by ${declines.length} seller${declines.length === 1 ? '' : 's'}`, value: declines.map((d) => md(d.seller_name)).join(', ').slice(0, 1000), inline: false });
     }
-    if (order.buyer_note) fields.push({ name: '📝 Buyer note', value: order.buyer_note.slice(0, 1000), inline: false });
-    if (order.seller_note) fields.push({ name: '🔖 Seller note', value: order.seller_note.slice(0, 1000), inline: false });
-    if (order.closed_reason) fields.push({ name: 'Reason', value: order.closed_reason.slice(0, 1000), inline: false });
+    if (order.buyer_note) fields.push({ name: '📝 Buyer note', value: md(order.buyer_note).slice(0, 1000), inline: false });
+    if (order.seller_note) fields.push({ name: '🔖 Seller note', value: md(order.seller_note).slice(0, 1000), inline: false });
+    if (order.closed_reason) fields.push({ name: 'Reason', value: md(order.closed_reason).slice(0, 1000), inline: false });
     if (flag && flag.status !== 'NORMAL') {
-        fields.push({ name: flag.status === 'BLACKLISTED' ? '🚫 BLACKLISTED' : '🚩 SUSPICIOUS', value: (flag.reason || '-').slice(0, 900) + `\n— ${flag.flagged_by}`, inline: false });
+        fields.push({ name: flag.status === 'BLACKLISTED' ? '🚫 BLACKLISTED' : '🚩 SUSPICIOUS', value: md(flag.reason || '-').slice(0, 900) + `\n— ${md(flag.flagged_by)}`, inline: false });
     }
     return {
         title,
@@ -239,7 +273,7 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
         const payload = {
             content: ping ? `<@&${SELLER_ROLE_ID}> ${title}` : undefined,
             embeds: [buildEmbed(order, title, flag, declines || [])],
-            allowed_mentions: { roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
+            allowed_mentions: { parse: [], roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
         };
 
         // Same channel → edit in place (a ping needs a fresh message, so repost then).
@@ -324,21 +358,23 @@ export async function dmBuyer(order, kind, extra = '') {
     const { data: buyer } = await admin().from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
     if (!buyer) return;
     const url = BUYER_URL ? `${BUYER_URL}/#orders` : undefined;
-    const seller = order.seller_airline_name ? `**${order.seller_airline_name}**${order.seller_alliance ? ` (${order.seller_alliance})` : ''}` : 'a seller';
+    const seller = order.seller_airline_name ? `**${md(order.seller_airline_name)}**${order.seller_alliance ? ` (${md(order.seller_alliance)})` : ''}` : 'a seller';
+    const buyerAirlines = airlineList(order).join(', ');
+    const note = md(extra);
     const ref = orderRef(order);
     const lines = {
         CREATED: { title: `📦 Order ${ref} received`, color: EMBED_COLORS.request,
-            description: `Your order for ${order.total_qty} aircraft for **${order.airline_name}** (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
+            description: `Your order for ${order.total_qty} aircraft for ${buyerAirlines} (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
         CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: EMBED_COLORS.progress,
-            description: `${seller} will sell you ${order.total_qty} aircraft for **${order.airline_name}**. Watch for the sale in-game.` },
+            description: `${seller} will sell you ${order.total_qty} aircraft for ${buyerAirlines}. Watch for the sale in-game.` },
         PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: EMBED_COLORS.progress,
-            description: `${seller} delivered more aircraft to **${order.airline_name}**.${extra ? `\n> ${extra}` : ''}` },
+            description: `${seller} delivered more aircraft to ${buyerAirlines}.${extra ? `\n> ${note}` : ''}` },
         HANDOFF: { title: `🔁 ${ref}: looking for a new seller`, color: EMBED_COLORS.request,
-            description: `${extra || 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
+            description: `${extra ? note : 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
         FULFILLED: { title: `✅ Your order ${ref} is complete`, color: EMBED_COLORS.fulfilled,
-            description: `All ${order.total_qty} aircraft were delivered to **${order.airline_name}** by ${seller}. Enjoy the new fleet!` },
+            description: `All ${order.total_qty} aircraft were delivered to ${buyerAirlines} by ${seller}. Enjoy the new fleet!` },
         DECLINED: { title: `⛔ Your order ${ref} was declined`, color: EMBED_COLORS.declined,
-            description: `Reason: ${extra || 'not given'}\nYou can place a new order any time.` }
+            description: `Reason: ${extra ? note : 'not given'}\nYou can place a new order any time.` }
     }[kind];
     if (lines) await sendDM(buyer, { ...lines, url });
 }
@@ -395,6 +431,19 @@ async function webpush() {
 
 // Sends a notification to every device the account enabled alerts on.
 // Returns how many devices accepted it. Never throws.
+// Browser push services. Subscriptions pointing anywhere else are refused, so the server can't be made
+// to send requests to arbitrary addresses. PUSH_EXTRA_HOSTS (comma-separated) is for local testing only.
+const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/,
+    /(^|\.)push\.apple\.com$/, /\.notify\.windows\.com$/];
+export function pushEndpointAllowed(endpoint) {
+    try {
+        const u = new URL(endpoint);
+        if (u.protocol !== 'https:') return false;
+        const extra = env('PUSH_EXTRA_HOSTS').split(',').map((h) => h.trim()).filter(Boolean);
+        return PUSH_HOSTS.some((re) => re.test(u.hostname)) || extra.includes(u.host);
+    } catch { return false; }
+}
+
 export async function sendPush(accountId, { title, body, tag, url }) {
     if (!PUSH_AVAILABLE || !accountId) return 0;
     try {
@@ -403,7 +452,7 @@ export async function sendPush(accountId, { title, body, tag, url }) {
         const wp = await webpush();
         const payload = JSON.stringify({ title, body, tag, url: url || (BUYER_URL ? `${BUYER_URL}/#orders` : '/#orders') });
         let sent = 0;
-        await Promise.all(subs.map(async (sub) => {
+        await Promise.all(subs.filter((sub) => pushEndpointAllowed(sub.endpoint)).map(async (sub) => {
             try {
                 await wp.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 60 * 60 * 24 });
                 sent++;

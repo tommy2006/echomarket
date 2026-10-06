@@ -5,7 +5,9 @@ import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, W
 const has = (n) => Boolean(process.env[n]);
 
 export default async function handler(req, res) {
-    res.setHeader('Cache-Control', 'no-store');
+    // Cached for a minute on Vercel's edge: the checks call Discord, and nobody should be able to
+    // hammer the bot's rate limit by reloading this page. Nothing secret is in it.
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60');
     const checks = [];
     const add = (step, name, ok, detail, fix) => checks.push({ step, check: name, ok, detail, ...(ok ? {} : { fix }) });
 

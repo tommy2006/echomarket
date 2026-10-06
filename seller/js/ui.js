@@ -104,6 +104,15 @@ export const plural = (n, word) => `${n} ${word}${n === 1 || word === 'aircraft'
 
 // ------------------------------------------------------------ order status
 // Orders have a serial number (#1, #2, … in the order they were placed) and a code (ECH-1A2B3C4D).
+// The buyer airlines an order may be delivered to (newer orders can list several, older ones have one).
+export function orderAirlines(order) {
+    const list = Array.isArray(order?.airlines) ? order.airlines.filter((a) => a && a.name) : [];
+    return list.length ? list : [{ id: order?.airline_id, name: order?.airline_name, alliance: order?.alliance }];
+}
+export const airlineNames = (order) => orderAirlines(order).map((a) => a.name).join(', ');
+export const orderAlliances = (order) => [...new Set(orderAirlines(order).map((a) => a.alliance).filter(Boolean))];
+// Which of the buyer's airlines a seller in this alliance can deliver to.
+export const deliverableTo = (order, alliance) => orderAirlines(order).filter((a) => a.alliance === alliance);
 export const orderRef = (order) => (order?.serial ? `#${order.serial}` : order?.id || '');
 export function OrderCode({ order, className = '' }) {
     return html`<span className=${`inline-flex items-baseline gap-1.5 font-mono text-xs whitespace-nowrap ${className}`}>

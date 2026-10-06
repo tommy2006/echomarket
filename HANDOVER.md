@@ -52,7 +52,23 @@ The old app lived in two repos and two Vercel projects owned by falcc00 (github.
 | **Order numbers** | Every order has a serial number (`orders.serial`, #1, #2, … in the order they were placed) next to its code (ECH-…). Both show on both sites, in Discord posts and in DMs. Older orders were numbered by date when the schema was re-run. Numbers of deleted orders are not reused. |
 | **Sellers from the Discord role** | `seller/api/enroll.js`, called when someone opens the seller desk: having the seller role (`DISCORD_ROLE_ID`) in a server the bot is in adds them (`sellers.source = 'discord_role'`); losing it switches them off. Rows added by hand (`source = 'manual'`) are never touched, which is also how to block someone who has the role. |
 | **Buyer info for sellers** | Clicking the buyer's airline name (or the Buyer card in an order) shows their Discord profile, ID, a copyable @mention, whether bot DMs reach them, and all their orders. |
+| **Several delivery airlines** | At checkout the buyer picks one or more of their airlines (buttons, like the alliance picker). They are stored in `orders.airlines`; the first is also `airline_id` / `airline_name` / `alliance`. Sellers see every airline, the "no shared alliance" warning checks all of them, and taking an order says which buyer airline to deliver to. The number of aircraft doesn't change. |
 | **Phone & browser alerts** | Web push (`buyer/sw.js`, `push_subscriptions`, `/api/push`) when an order is **fully delivered**. Needs the VAPID keys (SETUP.md Part 10). iPhone users must add the site to their Home Screen first. |
+
+## Security rules (October 2026)
+
+A player took over seller access by editing their own Supabase user metadata (`supabase.auth.updateUser({ data: { provider_id } })`), which the old account trigger copied into `accounts.discord_id`. Fixed, and these rules now hold:
+
+| Rule | Where |
+|---|---|
+| A player's Discord ID, name and avatar come **only** from `auth.identities` (written by Supabase during the Discord login). `raw_user_meta_data` / `user_metadata` is player-editable and is never read. | `public.sync_account()` in schema.sql |
+| Every API request re-checks the stored Discord ID against the login and repairs it if they differ. | `requireUser()` in shared/lib/server.js |
+| Accounts that were tampered with are logged in `public.security_repairs` (SQL Editor only) and lose role-based seller access. | schema.sql section 8 |
+| Avatars must be on `cdn.discordapp.com`. | `sync_account()` |
+| Player text in Discord posts and DMs is markdown-escaped (no masked links, fake formatting or mentions); only the seller role can be pinged. | `md()` in server.js |
+| Phone-alert subscriptions must point at a real browser push service. | `pushEndpointAllowed()` |
+| At most 5 orders per account per 10 minutes (each pings the seller role). Orders sent at the same moment can't get around the 24-hour limit. | buyer/api/orders.js |
+| `/api/health` is cached for a minute, so reloading it can't run the bot into Discord's rate limit. | health.js |
 
 ## Decisions you made (October 2026)
 

@@ -7,7 +7,8 @@ import {
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
-    pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor
+    pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor,
+    orderAirlines, airlineNames, orderAlliances, deliverableTo
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
@@ -277,7 +278,7 @@ const TOUR_STEPS = [
     { target: 'shop', icon: 'plane', title: () => '2 · Pick aircraft',
       text: 'Choose a model, how many, and a price level: the % of the in-game list price you pay.' },
     { target: 'cart', icon: 'shopping-cart', title: () => '3 · Review and send',
-      text: 'Your picks collect here. Choose the airline and send the order to the seller team.' },
+      text: 'Your picks collect here. Pick which of your airlines can receive them (one or more), then send the order.' },
     { target: 'bell', icon: 'bell', title: () => '4 · Follow your order',
       text: "A seller takes it and sells you the aircraft in-game. Updates land here; turn on Discord DMs to get them even when you're away." }
 ];
@@ -579,7 +580,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                     className="card w-full text-left p-4 hover:border-slate-600 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                            <p className="font-bold text-white truncate">${o.airline_name}</p>
+                            <p className="font-bold text-white truncate">${airlineNames(o)}</p>
                             <${OrderCode} order=${o} className="text-[11px]" />
                             <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}`
                                 : o.filled > 0 ? 'Partly delivered · waiting for a new seller' : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
@@ -753,10 +754,17 @@ function AircraftSheet({ aircraft, priceLevel, inCart, onClose, onAdd }) {
 //  Cart / checkout
 // =========================================================================
 function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, defaultAirline, spent24h, session, onCreateAirline, onPlaced }) {
-    const [airlineId, setAirlineId] = useState('');
+    const [airlineIds, setAirlineIds] = useState([]);   // every airline the aircraft may be delivered to
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
-    useEffect(() => { if (open) setAirlineId((id) => (airlines.some((a) => a.id === id) ? id : defaultAirline?.id || '')); }, [open, airlines, defaultAirline]);
+    useEffect(() => {
+        if (!open) return;
+        setAirlineIds((ids) => {
+            const kept = ids.filter((id) => airlines.some((a) => a.id === id));
+            return kept.length ? kept : defaultAirline ? [defaultAirline.id] : [];
+        });
+    }, [open, airlines, defaultAirline]);
+    const toggleAirline = (id) => setAirlineIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
     if (!open) return null;
 
     const byModel = Object.fromEntries(pricelist.map((a) => [a.model, a]));
@@ -776,7 +784,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
     const problems = [];
     if (!session) problems.push('Sign in to send orders.');
     else if (!airlines.length) problems.push('Create an airline profile first.');
-    else if (!airlineId) problems.push('Choose which airline this order is for.');
+    else if (!airlineIds.length) problems.push('Choose at least one airline to receive the aircraft.');
     if (!cart.length) problems.push('Your order is empty.');
     if (overLimit) problems.push(`Over your 24-hour limit: this order is ${fmtUSDShort(listTotal)} at list price, and ${fmtUSDShort(left)} of your limit is left today.`);
 
@@ -784,7 +792,8 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
         setBusy(true);
         try {
             const { order } = await api('/api/orders', {
-                airlineId,
+                // In the order the airlines are listed, so the main (first) airline is predictable.
+                airlineIds: airlines.filter((a) => airlineIds.includes(a.id)).map((a) => a.id),
                 buyerNote: note.trim(),
                 items: cart.map(({ model, qty, pricePercent, note }) => ({ model, qty, pricePercent, note }))
             });
@@ -803,7 +812,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
             <div className="flex items-center justify-between p-5 border-b border-slate-800">
                 <div>
                     <h2 className="text-lg font-extrabold text-white">Your order</h2>
-                    <p className="text-xs text-slate-400">Review, choose your airline, then send it to the sellers.</p>
+                    <p className="text-xs text-slate-400">Review, pick which of your airlines can receive it, then send it to the sellers.</p>
                 </div>
                 <button onClick=${onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Close"><${Icon} name="x" className="w-5 h-5" /></button>
             </div>
@@ -835,11 +844,21 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                 </ul>`}
 
                 ${session && html`<div>
-                    <p className="field-label">Order for airline</p>
-                    ${airlines.length ? html`<select value=${airlineId} onChange=${(e) => setAirlineId(e.target.value)} className="input">
-                        <option value="" disabled>Choose an airline…</option>
-                        ${airlines.map((a) => html`<option key=${a.id} value=${a.id}>${a.name} — ${a.alliance}</option>`)}
-                    </select>`
+                    <p className="field-label">Deliver to <span className="font-medium text-slate-500">· pick one or more of your airlines</span></p>
+                    ${airlines.length ? html`<div className="grid grid-cols-2 gap-1.5">
+                        ${airlines.map((a) => {
+                            const on = airlineIds.includes(a.id);
+                            return html`<button type="button" key=${a.id} onClick=${() => toggleAirline(a.id)} aria-pressed=${on}
+                                className=${`relative py-2.5 pl-3 pr-7 rounded-xl border text-left ${on ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>
+                                <span className="block text-sm font-bold truncate">${a.name}</span>
+                                <span className=${`block text-[11px] ${on ? 'text-slate-600' : 'text-slate-500'}`}>${a.alliance}</span>
+                                ${on && html`<span className="absolute right-2 top-1/2 -translate-y-1/2"><${Icon} name="check" className="w-4 h-4" /></span>`}
+                            </button>`;
+                        })}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-2">${airlineIds.length > 1
+                        ? `Any seller in ${[...new Set(airlines.filter((a) => airlineIds.includes(a.id)).map((a) => a.alliance))].join(', ')} can deliver. The number of aircraft stays the same.`
+                        : 'Pick more airlines to let sellers from more alliances deliver. The number of aircraft stays the same.'}</p>`
                     : html`<${Button} variant="secondary" icon="plus" className="w-full" onClick=${onCreateAirline}>Create an airline profile<//>`}
                 </div>`}
 
@@ -888,8 +907,8 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
         closed: (o) => CLOSED_STATUSES.includes(o.status),
         all: () => true
     };
-    const airlineNames = [...new Set(orders.map((o) => o.airline_name))];
-    const list = orders.filter((o) => tabs[tab](o) && (airlineFilter === 'ALL' || o.airline_name === airlineFilter));
+    const allNames = [...new Set(orders.flatMap((o) => orderAirlines(o).map((a) => a.name)))];
+    const list = orders.filter((o) => tabs[tab](o) && (airlineFilter === 'ALL' || orderAirlines(o).some((a) => a.name === airlineFilter)));
     const counts = Object.fromEntries(Object.entries(tabs).map(([k, f]) => [k, orders.filter(f).length]));
 
     return html`<section className="space-y-4">
@@ -898,9 +917,9 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
                 <h2 className="text-2xl font-black tracking-tight text-white">Your orders</h2>
                 <p className="text-sm text-slate-400">Updates appear here live as sellers work on them.</p>
             </div>
-            ${airlineNames.length > 1 && html`<select value=${airlineFilter} onChange=${(e) => setAirlineFilter(e.target.value)} className="input md:!w-60">
+            ${allNames.length > 1 && html`<select value=${airlineFilter} onChange=${(e) => setAirlineFilter(e.target.value)} className="input md:!w-60">
                 <option value="ALL">All airlines</option>
-                ${airlineNames.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
+                ${allNames.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
             </select>`}
         </div>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
@@ -940,7 +959,7 @@ function OrderCard({ order, events, highlight, onChanged }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
                 <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-500"><${OrderCode} order=${order} /><span>${fmtDate(order.created_at)}</span></p>
-                <h3 className="font-extrabold text-white mt-0.5">${order.airline_name} <span className="text-slate-500 font-semibold text-sm">· ${order.alliance}</span></h3>
+                <h3 className="font-extrabold text-white mt-0.5">${orderAirlines(order).map((a, i) => html`<span key=${i}>${i ? html`<span className="text-slate-600"> / </span>` : ''}${a.name} <span className="text-slate-500 font-semibold text-sm">· ${a.alliance}</span></span>`)}</h3>
                 <p className="text-sm text-slate-400">${plural(order.total_qty, 'aircraft')} · ${fmtUSD(order.total_usd)}</p>
             </div>
             <${StatusBadge} status=${displayStatus(order)} />
@@ -965,6 +984,7 @@ function OrderCard({ order, events, highlight, onChanged }) {
                 <p className="label text-slate-500">Your seller</p>
                 <p className="font-bold text-white truncate">${order.seller_airline_name} <span className="text-slate-400 font-medium text-sm">${order.seller_alliance ? `· ${order.seller_alliance}` : ''}</span></p>
                 <p className="text-xs text-slate-400 flex items-center gap-1"><${DiscordLogo} className="w-3 h-3" /> ${order.seller_name}</p>
+                ${orderAirlines(order).length > 1 && deliverableTo(order, order.seller_alliance).length > 0 && html`<p className="text-xs text-sky-300 mt-0.5">Delivers to ${deliverableTo(order, order.seller_alliance).map((a) => a.name).join(' or ')} (same alliance)</p>`}
             </div>
         </div>`}
 
