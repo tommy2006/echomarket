@@ -395,6 +395,22 @@ Anyone with the seller role (`DISCORD_ROLE_ID`, the same role new orders ping) i
 
 By hand, for people without the role, or for admins: 💬 *"Add Discord ID 123… as a seller."* Add *"…as an admin"* if they should be able to delete orders and manage any order. People added by hand are never changed by the role check.
 
+**Making someone an admin.** Admins can decline an order for everyone, delete orders, manage any seller's order, and see the **Sellers** tab (seller performance). In Supabase → **SQL Editor**, replace the Discord ID and run:
+
+```sql
+insert into public.sellers (user_id, is_admin, active, source, note)
+select id, true, true, 'manual', 'Made admin by hand'
+from public.accounts where discord_id = '123456789012345678'
+on conflict (user_id) do update set is_admin = true, active = true, source = 'manual';
+```
+
+- It works whether or not they are already a seller. They must have signed in on the market once (otherwise nothing happens: check with `supabase/queries/list-buyers.sql`).
+- `source = 'manual'` means losing the Discord role no longer removes them: admin is your decision, not the role's.
+- To take admin away again (they stay a normal seller): `update public.sellers set is_admin = false where user_id = (select id from public.accounts where discord_id = '123456789012345678');`
+- They see the change after reloading the seller desk.
+
+**Lists of everyone.** `supabase/queries/list-buyers.sql` (every account, with airlines and orders) and `supabase/queries/list-sellers.sql` (every seller, with admin/role status and activity). Paste either into the SQL Editor and run; they only read.
+
 To block someone who still has the role: 💬 *"Block seller with Discord ID 123… (set active = false, source = manual)."* Their history is kept.
 
 ---

@@ -258,14 +258,17 @@ function App() {
     const tabs = {
         open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
         mine: { label: 'My orders', icon: 'briefcase', fn: (o) => o.seller_id === userId && ['CLAIMED', 'PARTIAL'].includes(o.status) },
-        all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter }
+        all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
+        // Admins only: seller performance (the API refuses everyone else too).
+        ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false } } : {})
     };
+    if (!tabs[tab]) setTimeout(() => setTab('open'));
     const counts = {
         open: orders.filter(tabs.open.fn).length,
         mine: orders.filter(tabs.mine.fn).length,
         all: orders.length
     };
-    const list = orders.filter((o) => tabs[tab].fn(o) && matches(o));
+    const list = orders.filter((o) => (tabs[tab] || tabs.open).fn(o) && matches(o));
     // Open queue: longest-waiting first. Other tabs stay newest first.
     if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
     // All orders: show the first N, the rest behind "Show more".
@@ -306,20 +309,21 @@ function App() {
                 <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
                     ${Object.entries(tabs).map(([k, t]) => html`<button key=${k} onClick=${() => setTab(k)}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
-                        <${Icon} name=${t.icon} className="w-3.5 h-3.5" />${t.label}<span className="opacity-60">${counts[k]}</span>
+                        <${Icon} name=${t.icon} className="w-3.5 h-3.5" />${t.label}${counts[k] != null && html`<span className="opacity-60">${counts[k]}</span>`}
                     </button>`)}
                 </div>
                 ${tab === 'all' && html`<select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input md:!w-48">
                     <option value="ALL">Any status</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select>`}
-                <label className="relative flex-1">
+                ${tab !== 'team' && html`<label className="relative flex-1">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
                     <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search order, airline, buyer, aircraft…" className="input pl-10" />
-                </label>
+                </label>`}
             </div>
 
-            ${loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+            ${tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} />`
+            : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
@@ -398,6 +402,77 @@ function NotASeller({ account }) {
 }
 
 // ------------------------------------------------------------- components
+// Admins only: how much each seller has done. Numbers come from /api/admin/sellers.
+const STAT_PERIODS = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'All time']];
+function SellerStats({ userId }) {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    useEffect(() => {
+        let gone = false;
+        setData(null); setError(null);
+        api('/api/admin/sellers', { days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
+        return () => { gone = true; };
+    }, [days]);
+    const max = Math.max(1, ...(data?.sellers || []).map((x) => x.aircraftSold));
+    const period = days ? `in the last ${days} days` : 'all time';
+
+    return html`<section className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+                <h2 className="text-lg font-extrabold text-white">Seller performance</h2>
+                <p className="text-xs text-slate-500">Only admins can see this.</p>
+            </div>
+            <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start">
+                ${STAT_PERIODS.map(([d, label]) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
+                    className=${`px-3 py-1.5 rounded-full text-xs font-bold ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label}</button>`)}
+            </div>
+        </div>
+
+        ${error ? html`<div className="card p-5 text-sm text-rose-300">${error}</div>`
+        : !data ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+        : html`
+            <div className="grid grid-cols-2 gap-2 md:gap-3">
+                <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
+                    <p className="text-[11px] font-bold text-slate-500">Orders taken · ${period}</p>
+                    <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${data.totals.ordersTaken}</p>
+                    <p className="text-[11px] text-slate-500">${plural(data.totals.ordersDone, 'order')} completed</p>
+                </div>
+                <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
+                    <p className="text-[11px] font-bold text-slate-500">Aircraft sold · ${period}</p>
+                    <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${data.totals.aircraftSold}</p>
+                    <p className="text-[11px] text-slate-500">worth about ${fmtUSDShort(data.totals.saleValue)}</p>
+                </div>
+            </div>
+
+            ${!data.sellers.length ? html`<${EmptyState} icon="trophy" title="No sellers yet" text="Sellers appear here once they're on the seller list." />`
+            : html`<ol className="space-y-2">${data.sellers.map((x, i) => html`<li key=${x.id} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 ${x.active ? '' : 'opacity-60'}`}>
+                <div className="flex items-center gap-3">
+                    <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${i + 1}</span>
+                    <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
+                    <div className="flex-1 min-w-0">
+                        <p className="font-bold text-white truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</p>
+                        <p className="text-[11px] text-slate-500 truncate">
+                            ${[x.isAdmin && 'admin', x.source === 'discord_role' ? 'via Discord role' : x.onList && 'added by hand',
+                                !x.onList ? 'no longer on the list' : !x.active && 'switched off',
+                                x.inProgress ? `${x.inProgress} in progress` : null,
+                                x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
+                    </div>
+                    <div className="flex items-end gap-4 md:gap-6 shrink-0 text-right">
+                        <div><p className="text-xl font-black text-white tabular-nums leading-none">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-500 mt-1">orders taken</p></div>
+                        <div><p className="text-xl font-black text-white tabular-nums leading-none">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500 mt-1">aircraft sold</p></div>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3 mt-2.5 pl-9">
+                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Aircraft sold, compared with the top seller"><div className="h-full rounded-full bg-sky-400" style=${{ width: Math.round(Math.max(0, x.aircraftSold) / max * 100) + "%" }}></div></div>
+                    <span className="text-[11px] text-slate-500 tabular-nums w-20 text-right shrink-0">${fmtUSDShort(x.saleValue)}</span>
+                </div>
+            </li>`)}</ol>`}
+            <p className="text-[11px] text-slate-500">Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft sold counts what each seller delivered themselves. Sale value uses each order's average price per aircraft, so it's exact for single-type orders and close for mixed ones.</p>
+        `}
+    </section>`;
+}
+
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
 function SellerGreeting({ account, now, open, mine }) {
     const date = new Date(now);
