@@ -322,7 +322,7 @@ function App() {
                 </label>`}
             </div>
 
-            ${tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} />`
+            ${tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
             : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
@@ -403,30 +403,41 @@ function NotASeller({ account }) {
 
 // ------------------------------------------------------------- components
 // Admins only: how much each seller has done. Numbers come from /api/admin/sellers.
+// Ranked by orders taken, then aircraft delivered. Sale value is shown small and never ranked on,
+// because it would favour sellers of expensive aircraft types.
 const STAT_PERIODS = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'All time']];
-function SellerStats({ userId }) {
+const periodText = (days) => (days ? `in the last ${days} days` : 'all time');
+
+function PeriodPicker({ days, setDays }) {
+    return html`<div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start">
+        ${STAT_PERIODS.map(([d, label]) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
+            className=${`px-3 py-1.5 rounded-full text-xs font-bold ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label}</button>`)}
+    </div>`;
+}
+
+const sellerTags = (x) => [x.isAdmin && 'admin', x.source === 'discord_role' ? 'via Discord role' : x.onList && 'added by hand',
+    !x.onList ? 'no longer on the list' : !x.active && 'switched off'].filter(Boolean);
+
+function SellerStats({ userId, onOpenOrder }) {
     const [days, setDays] = useState(30);
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
+    const [picked, setPicked] = useState(null);   // seller whose details are open
     useEffect(() => {
         let gone = false;
         setData(null); setError(null);
         api('/api/admin/sellers', { days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
         return () => { gone = true; };
     }, [days]);
-    const max = Math.max(1, ...(data?.sellers || []).map((x) => x.aircraftSold));
-    const period = days ? `in the last ${days} days` : 'all time';
+    const max = Math.max(1, ...(data?.sellers || []).map((x) => x.ordersTaken));
 
     return html`<section className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
                 <h2 className="text-lg font-extrabold text-white">Seller performance</h2>
-                <p className="text-xs text-slate-500">Only admins can see this.</p>
+                <p className="text-xs text-slate-500">Only admins can see this. Click a seller for their details and orders.</p>
             </div>
-            <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start">
-                ${STAT_PERIODS.map(([d, label]) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
-                    className=${`px-3 py-1.5 rounded-full text-xs font-bold ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label}</button>`)}
-            </div>
+            <${PeriodPicker} days=${days} setDays=${setDays} />
         </div>
 
         ${error ? html`<div className="card p-5 text-sm text-rose-300">${error}</div>`
@@ -434,43 +445,115 @@ function SellerStats({ userId }) {
         : html`
             <div className="grid grid-cols-2 gap-2 md:gap-3">
                 <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
-                    <p className="text-[11px] font-bold text-slate-500">Orders taken · ${period}</p>
+                    <p className="text-[11px] font-bold text-slate-500">Orders taken · ${periodText(days)}</p>
                     <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${data.totals.ordersTaken}</p>
                     <p className="text-[11px] text-slate-500">${plural(data.totals.ordersDone, 'order')} completed</p>
                 </div>
                 <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
-                    <p className="text-[11px] font-bold text-slate-500">Aircraft sold · ${period}</p>
+                    <p className="text-[11px] font-bold text-slate-500">Aircraft delivered · ${periodText(days)}</p>
                     <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${data.totals.aircraftSold}</p>
-                    <p className="text-[11px] text-slate-500">worth about ${fmtUSDShort(data.totals.saleValue)}</p>
+                    <p className="text-[11px] text-slate-600">≈ ${fmtUSDShort(data.totals.saleValue)} in sales</p>
                 </div>
             </div>
 
             ${!data.sellers.length ? html`<${EmptyState} icon="trophy" title="No sellers yet" text="Sellers appear here once they're on the seller list." />`
-            : html`<ol className="space-y-2">${data.sellers.map((x, i) => html`<li key=${x.id} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 ${x.active ? '' : 'opacity-60'}`}>
-                <div className="flex items-center gap-3">
-                    <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${i + 1}</span>
-                    <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
-                    <div className="flex-1 min-w-0">
-                        <p className="font-bold text-white truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</p>
-                        <p className="text-[11px] text-slate-500 truncate">
-                            ${[x.isAdmin && 'admin', x.source === 'discord_role' ? 'via Discord role' : x.onList && 'added by hand',
-                                !x.onList ? 'no longer on the list' : !x.active && 'switched off',
+            : html`<ol className="space-y-2">${data.sellers.map((x, i) => html`<li key=${x.id}>
+                <button onClick=${() => setPicked(x)} className=${`card w-full text-left !rounded-2xl md:!rounded-3xl p-3 md:p-4 hover:border-slate-600 ${x.active ? '' : 'opacity-60'}`}>
+                    <div className="flex items-center gap-3">
+                        <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${i + 1}</span>
+                        <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
+                        <div className="flex-1 min-w-0">
+                            <p className="font-bold text-white truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</p>
+                            <p className="text-[11px] text-slate-500 truncate">${[...sellerTags(x),
                                 x.inProgress ? `${x.inProgress} in progress` : null,
                                 x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
+                        </div>
+                        <div className="flex items-end gap-4 md:gap-6 shrink-0 text-right">
+                            <div><p className="text-2xl font-black text-white tabular-nums leading-none">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-400 mt-1">orders taken</p></div>
+                            <div><p className="text-lg font-bold text-slate-300 tabular-nums leading-none">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500 mt-1">aircraft delivered</p></div>
+                        </div>
+                        <${Icon} name="chevron-right" className="w-4 h-4 text-slate-600 shrink-0" />
                     </div>
-                    <div className="flex items-end gap-4 md:gap-6 shrink-0 text-right">
-                        <div><p className="text-xl font-black text-white tabular-nums leading-none">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-500 mt-1">orders taken</p></div>
-                        <div><p className="text-xl font-black text-white tabular-nums leading-none">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500 mt-1">aircraft sold</p></div>
+                    <div className="flex items-center gap-3 mt-2.5 pl-9">
+                        <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Orders taken, compared with the most active seller">
+                            <div className="h-full rounded-full bg-sky-400" style=${{ width: Math.round(x.ordersTaken / max * 100) + '%' }}></div>
+                        </div>
+                        <span className="text-[10px] text-slate-600 tabular-nums shrink-0" title="Approximate value of the aircraft they delivered">≈ ${fmtUSDShort(x.saleValue)}</span>
                     </div>
-                </div>
-                <div className="flex items-center gap-3 mt-2.5 pl-9">
-                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Aircraft sold, compared with the top seller"><div className="h-full rounded-full bg-sky-400" style=${{ width: Math.round(Math.max(0, x.aircraftSold) / max * 100) + "%" }}></div></div>
-                    <span className="text-[11px] text-slate-500 tabular-nums w-20 text-right shrink-0">${fmtUSDShort(x.saleValue)}</span>
-                </div>
+                </button>
             </li>`)}</ol>`}
-            <p className="text-[11px] text-slate-500">Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft sold counts what each seller delivered themselves. Sale value uses each order's average price per aircraft, so it's exact for single-type orders and close for mixed ones.</p>
+            <p className="text-[11px] text-slate-500">Ranked by orders taken, then aircraft delivered. Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft delivered counts what each seller delivered themselves. Sale value (≈) uses each order's average price per aircraft and is only shown for reference.</p>
         `}
+        ${picked && html`<${SellerDetailModal} seller=${picked} initialDays=${days} userId=${userId}
+            onClose=${() => setPicked(null)} onOpenOrder=${(id) => { setPicked(null); onOpenOrder(id); }} />`}
     </section>`;
+}
+
+// One seller: who they are, their numbers for a period, and every order they took in it.
+function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }) {
+    const [days, setDays] = useState(initialDays);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    useEffect(() => {
+        let gone = false;
+        setData(null); setError(null);
+        api('/api/admin/sellers', { days, sellerId: seller.id }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
+        return () => { gone = true; };
+    }, [days, seller.id]);
+    const x = data?.seller || seller;
+    const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
+
+    return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${x.name + (x.id === userId ? ' (you)' : '')}
+        subtitle=${sellerTags(x).join(' · ') || 'seller'}>
+        <div className="space-y-5">
+            <div className="flex items-center gap-4">
+                <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-14 h-14" />
+                <div className="min-w-0 text-sm space-y-0.5">
+                    ${x.discordUsername && html`<p className="text-slate-300">@${x.discordUsername}</p>`}
+                    ${data?.seller?.discordId && html`<button onClick=${() => copy(data.seller.discordId, 'Discord ID')} className="font-mono text-xs text-slate-400 hover:text-white flex items-center gap-1.5">
+                        <${DiscordLogo} className="w-3.5 h-3.5" />${data.seller.discordId}<${Icon} name="copy" className="w-3 h-3" /></button>`}
+                    <p className="text-xs text-slate-500">${[
+                        data?.seller?.addedAt && `on the seller list since ${new Date(data.seller.addedAt).toLocaleDateString()}`,
+                        x.source === 'discord_role' && data?.seller?.roleCheckedAt && `role last confirmed ${timeAgo(data.seller.roleCheckedAt)}`,
+                        `${x.inProgress || 0} in progress now`].filter(Boolean).join(' · ')}</p>
+                    ${data?.seller?.note && html`<p className="text-xs text-slate-500 italic">${data.seller.note}</p>`}
+                </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <p className="label text-slate-500">Activity · ${periodText(days)}</p>
+                <${PeriodPicker} days=${days} setDays=${setDays} />
+            </div>
+
+            ${error ? html`<p className="text-sm text-rose-300">${error}</p>`
+            : !data ? html`<div className="py-10 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+            : html`
+                <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800"><p className="text-2xl font-black text-white tabular-nums">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-400">orders taken</p></div>
+                    <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800"><p className="text-xl font-bold text-slate-200 tabular-nums">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500">aircraft delivered</p></div>
+                    <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800"><p className="text-xl font-bold text-slate-200 tabular-nums">${x.ordersDone}</p><p className="text-[10px] font-bold text-slate-500">orders completed</p></div>
+                </div>
+                <p className="text-[11px] text-slate-600 -mt-3 text-right">≈ ${fmtUSDShort(x.saleValue)} in sales</p>
+
+                <div>
+                    <p className="label text-slate-500 mb-2">Orders taken (${data.orders.length})</p>
+                    ${!data.orders.length ? html`<p className="text-sm text-slate-400">No orders taken ${periodText(days)}.</p>`
+                    : html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
+                        ${data.orders.map((o) => html`<li key=${o.id}>
+                            <button onClick=${() => onOpenOrder(o.id)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-800/40">
+                                <span className="flex-1 min-w-0">
+                                    <${OrderCode} order=${o} />
+                                    <span className="block text-sm text-slate-200 truncate">${airlineNames(o)} <span className="text-slate-500">· ${o.buyer_name}</span></span>
+                                    <span className="block text-[11px] text-slate-500">took it ${fmtDate(o.takenAt)} · delivered ${o.deliveredBySeller} of ${plural(o.total_qty, 'aircraft')}${!o.stillTheirs && ['PENDING', 'CLAIMED', 'PARTIAL'].includes(o.status) ? ' · now with another seller' : ''}</span>
+                                </span>
+                                <${StatusBadge} status=${displayStatus(o)} />
+                            </button>
+                        </li>`)}
+                    </ul>`}
+                </div>
+            `}
+        </div>
+    <//>`;
 }
 
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
