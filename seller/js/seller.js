@@ -351,14 +351,14 @@ function App() {
                 <${Stat} label="Delivered" value=${orders.filter((o) => o.status === 'FULFILLED').length} icon="circle-check" tone="text-emerald-300" />
             </div>
 
-            <div className="flex flex-col md:flex-row gap-2 md:items-center">
+            <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
                 <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
                     ${Object.entries(tabs).map(([k, t]) => html`<button key=${k} onClick=${() => setTab(k)}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
                         <${Icon} name=${t.icon} className="w-3.5 h-3.5" />${t.label}${counts[k] != null && html`<span className="opacity-60">${counts[k]}</span>`}
                     </button>`)}
                 </div>
-                ${tab === 'all' && html`<select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input md:!w-48">
+                ${tab === 'all' && html`<select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input lg:!w-48">
                     <option value="ALL">Any status</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select>`}
