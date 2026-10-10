@@ -62,6 +62,9 @@ function App() {
     const [alliances, setAlliances] = useState([]);
     const [orders, setOrders] = useState([]);
     const [events, setEvents] = useState([]);
+    const [marketMessages, setMarketMessages] = useState([]);   // from Market Admins (info / warning)
+    const [orderMessages, setOrderMessages] = useState([]);     // with the seller team, per order
+    const [standing, setStanding] = useState(null);             // /api/me: Echo server member? market-banned?
     const [dataReady, setDataReady] = useState(false);
     const [pricelist, setPricelist] = useState([]);
 
@@ -105,13 +108,15 @@ function App() {
     // ---------------- load account data
     const loadAll = useCallback(async () => {
         if (!userId) return;
-        const [acc, sel, air, all, ord, ev] = await Promise.all([
+        const [acc, sel, air, all, ord, ev, mm, om] = await Promise.all([
             sb.from('accounts').select('*').eq('id', userId).maybeSingle(),
             sb.from('sellers').select('active').eq('user_id', userId).maybeSingle(),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
             sb.from('alliances').select('name').order('sort_order'),
             sb.from('orders').select('*').eq('buyer_id', userId).order('created_at', { ascending: false }).limit(300),
-            sb.from('order_events').select('*').eq('buyer_id', userId).order('created_at', { ascending: false }).limit(200)
+            sb.from('order_events').select('*').eq('buyer_id', userId).order('created_at', { ascending: false }).limit(200),
+            sb.from('market_messages').select('*').eq('account_id', userId).order('created_at', { ascending: false }).limit(100),
+            sb.from('order_messages').select('*').eq('buyer_id', userId).order('created_at').limit(500)
         ]);
         const failed = [acc, air, all, ord, ev].find((r) => r.error);
         if (failed) toast('Could not load your data: ' + failed.error.message, 'error');
@@ -121,12 +126,16 @@ function App() {
         setAlliances((all.data || []).map((a) => a.name));
         setOrders(ord.data || []);
         setEvents(ev.data || []);
+        setMarketMessages(mm.data || []);
+        setOrderMessages(om.data || []);
         setDataReady(true);
     }, [userId]);
 
     useEffect(() => {
-        if (!userId) { setDataReady(false); setAccount(null); setAirlines([]); setOrders([]); setEvents([]); return; }
+        if (!userId) { setDataReady(false); setAccount(null); setAirlines([]); setOrders([]); setEvents([]); setStanding(null); return; }
         loadAll();
+        // Members of the Echo server only, and not market-banned (checked with Discord by /api/me).
+        api('/api/me').then(setStanding).catch(() => setStanding({ inGuild: true, ban: null, unknown: true }));
     }, [userId, loadAll]);
 
     // ---------------- live updates
@@ -145,6 +154,20 @@ function App() {
                     const text = describeEvent(ev);
                     toast(text, ev.kind === 'DECLINED' ? 'error' : 'success');
                     notifyBrowser(`Order ${refFor(ev.order_id)}`, text, ev.order_id);
+                }
+            })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'market_messages', filter: `account_id=eq.${userId}` }, (p) => {
+                setMarketMessages((list) => [p.new, ...list.filter((m) => m.id !== p.new.id)]);
+                const text = describeEvent(asInboxItem.market(p.new));
+                toast(text, p.new.kind === 'warning' ? 'error' : 'info');
+                notifyBrowser('Echo Market', text, 'mm' + p.new.id);
+            })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `buyer_id=eq.${userId}` }, (p) => {
+                setOrderMessages((list) => [...list.filter((m) => m.id !== p.new.id), p.new]);
+                if (p.new.from_role === 'seller') {
+                    const text = describeEvent(asInboxItem.order(p.new));
+                    toast(text, 'info');
+                    notifyBrowser(`Order ${refFor(p.new.order_id)}`, text, 'om' + p.new.id);
                 }
             })
             .subscribe();
@@ -169,7 +192,12 @@ function App() {
     const defaultAirline = airlines.find((a) => a.id === defaultAirlineId) || airlines[0] || null;
     const cartCount = cart.reduce((s, it) => s + it.qty, 0);
     const lastSeen = account?.notifications_seen_at || new Date(0).toISOString();
-    const inbox = events.filter((e) => e.actor_id !== userId);
+    const inbox = [
+        ...events.filter((e) => e.actor_id !== userId),
+        ...marketMessages.map(asInboxItem.market),
+        ...orderMessages.filter((m) => m.from_role === 'seller').map(asInboxItem.order)
+    ].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const adminNotices = marketMessages.filter((m) => m.created_at > (account?.notifications_seen_at || ''));
     const unread = inbox.filter((e) => e.created_at > lastSeen).length;
     const activeOrders = orders.filter((o) => ACTIVE_STATUSES.includes(o.status));
     const spent24h = orders
@@ -200,6 +228,10 @@ function App() {
     const signOut = async () => { await sb.auth.signOut(); go('home'); };
 
     if (!authReady) return html`<${FullPageSpinner} />`;
+    if (session && !standing) return html`<${FullPageSpinner} />`;
+    if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole)) {
+        return html`<${MarketGate} standing=${standing} account=${account} onSignOut=${signOut} />`;
+    }
 
     const shared = { session, account, airlines, alliances, orders, events, pricelist, cart, priceLevel, dataReady };
 
@@ -213,14 +245,15 @@ function App() {
                 onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`}
 
             ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox}
-                spent24h=${spent24h} cartCount=${cartCount} onOpenCart=${() => setCartOpen(true)}
-                onOpenOrder=${(id) => { setHighlightOrder(id); go('orders'); }}
+                spent24h=${spent24h} cartCount=${cartCount} onOpenCart=${() => setCartOpen(true)} adminNotices=${adminNotices}
+                onOpenOrder=${(id) => { if (!id) return; setHighlightOrder(id); go('orders'); }}
                 guide=${html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
                     onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`} />`}
 
             ${view === 'shop' && html`<${ShopView} ...${shared} setPriceLevel=${setPriceLevel}
                 onPick=${(model) => (requireAirline() ? setSheetModel(model) : null)} />`}
             ${view === 'orders' && html`<${OrdersView} ...${shared} highlight=${highlightOrder}
+                orderMessages=${orderMessages} onMessage=${(m) => setOrderMessages((list) => [...list.filter((x) => x.id !== m.id), m])}
                 onOrderChanged=${(o) => setOrders((list) => list.map((x) => (x.id === o.id ? o : x)))} />`}
             ${view === 'airlines' && html`<${AirlinesView} ...${shared}
                 defaultAirline=${defaultAirline} setDefaultAirlineId=${setDefaultAirlineId}
@@ -247,7 +280,7 @@ function App() {
 
         <${NotificationsPanel} open=${notifOpen} inbox=${inbox} lastSeen=${lastSeen} account=${account} setAccount=${setAccount}
             onClose=${() => { setNotifOpen(false); if (unread) markNotificationsSeen(); }}
-            onOpenOrder=${(id) => { setNotifOpen(false); setHighlightOrder(id); go('orders'); if (unread) markNotificationsSeen(); }} />
+            onOpenOrder=${(id) => { if (!id) return; setNotifOpen(false); setHighlightOrder(id); go('orders'); if (unread) markNotificationsSeen(); }} />
 
         <${AirlineForm} state=${airlineForm} alliances=${alliances} count=${airlines.length} userId=${userId}
             onClose=${() => setAirlineForm(null)}
@@ -362,8 +395,18 @@ function describeEvent(ev) {
     const ev2 = { ...ev, order_id: refFor(ev.order_id) };
     return describe(ev2);
 }
+// Admin messages and seller replies, shaped like order events for the inbox.
+const asInboxItem = {
+    market: (m) => ({ id: 'mm' + m.id, created_at: m.created_at, kind: m.kind === 'warning' ? 'ADMIN_WARNING' : 'ADMIN_INFO',
+        order_id: null, actor_id: null, actor_name: m.sent_by_name || 'Market Admins', message: m.body }),
+    order: (m) => ({ id: 'om' + m.id, created_at: m.created_at, kind: 'SELLER_MESSAGE', order_id: m.order_id,
+        actor_id: m.author_id, actor_name: `${m.author_name} · seller team`, message: m.body })
+};
 function describe(ev) {
     switch (ev.kind) {
+        case 'ADMIN_WARNING': return `⚠️ Warning from the Market Admins: ${ev.message}`;
+        case 'ADMIN_INFO': return `📣 Message from the Market Admins: ${ev.message}`;
+        case 'SELLER_MESSAGE': return `${ev.order_id}: the seller team wrote "${ev.message}"`;
         case 'CLAIMED': return `${ev.order_id}: ${ev.message || 'A seller took your order.'}`;
         case 'RELEASED': return `${ev.order_id}: the seller released it — waiting for another seller.`;
         case 'HANDOFF': return `${ev.order_id}: ${ev.message || 'the seller passed on the rest — waiting for a new seller.'}`;
@@ -503,7 +546,7 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 // =========================================================================
 //  Home
 // =========================================================================
-function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder }) {
+function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [] }) {
     const [now, setNow] = useState(() => new Date());
     useEffect(() => {
         const t = setInterval(() => setNow(new Date()), 30000);
@@ -556,6 +599,15 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                 <${Button} variant=${cartCount > 0 ? 'secondary' : 'primary'} icon="plane" onClick=${() => go('shop')}>Buy aircraft<//>
             </div>
         </header>
+
+        ${adminNotices.map((m) => html`<div key=${m.id} className=${`flex gap-3 p-4 rounded-3xl border ${m.kind === 'warning' ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-sky-500/30 bg-sky-500/[0.06]'}`}>
+            <${Icon} name=${m.kind === 'warning' ? 'triangle-alert' : 'megaphone'} className=${`w-5 h-5 mt-0.5 ${m.kind === 'warning' ? 'text-rose-300' : 'text-sky-300'}`} />
+            <div className="min-w-0">
+                <p className="font-extrabold text-white">${m.kind === 'warning' ? 'Warning from the Market Admins' : 'Message from the Market Admins'}</p>
+                <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${m.body}</p>
+                <p className="text-[11px] text-slate-500 mt-1">${m.sent_by_name || 'Market Admins'} · ${timeAgo(m.created_at)} · also in your notifications 🔔</p>
+            </div>
+        </div>`)}
 
         ${guide}
 
@@ -888,7 +940,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
 // =========================================================================
 //  Orders
 // =========================================================================
-function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged }) {
+function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged, orderMessages = [], onMessage }) {
     const [tab, setTab] = useState('active');
     const [airlineFilter, setAirlineFilter] = useState('ALL');
     useEffect(() => {
@@ -932,11 +984,12 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
             text=${orders.length ? 'Try another tab.' : airlines.length ? 'Pick aircraft from the catalog and send your first order.' : 'Create an airline profile, then pick aircraft from the catalog.'}
             action=${!orders.length && html`<${Button} icon="plane" onClick=${() => go('shop')}>Open catalog<//>`} />`
         : html`<div className="space-y-3">${list.map((o) => html`<${OrderCard} key=${o.id} order=${o} highlight=${o.id === highlight}
-            events=${events.filter((e) => e.order_id === o.id)} onChanged=${onOrderChanged} />`)}</div>`}
+            events=${events.filter((e) => e.order_id === o.id)} onChanged=${onOrderChanged}
+            messages=${orderMessages.filter((m) => m.order_id === o.id)} onMessage=${onMessage} />`)}</div>`}
     </section>`;
 }
 
-function OrderCard({ order, events, highlight, onChanged }) {
+function OrderCard({ order, events, highlight, onChanged, messages = [], onMessage }) {
     const [open, setOpen] = useState(highlight);
     const [busy, setBusy] = useState(false);
     const items = orderLines(order);
@@ -1009,6 +1062,8 @@ function OrderCard({ order, events, highlight, onChanged }) {
         ${order.seller_note && html`<div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
             <p className="label text-slate-500 mb-1">Note from seller</p><p className="text-sm text-slate-200">${order.seller_note}</p>
         </div>`}
+
+        <${OrderThread} order=${order} messages=${messages} onMessage=${onMessage} />
 
         <button onClick=${() => setOpen(!open)} className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-white">
             <span>${open ? 'Hide details' : `Show details · ${plural(items.length, 'line')}`}</span>
@@ -1225,6 +1280,78 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
             </li>`)}
         </ul>`}
     <//>`;
+}
+
+// =========================================================================
+//  Messages with the seller team about one order. Buyers can start once the order has waited
+//  CONTACT_AFTER_DAYS without being fully delivered (the server checks the same rule), and can always
+//  answer when a seller has written.
+// =========================================================================
+const CONTACT_AFTER_DAYS = 5;
+function OrderThread({ order, messages, onMessage }) {
+    const [open, setOpen] = useState(false);
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const openStatus = ['PENDING', 'CLAIMED', 'PARTIAL'].includes(order.status);
+    const ageDays = (Date.now() - new Date(order.created_at).getTime()) / 864e5;
+    const sellerWrote = messages.some((m) => m.from_role === 'seller');
+    const canWrite = (openStatus && ageDays >= CONTACT_AFTER_DAYS) || sellerWrote;
+    if (!messages.length && !canWrite) return null;
+    const send = async () => {
+        if (!text.trim()) return;
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'message', body: text.trim() });
+            onMessage?.(r.message);
+            setText('');
+            toast('Sent to the seller team. You will be notified when they answer.', 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    if (!messages.length && !open) {
+        return html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+            <span className="flex-1 text-sm text-amber-100">This order has waited over ${CONTACT_AFTER_DAYS} days without being fully delivered. You can contact the seller team about it.</span>
+            <${Button} size="sm" variant="secondary" icon="message-circle" onClick=${() => setOpen(true)}>Contact the seller team<//>
+        </div>`;
+    }
+    return html`<div className="space-y-2 p-3 rounded-2xl bg-slate-950 border border-slate-800">
+        <p className="label text-slate-500">Messages with the seller team</p>
+        ${messages.map((m) => html`<div key=${m.id} className=${`p-2.5 rounded-xl text-sm ${m.from_role === 'buyer' ? 'ml-8 bg-slate-800/70' : 'mr-8 bg-sky-500/10 border border-sky-500/20'}`}>
+            <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? 'You' : `${m.author_name} · seller team`} · ${timeAgo(m.created_at)}</p>
+            <p className="text-slate-100 whitespace-pre-line break-words">${m.body}</p>
+        </div>`)}
+        ${canWrite ? html`<div className="flex gap-2 items-end">
+            <textarea value=${text} maxLength="1000" rows="2" onChange=${(e) => setText(e.target.value)} className="input flex-1"
+                placeholder="What do you need from the seller team?"></textarea>
+            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>Send<//>
+        </div>` : html`<p className="text-[11px] text-slate-500">This order is finished, so the conversation is closed.</p>`}
+    </div>`;
+}
+
+// =========================================================================
+//  Members only / market bans: shown instead of the market.
+// =========================================================================
+function MarketGate({ standing, account, onSignOut }) {
+    const banned = standing.ban || standing.bannedRole;
+    const ban = standing.ban;
+    return html`<div className="min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-md text-center">
+            <div className=${`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border ${banned ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
+                <${Icon} name=${banned ? 'ban' : 'users-round'} className="w-6 h-6" /></div>
+            ${banned ? html`
+                <h1 className="text-xl font-black text-white mt-5">You're banned from Echo Market</h1>
+                <p className="text-sm text-slate-300 mt-2">${ban ? (ban.ends_at ? `Until ${fmtDate(ban.ends_at)}.` : 'This ban is permanent.') : 'You have the Market Banned role on the Echo Discord server.'}</p>
+                ${ban?.reason && html`<p className="text-sm text-slate-200 mt-3 p-3 rounded-2xl bg-slate-900 border border-slate-800 text-left"><b>Reason:</b> ${ban.reason}</p>`}
+                <p className="text-xs text-slate-400 mt-4">If you think this is a mistake, contact a Market Admin on the Echo Discord server.</p>`
+            : html`
+                <h1 className="text-xl font-black text-white mt-5">Echo Market is for Echo Alliances members</h1>
+                <p className="text-sm text-slate-400 mt-2">${account?.display_name ? `${account.display_name}, your` : 'Your'} Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.</p>`}
+            <div className="mt-7 flex flex-wrap justify-center gap-2">
+                ${!banned && html`<${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>Check again<//>`}
+                <${Button} variant="secondary" icon="log-out" onClick=${onSignOut}>Sign out<//>
+            </div>
+        </div>
+        <${Toasts} />
+    </div>`;
 }
 
 function SignInPrompt({ what }) {

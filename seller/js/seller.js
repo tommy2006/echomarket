@@ -23,7 +23,9 @@ const rankOf = (row) => {
 // "· admin" after the title, unless the title already says so.
 const adminSuffix = (row) => ((row?.is_admin || row?.isAdmin) && !['lead', 'admin'].includes(rankOf(row)) ? ' · admin' : '');
 // Effective admin, the same rule as the server's isAdminSeller().
-const withAdmin = (row) => row && { ...row, is_admin: Boolean(row.is_admin || row.rank === 'lead') };
+// admin_now: what the last role check said (includes the Market Admin role).
+const withAdmin = (row) => row && { ...row, is_admin: Boolean(row.admin_now ?? (row.is_admin || row.rank === 'lead' || row.market_admin)) };
+const LS_MSG_SEEN = 'echo_seller_msg_seen_v1';   // order id → newest buyer message id this seller has seen
 function RankBadge({ rank, admin }) {
     const c = window.ECHO_RANK_COLORS?.[rank] || {};
     return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black whitespace-nowrap"
@@ -80,6 +82,9 @@ function App() {
     const [flags, setFlags] = useState({});
     const [declines, setDeclines] = useState([]);      // [{ order_id, seller_id, seller_name, note }]
     const [teamSize, setTeamSize] = useState(1);        // active sellers
+    const [messages, setMessages] = useState([]);       // order_messages (buyers ↔ seller team)
+    const [msgSeen, setMsgSeen] = useState(() => store.get(LS_MSG_SEEN, {}));
+    useEffect(() => { store.set(LS_MSG_SEEN, msgSeen); }, [msgSeen]);
     const [loading, setLoading] = useState(true);
 
     const [tab, setTab] = useState('open');
@@ -134,7 +139,7 @@ function App() {
                     roleChecked.current = true;
                     const r = await api('/api/enroll').catch(() => null);
                     if (r && !r.seller) me = null;
-                    else if (r?.rank) me = { ...me, rank: r.rank };   // promoted or demoted on Discord
+                    else if (r?.rank) me = { ...me, rank: r.rank, admin_now: r.admin };   // promoted or demoted on Discord
                 }
             }
         }
@@ -142,13 +147,15 @@ function App() {
         if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
-        const [ord, fl, air, dec, team] = await Promise.all([
+        const [ord, fl, air, dec, team, msg] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
             sb.from('order_declines').select('*'),
-            sb.from('sellers').select('user_id').eq('active', true)
+            sb.from('sellers').select('user_id').eq('active', true),
+            sb.from('order_messages').select('*').order('created_at').limit(2000)
         ]);
+        setMessages(msg.data || []);
         setDeclines(dec.data || []);
         setTeamSize(Math.max(1, (team.data || []).length));
         if (ord.error) toast('Could not load orders: ' + ord.error.message, 'error');
@@ -179,6 +186,13 @@ function App() {
                     return p.eventType === 'DELETE' ? rest : [...rest, p.new];
                 });
             })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages' }, (p) => {
+                setMessages((l) => [...l.filter((m) => m.id !== p.new.id), p.new]);
+                if (p.new.from_role === 'buyer') {
+                    toast(`💬 New message from the buyer of ${p.new.order_id}`, 'info');
+                    notifyBrowser('Echo Market: buyer message', p.new.body.slice(0, 120), 'om' + p.new.id);
+                }
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'order_flags' }, (p) => {
                 setFlags((f) => {
                     const next = { ...f };
@@ -193,6 +207,12 @@ function App() {
     }, [seller, loadAll]);
 
     const sellAs = airlines.find((a) => a.id === sellAsId) || airlines[0] || null;
+    const messagesOf = (orderId) => messages.filter((m) => m.order_id === orderId);
+    const unreadOf = (orderId) => messagesOf(orderId).filter((m) => m.from_role === 'buyer' && m.id > (msgSeen[orderId] || 0)).length;
+    const markSeen = (orderId) => {
+        const newest = Math.max(0, ...messagesOf(orderId).map((m) => m.id));
+        if (newest > (msgSeen[orderId] || 0)) setMsgSeen((m) => ({ ...m, [orderId]: newest }));
+    };
     const passedOn = (order) => declines.filter((d) => d.order_id === order.id);
     const iPassed = (order) => passedOn(order).some((d) => d.seller_id === userId);
     // Sellers who could still take the order if I pass on it now.
@@ -284,7 +304,8 @@ function App() {
         mine: { label: 'My orders', icon: 'briefcase', fn: (o) => o.seller_id === userId && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         // Admins only: seller performance (the API refuses everyone else too).
-        ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false } } : {})
+        ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
+                                mod: { label: 'Moderation', icon: 'shield', fn: () => false } } : {})
     };
     if (!tabs[tab]) setTimeout(() => setTab('open'));
     const counts = {
@@ -315,7 +336,8 @@ function App() {
         </header>
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
-            <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine} />
+            <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
+                unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
             ${!airlines.length && html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5">
                 <${Icon} name="triangle-alert" className="w-5 h-5 text-amber-300" />
                 <p className="flex-1 text-sm text-amber-100"><b>You need an airline profile to take orders.</b> Buyers see which airline is selling to them. Create one on the market site's Airlines page (same Discord login), then come back.</p>
@@ -340,19 +362,20 @@ function App() {
                     <option value="ALL">Any status</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select>`}
-                ${tab !== 'team' && html`<label className="relative flex-1">
+                ${!['team', 'mod'].includes(tab) && html`<label className="relative flex-1">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
                     <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search order, airline, buyer, aircraft…" className="input pl-10" />
                 </label>`}
             </div>
 
-            ${tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
+            ${tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
+            : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
             : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
-                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf}
+                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
                 ${tab === 'all' && list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
             </div>`}
@@ -360,8 +383,10 @@ function App() {
 
         ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines} now=${now}
             passed=${passedOn(detail)} teamSize=${teamSize} onBuyer=${setBuyerOf}
+            messages=${messagesOf(detail.id)} onSeen=${() => markSeen(detail.id)}
+            onMessage=${(m) => setMessages((l) => [...l.filter((x) => x.id !== m.id), m])}
             actions=${actions} onClose=${closeDetail} />`}
-        ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} onClose=${() => setBuyerOf(null)}
+        ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_admin} onClose=${() => setBuyerOf(null)}
             onOpenOrder=${(id) => { setBuyerOf(null); openDetail(id); }} />`}
         ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title="Order not found" size="sm">
             <p className="text-sm text-slate-400">${detailId} doesn't exist or was deleted.</p><//>`}
@@ -582,7 +607,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
 }
 
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
-function SellerGreeting({ account, now, open, mine }) {
+function SellerGreeting({ account, now, open, mine, unreadOrders = 0 }) {
     const date = new Date(now);
     const g = greetingFor(date);
     const name = account?.display_name || account?.discord_username || '';
@@ -594,7 +619,7 @@ function SellerGreeting({ account, now, open, mine }) {
         <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
         <p className="text-sm text-slate-400 mt-1">${open.length
             ? `${plural(open.length, 'order')} waiting for a seller · the longest for ${fmtDuration(now - oldest)}.`
-            : 'The open queue is empty.'}${mine ? ` You have ${plural(mine, 'active order')}.` : ''}</p>
+            : 'The open queue is empty.'}${mine ? ` You have ${plural(mine, 'active order')}.` : ''}${unreadOrders ? ` 💬 ${plural(unreadOrders, 'order')} with new buyer messages.` : ''}</p>
     </section>`;
 }
 
@@ -640,7 +665,7 @@ function BuyerLink({ order, onBuyer }) {
 }
 
 // Who is behind an order: Discord profile, plus everything they've ordered so far.
-function BuyerModal({ order, orders, flags, onClose, onOpenOrder }) {
+function BuyerModal({ order, orders, flags, onClose, onOpenOrder, isAdmin }) {
     const [buyer, setBuyer] = useState(undefined);   // undefined = loading, null = account gone
     useEffect(() => {
         if (!order.buyer_id) { setBuyer(null); return; }
@@ -713,8 +738,198 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder }) {
                 </li>`)}
                 ${theirs.length > 8 && html`<li className="px-3 py-2 text-xs text-slate-500">+ ${theirs.length - 8} older (search their name under All orders)</li>`}
             </ul>`}
+
+            ${isAdmin && discordId && html`<${ModerationPanel} target=${{ accountId: buyer?.id || order.buyer_id || null, discordId, name }} />`}
         </div>
     <//>`;
+}
+
+// ---------------------------------------------------------------- order messages (seller side)
+function SellerThread({ order, messages, onMessage }) {
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const send = async () => {
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'message', body: text.trim() });
+            onMessage?.(r.message);
+            setText('');
+            toast('Sent. The buyer gets a notification and a Discord DM.', 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    return html`<div className="space-y-2">
+        ${!messages.length && html`<p className="text-xs text-slate-500">No messages yet. Buyers can write once an order has waited 5 days without being fully delivered; you can write to them any time.</p>`}
+        ${messages.map((m) => html`<div key=${m.id} className=${`p-2.5 rounded-xl text-sm ${m.from_role === 'buyer' ? 'mr-8 bg-slate-800/70' : 'ml-8 bg-sky-500/10 border border-sky-500/20'}`}>
+            <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? `${m.author_name} · buyer` : `${m.author_name} · seller team`} · ${fmtDate(m.created_at)}</p>
+            <p className="text-slate-100 whitespace-pre-line break-words">${m.body}</p>
+        </div>`)}
+        <div className="flex gap-2 items-end">
+            <textarea value=${text} maxLength="1000" rows="2" onChange=${(e) => setText(e.target.value)} className="input flex-1" placeholder="Write to the buyer (they get a DM)"></textarea>
+            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>Send<//>
+        </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- moderation (admins)
+const BAN_LENGTHS = [['week', '1 week'], ['month', '1 month'], ['permanent', 'Permanent']];
+const banUntil = (b) => (b.ends_at ? `until ${fmtDate(b.ends_at)}` : 'permanent');
+const isActiveBan = (b) => !b.revoked_at && (!b.ends_at || new Date(b.ends_at).getTime() > Date.now());
+const deliveryText = (d = {}) => [d.dm === 'sent' ? 'DM sent' : d.dm && d.dm !== 'skipped' ? "DM couldn't be delivered" : null,
+    d.role === true ? 'Market Banned role updated' : d.role === false ? 'role not changed (check the health page)' : null,
+    d.logged ? 'logged' : d.logged === false ? 'not logged (no log channel)' : null].filter(Boolean).join(' · ');
+
+// Ban / lift / message one person. target: { accountId, discordId, name }
+function ModerationPanel({ target, onChanged }) {
+    const [bans, setBans] = useState(null);
+    const [msgs, setMsgs] = useState([]);
+    const [dialog, setDialog] = useState(null);   // 'ban' | 'message'
+    const load = useCallback(async () => {
+        const [b, m] = await Promise.all([
+            sb.from('market_bans').select('*').eq('discord_id', target.discordId).order('created_at', { ascending: false }),
+            sb.from('market_messages').select('*').eq('discord_id', target.discordId).order('created_at', { ascending: false }).limit(20)
+        ]);
+        setBans(b.data || []); setMsgs(m.data || []);
+    }, [target.discordId]);
+    useEffect(() => { load(); }, [load]);
+    const active = (bans || []).find(isActiveBan);
+    const warnings = msgs.filter((m) => m.kind === 'warning');
+    const lift = async () => {
+        const note = await ask({ title: `Lift ${target.name}'s market ban?`, confirmLabel: 'Lift ban', message: 'They can use Echo Market again straight away and get a DM.', input: { required: false, placeholder: 'Optional note (shown to them)' } });
+        if (note === false) return;
+        try { const r = await api('/api/admin/moderation', { action: 'unban', banId: active.id, note }); toast(`Ban lifted. ${deliveryText(r.delivery)}`, 'success'); load(); onChanged?.(); }
+        catch (err) { toast(err.message, 'error'); }
+    };
+    return html`<div className="p-3 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-3">
+        <p className="label text-slate-500 flex items-center gap-1.5"><${Icon} name="shield" className="w-3.5 h-3.5" />Moderation · admins only</p>
+        ${bans === null ? html`<${Spinner} />` : html`
+            ${active ? html`<div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm">
+                <p className="font-bold text-rose-200">Market banned ${banUntil(active)}</p>
+                <p className="text-rose-100/80 text-xs mt-0.5">${active.reason} · by ${active.issued_by_name || 'an admin'}${active.source === 'bot' ? ' (bot)' : ''}</p>
+            </div>` : html`<p className="text-sm text-slate-300">Not banned.${bans.length ? ` ${plural(bans.length, 'earlier ban')}.` : ''}</p>`}
+            <p className="text-xs text-slate-400">${plural(warnings.length, 'warning')} · ${plural(msgs.length - warnings.length, 'info message')}${msgs[0] ? ` · last ${timeAgo(msgs[0].created_at)}` : ''}</p>
+            <div className="flex flex-wrap gap-2">
+                <${Button} size="sm" variant="secondary" icon="megaphone" onClick=${() => setDialog('message')}>Send message<//>
+                ${active ? html`<${Button} size="sm" variant="secondary" icon="undo-2" onClick=${lift}>Lift ban<//>`
+                    : html`<${Button} size="sm" variant="danger" icon="ban" onClick=${() => setDialog('ban')}>Market ban<//>`}
+            </div>`}
+        ${dialog === 'ban' && html`<${BanDialog} target=${target} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); load(); onChanged?.(); }} />`}
+        ${dialog === 'message' && html`<${MessageDialog} target=${target} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); load(); onChanged?.(); }} />`}
+    </div>`;
+}
+
+function BanDialog({ target, onClose, onDone }) {
+    const [duration, setDuration] = useState('week');
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const save = async () => {
+        setBusy(true);
+        try {
+            const r = await api('/api/admin/moderation', { action: 'ban', accountId: target.accountId || undefined, discordId: target.discordId, duration, reason: reason.trim() });
+            toast(`${target.name} is banned from the market. ${deliveryText(r.delivery)}`, 'success');
+            onDone();
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    return html`<${Modal} open=${true} onClose=${onClose} size="sm" title=${`Market ban: ${target.name}`}
+        subtitle="Covers every airline of this Discord account. They get a DM and the Market Banned role; it's logged."
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
+            <${Button} variant="danger" icon="ban" busy=${busy} disabled=${!reason.trim()} onClick=${save}>Ban from the market<//>`}>
+        <p className="field-label">How long</p>
+        <div className="grid grid-cols-3 gap-1.5">${BAN_LENGTHS.map(([k, label]) => html`<button key=${k} type="button" onClick=${() => setDuration(k)}
+            className=${`py-2.5 rounded-xl border text-sm font-bold ${duration === k ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
+        <label className="block mt-4"><span className="field-label">Reason (they will see it)</span>
+            <textarea value=${reason} rows="3" maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Which rule was broken"></textarea></label>
+    <//>`;
+}
+
+function MessageDialog({ target, onClose, onDone }) {
+    const [kind, setKind] = useState('info');
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const save = async () => {
+        setBusy(true);
+        try {
+            const r = await api('/api/admin/moderation', { action: 'message', accountId: target.accountId || undefined, discordId: target.discordId, kind, body: text.trim() });
+            toast(`${kind === 'warning' ? 'Warning' : 'Message'} sent. ${deliveryText(r.delivery)}`, 'success');
+            onDone();
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    return html`<${Modal} open=${true} onClose=${onClose} size="sm" title=${`Message ${target.name}`}
+        subtitle="Shown in their Echo Market notifications and sent as a Discord DM."
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
+            <${Button} variant=${kind === 'warning' ? 'danger' : 'primary'} icon="send" busy=${busy} disabled=${!text.trim()} onClick=${save}>Send ${kind === 'warning' ? 'warning' : 'message'}<//>`}>
+        <div className="grid grid-cols-2 gap-1.5">${[['info', 'Information'], ['warning', 'Warning']].map(([k, label]) => html`<button key=${k} type="button" onClick=${() => setKind(k)}
+            className=${`py-2.5 rounded-xl border text-sm font-bold ${kind === k ? (k === 'warning' ? 'bg-rose-500 text-[#fff] border-rose-500' : 'bg-white text-slate-950 border-white') : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
+        <textarea value=${text} rows="4" maxLength="1500" onChange=${(e) => setText(e.target.value)} className="input mt-4"
+            placeholder=${kind === 'warning' ? 'What they did and what happens if it continues' : 'Your message'}></textarea>
+        ${kind === 'warning' && html`<p className="text-[11px] text-slate-500 mt-2">Warnings are also posted in the moderation log channel.</p>`}
+    <//>`;
+}
+
+// The Moderation tab: active bans, recent messages, and banning/messaging anyone by Discord ID
+// (also people who never used the market).
+function ModerationView({ userId }) {
+    const [bans, setBans] = useState(null);
+    const [msgs, setMsgs] = useState([]);
+    const [people, setPeople] = useState({});
+    const [discordId, setDiscordId] = useState('');
+    const [target, setTarget] = useState(null);
+    const load = useCallback(async () => {
+        const [b, m] = await Promise.all([
+            sb.from('market_bans').select('*').is('revoked_at', null).order('created_at', { ascending: false }).limit(200),
+            sb.from('market_messages').select('*').order('created_at', { ascending: false }).limit(30)
+        ]);
+        const active = (b.data || []).filter(isActiveBan);
+        setBans(active); setMsgs(m.data || []);
+        const ids = [...new Set([...active, ...(m.data || [])].map((x) => x.discord_id))];
+        if (ids.length) {
+            const { data } = await sb.from('accounts').select('id, discord_id, display_name, discord_username, avatar_url').in('discord_id', ids);
+            setPeople(Object.fromEntries((data || []).map((a) => [a.discord_id, a])));
+        }
+    }, []);
+    useEffect(() => { load(); }, [load]);
+    const who = (id) => people[id]?.display_name || people[id]?.discord_username || `Discord user ${id}`;
+    const pick = (id) => setTarget({ accountId: people[id]?.id || null, discordId: id, name: who(id) });
+    const lookUp = async () => {
+        const id = discordId.trim();
+        if (!/^\d{5,25}$/.test(id)) return toast('Paste a Discord user ID (numbers only): right-click the user → Copy User ID.', 'error');
+        const { data } = await sb.from('accounts').select('id, discord_id, display_name, discord_username').eq('discord_id', id).maybeSingle();
+        setTarget({ accountId: data?.id || null, discordId: id, name: data ? (data.display_name || data.discord_username) : `Discord user ${id}` });
+    };
+    return html`<section className="space-y-4">
+        <div>
+            <h2 className="text-lg font-extrabold text-white">Moderation</h2>
+            <p className="text-xs text-slate-500">Admins only. Market bans cover every airline of a Discord account. Everything here is DMed to the person and logged.</p>
+        </div>
+        <div className="card p-4 space-y-2">
+            <p className="field-label !mb-0">Ban or message anyone by Discord ID (also people who never used the market)</p>
+            <div className="flex gap-2">
+                <input value=${discordId} onChange=${(e) => setDiscordId(e.target.value)} placeholder="Discord user ID, e.g. 526234727321960450" className="input font-mono" />
+                <${Button} icon="search" onClick=${lookUp}>Open<//>
+            </div>
+            <p className="text-[11px] text-slate-500">Or click a buyer's airline name on any order.</p>
+        </div>
+        ${target && html`<${Modal} open=${true} onClose=${() => setTarget(null)} size="sm" title=${target.name} subtitle=${`Discord ID ${target.discordId}`}>
+            <${ModerationPanel} target=${target} onChanged=${load} />
+        <//>`}
+        <div>
+            <p className="label text-slate-500 mb-2">Active market bans (${bans ? bans.length : '…'})</p>
+            ${bans === null ? html`<${Spinner} />` : !bans.length ? html`<p className="text-sm text-slate-400">Nobody is banned right now.</p>`
+            : html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">${bans.map((b) => html`<li key=${b.id}>
+                <button onClick=${() => pick(b.discord_id)} className="w-full text-left px-3 py-2.5 hover:bg-slate-800/40">
+                    <span className="block font-bold text-white text-sm">${who(b.discord_id)} <span className="text-rose-300 font-medium text-xs">· ${banUntil(b)}</span></span>
+                    <span className="block text-xs text-slate-400 truncate">${b.reason} · by ${b.issued_by_name || 'an admin'} · ${timeAgo(b.created_at)}</span>
+                </button></li>`)}</ul>`}
+        </div>
+        <div>
+            <p className="label text-slate-500 mb-2">Recent messages and warnings</p>
+            ${!msgs.length ? html`<p className="text-sm text-slate-400">None yet.</p>`
+            : html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">${msgs.map((m) => html`<li key=${m.id}>
+                <button onClick=${() => pick(m.discord_id)} className="w-full text-left px-3 py-2.5 hover:bg-slate-800/40">
+                    <span className="block text-sm text-white"><b>${who(m.discord_id)}</b> <span className=${m.kind === 'warning' ? 'text-rose-300 text-xs' : 'text-slate-400 text-xs'}>· ${m.kind === 'warning' ? 'warning' : 'info'}</span></span>
+                    <span className="block text-xs text-slate-400 truncate">${m.body} · by ${m.sent_by_name || 'an admin'} · ${timeAgo(m.created_at)}</span>
+                </button></li>`)}</ul>`}
+        </div>
+    </section>`;
 }
 
 function Stat({ label, value, icon, tone }) {
@@ -780,7 +995,7 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0 }) {
     const mine = order.seller_id === userId;
     return html`<article onClick=${onOpen} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 cursor-pointer hover:border-slate-600 ${flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
         <div className="flex flex-col md:flex-row md:items-center gap-3">
@@ -793,6 +1008,8 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOURS</span>`}
                     <${WaitChip} order=${order} now=${now} />
+                    ${unread > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-400 text-slate-950">
+                        <${Icon} name="message-circle" className="w-3 h-3" />${unread} NEW MESSAGE${unread === 1 ? '' : 'S'}</span>`}
                     <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>ordered ${timeAgo(order.created_at)}</span>
                 </div>
                 <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${orderAlliances(order).join(', ')} · ${order.buyer_name}</span></p>
@@ -810,7 +1027,8 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage }) {
+    useEffect(() => { onSeen?.(); }, [order.id, messages.length]);
     const [events, setEvents] = useState([]);
     useEffect(() => {
         sb.from('order_events').select('*').eq('order_id', order.id).order('created_at').then(({ data }) => setEvents(data || []));
@@ -868,6 +1086,10 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             </table></div>
             ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
             ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">Seller note (buyer can see)</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
+            <div>
+                <p className="label text-slate-500 mb-2">Messages with the buyer${messages.length ? ` (${messages.length})` : ''}</p>
+                <${SellerThread} order=${order} messages=${messages} onMessage=${onMessage} />
+            </div>
             <div>
                 <p className="label text-slate-500 mb-2">Status history</p>
                 <${StatusHistory} order=${order} now=${now} />

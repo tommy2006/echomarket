@@ -114,10 +114,14 @@ export async function rateLimit(key, max, seconds, message = 'Too many tries. Wa
 }
 
 // Seller ranks (Echo hierarchy): 'lead' = Lead Ambassador, 'ambassador' = Ambassador,
-// 'verified' = Verified Seller. Lead Ambassadors are admins. Others can be made admin by hand
-// (sellers.is_admin, see SETUP.md 8.2), whatever their rank.
+// 'verified' = Verified Seller, plus 'admin' = Market Admin without any seller role (a black-and-white
+// look on the seller desk). Admins: Market Admins (Discord role, sellers.market_admin), Lead Ambassadors,
+// and anyone made admin by hand (sellers.is_admin, see SETUP.md 8.2).
 export const RANKS = ['lead', 'ambassador', 'verified'];
-export const isAdminSeller = (row) => Boolean(row && (row.is_admin || row.rank === 'lead'));
+export const isAdminSeller = (row) => Boolean(row && (row.is_admin || row.rank === 'lead' || row.market_admin));
+// Seller desk rank from Discord standing: the highest seller role, or 'admin' for a Market Admin who has
+// none; false = no access through roles.
+export const deskRank = (st) => (st ? st.rank || (st.marketAdmin ? 'admin' : false) : null);
 
 export async function getSeller(accountId) {
     const { data } = await admin().from('sellers').select('*').eq('user_id', accountId).maybeSingle();
@@ -134,22 +138,27 @@ export async function requireActiveSeller(account) {
     if (seller.source !== 'discord_role') return seller;
     const age = seller.role_checked_at ? Date.now() - new Date(seller.role_checked_at).getTime() : Infinity;
     if (age < ROLE_RECHECK_MINUTES * 60e3) return seller;
-    const rank = account.discord_id ? await sellerRankFromDiscord(account.discord_id) : false;
+    const st = account.discord_id ? await discordStanding(account.discord_id) : { inGuild: false, rank: null, marketAdmin: false };
+    const rank = deskRank(st);
     if (rank === false) {
         await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
-        throw new HttpError(403, 'You no longer have a seller role on Discord (Verified Seller, Ambassador or Lead Ambassador), so your seller access was switched off.');
+        throw new HttpError(403, 'You no longer have a seller or Market Admin role on Discord, so your seller access was switched off.');
     }
     if (rank === null) {
         if (age < 60 * 60e3) return seller;
         throw new HttpError(503, "Couldn't confirm your seller role with Discord right now. Try again in a minute.");
     }
-    await markRoleChecked(account.id, rank);
-    const row = { ...seller, rank };
+    await markRoleChecked(account.id, rank, st.marketAdmin);
+    const row = { ...seller, rank, market_admin: st.marketAdmin };
     return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }) };
 }
-// Records a successful role check, and the rank the Discord roles give (role-based sellers only).
-export async function markRoleChecked(accountId, rank) {
-    const patch = { role_checked_at: new Date().toISOString(), ...(RANKS.includes(rank) ? { rank } : {}) };
+// Records a successful role check: the rank and Market Admin flag the Discord roles give.
+export async function markRoleChecked(accountId, rank, marketAdmin) {
+    const patch = {
+        role_checked_at: new Date().toISOString(),
+        ...([...RANKS, 'admin'].includes(rank) ? { rank } : {}),
+        ...(typeof marketAdmin === 'boolean' ? { market_admin: marketAdmin } : {})
+    };
     const { error } = await admin().from('sellers').update(patch).eq('user_id', accountId);
     if (error) console.warn('role check not saved (re-run schema.sql?):', error.message);
 }
@@ -445,49 +454,170 @@ export async function dmBuyer(order, kind, extra = '') {
 //  The highest one wins. If none of the three is set, DISCORD_ROLE_ID (the role new orders ping)
 //  counts as the Verified Seller role, which is how it worked before the hierarchy.
 // =====================================================================
+//    DISCORD_MARKET_ADMIN_ROLE_ID     Market Admin      → admin rights (seller desk access too)
+//    DISCORD_MARKET_BANNED_ROLE_ID    Market Banned     → no access to the buyer market (like a market ban)
 export const ROLE_IDS = {
     lead: env('DISCORD_LEAD_ROLE_ID'),
     ambassador: env('DISCORD_AMBASSADOR_ROLE_ID'),
-    verified: env('DISCORD_VERIFIED_SELLER_ROLE_ID')
+    verified: env('DISCORD_VERIFIED_SELLER_ROLE_ID'),
+    marketAdmin: env('DISCORD_MARKET_ADMIN_ROLE_ID'),
+    marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID')
 };
 if (!ROLE_IDS.lead && !ROLE_IDS.ambassador && !ROLE_IDS.verified) ROLE_IDS.verified = SELLER_ROLE_ID;
-export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && (ROLE_IDS.lead || ROLE_IDS.ambassador || ROLE_IDS.verified));
+export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && (ROLE_IDS.lead || ROLE_IDS.ambassador || ROLE_IDS.verified || ROLE_IDS.marketAdmin));
+// The Echo Alliances server: membership is required to use the market (see requireMarketAccess).
+export const GUILD_IDS = env('DISCORD_GUILD_ID').split(',').map((x) => x.trim()).filter(Boolean);
+export const MEMBERSHIP_CHECK = Boolean(BOT_TOKEN && GUILD_IDS.length);
 
-// Highest seller rank someone's Discord roles give: 'lead' | 'ambassador' | 'verified',
-// false = none of the roles, null = couldn't tell (Discord down, bad token…). Never throws.
-export async function sellerRankFromDiscord(discordId) {
-    if (!SELLER_ROLE_SYNC || !discordId) return null;
+// Someone's standing in the Echo server, from ONE Discord lookup:
+//   { inGuild, rank: 'lead'|'ambassador'|'verified'|null, marketAdmin, marketBanned }
+// null = couldn't tell (Discord down, bad token…). Never throws.
+export async function discordStanding(discordId) {
+    if (!BOT_TOKEN || !discordId) return null;
     try {
-        let guildIds = env('DISCORD_GUILD_ID').split(',').map((s) => s.trim()).filter(Boolean);
+        let guildIds = GUILD_IDS;
         if (!guildIds.length) {
             const guilds = await discordBot('/users/@me/guilds');
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
+        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false };
         let known = false;
-        let best = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
             if (m.ok) {
                 known = true;
+                st.inGuild = true;
                 const roles = m.json.roles || [];
                 const rank = RANKS.find((r) => ROLE_IDS[r] && roles.includes(ROLE_IDS[r]));
-                if (rank && (!best || RANKS.indexOf(rank) < RANKS.indexOf(best))) best = rank;
+                if (rank && (!st.rank || RANKS.indexOf(rank) < RANKS.indexOf(st.rank))) st.rank = rank;
+                if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;
+                if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
             } else if (m.status === 404) {
                 known = true;   // not in this server
             }
         }
-        return best || (known ? false : null);
+        return known ? st : null;
     } catch (err) {
-        console.error('sellerRankFromDiscord failed:', err.message);
+        console.error('discordStanding failed:', err.message);
         return null;
     }
 }
 
-// true / false / null: has any seller role (see sellerRankFromDiscord).
+// Seller desk rank from the Discord roles ('lead' | 'ambassador' | 'verified' | 'admin'),
+// false = no seller or Market Admin role, null = couldn't tell.
+export async function sellerRankFromDiscord(discordId) {
+    if (!SELLER_ROLE_SYNC) return null;
+    return deskRank(await discordStanding(discordId));
+}
 export async function hasSellerRole(discordId) {
     const rank = await sellerRankFromDiscord(discordId);
     return rank === null ? null : Boolean(rank);
+}
+
+// =====================================================================
+//  Market access for buyers: member of the Echo server, and not market-banned (a ban record or the
+//  Market Banned role). Membership is re-checked with Discord at most every 10 minutes.
+// =====================================================================
+const MEMBERSHIP_RECHECK_MINUTES = 10;
+export async function activeBan(discordId) {
+    if (!discordId) return null;
+    const { data, error } = await admin().from('market_bans').select('*').eq('discord_id', discordId)
+        .is('revoked_at', null).order('created_at', { ascending: false });
+    if (error) { console.warn('ban lookup failed (re-run schema.sql?):', error.message); return null; }
+    const now = Date.now();
+    return (data || []).find((b) => !b.ends_at || new Date(b.ends_at).getTime() > now) || null;
+}
+// { inGuild, bannedRole, ban } — refreshes the stored membership when it's old (or when fresh = true).
+export async function marketStanding(account, { fresh = false } = {}) {
+    let inGuild = account.in_guild;
+    let bannedRole = Boolean(account.market_banned_role);
+    if (MEMBERSHIP_CHECK) {
+        const age = account.guild_checked_at ? Date.now() - new Date(account.guild_checked_at).getTime() : Infinity;
+        if (fresh || inGuild == null || age > MEMBERSHIP_RECHECK_MINUTES * 60e3) {
+            const st = await discordStanding(account.discord_id);
+            if (st) {
+                inGuild = st.inGuild;
+                bannedRole = st.marketBanned;
+                const { error } = await admin().from('accounts').update({
+                    in_guild: inGuild, market_banned_role: bannedRole, guild_checked_at: new Date().toISOString()
+                }).eq('id', account.id);
+                if (error) console.warn('membership not saved (re-run schema.sql?):', error.message);
+            } else if (inGuild == null) {
+                inGuild = true;   // Discord unreachable and never checked: don't lock people out
+            }
+        }
+    } else if (account.in_guild !== true) {
+        // Membership check not set up (no DISCORD_GUILD_ID): everyone counts as a member.
+        inGuild = true;
+        await admin().from('accounts').update({ in_guild: true }).eq('id', account.id);
+    }
+    const ban = await activeBan(account.discord_id);
+    // A market ban that has run out: take the Market Banned role away again (it was given with the ban).
+    if (bannedRole && !ban && await endLapsedBanRole(account.discord_id)) {
+        bannedRole = false;
+        await admin().from('accounts').update({ market_banned_role: false }).eq('id', account.id);
+    }
+    return { inGuild: inGuild !== false, bannedRole, ban };
+}
+// If this person's last market ban has ended (not lifted early, no other ban active), removes the Market
+// Banned role. Returns true when the role was removed. Used on visits and by the daily /api/cron/bans.
+export async function endLapsedBanRole(discordId) {
+    if (await activeBan(discordId)) return false;
+    const { data: lapsed } = await admin().from('market_bans').select('id').eq('discord_id', discordId)
+        .is('revoked_at', null).lt('ends_at', new Date().toISOString()).limit(1);
+    if (!lapsed?.length) return false;
+    return setMarketBannedRole(discordId, false, 'Market ban ended');
+}
+export const banText = (ban) => ban?.ends_at ? `until ${new Date(ban.ends_at).toUTCString().replace(/:\d\d GMT/, ' UTC')}` : 'permanently';
+export async function requireMarketAccess(account) {
+    const st = await marketStanding(account);
+    if (!st.inGuild) throw new HttpError(403, 'Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.');
+    if (st.ban) throw new HttpError(403, `You are banned from Echo Market ${banText(st.ban)}. Reason: ${st.ban.reason}`);
+    if (st.bannedRole) throw new HttpError(403, 'You have the Market Banned role on the Echo Discord server, so you cannot use Echo Market.');
+    return st;
+}
+
+// =====================================================================
+//  Moderation helpers: DMs that ignore the DM switch (bans and warnings must arrive), the Market
+//  Banned role, and the moderation log channel (DISCORD_LOG_CHANNEL_ID).
+// =====================================================================
+export async function dmDiscordUser(discordId, embed) {
+    const { data: account } = await admin().from('accounts').select('*').eq('discord_id', discordId).maybeSingle();
+    return sendDM({ ...(account || { discord_id: discordId }), dm_enabled: true }, embed);
+}
+// Adds or removes the Market Banned role. Needs the bot's role to have "Manage Roles" and to sit above
+// Market Banned in Server Settings → Roles. Returns true / false. Never throws.
+export async function setMarketBannedRole(discordId, on, reason) {
+    if (!BOT_TOKEN || !ROLE_IDS.marketBanned || !GUILD_IDS.length || !discordId) return false;
+    try {
+        const r = await fetch(`${DISCORD_API}/guilds/${GUILD_IDS[0]}/members/${discordId}/roles/${ROLE_IDS.marketBanned}`, {
+            method: on ? 'PUT' : 'DELETE',
+            headers: { Authorization: `Bot ${BOT_TOKEN}`, 'X-Audit-Log-Reason': encodeURIComponent(String(reason || 'Echo Market').slice(0, 400)) }
+        });
+        if (!r.ok && r.status !== 404) console.error('Market Banned role change failed:', r.status, await r.text().catch(() => ''));
+        // Keep the stored copy in step, so the market doesn't wait for its next membership check.
+        if (r.ok) await admin().from('accounts').update({ market_banned_role: on }).eq('discord_id', discordId);
+        return r.ok;
+    } catch (err) {
+        console.error('Market Banned role change failed:', err.message);
+        return false;
+    }
+}
+export const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
+export async function logModeration(embed) {
+    if (!BOT_TOKEN || !LOG_CHANNEL_ID) return false;
+    try {
+        const r = await discordBot(`/channels/${LOG_CHANNEL_ID}/messages`, 'POST', {
+            embeds: [{ ...embed, timestamp: new Date().toISOString(), footer: { text: 'Echo Market moderation' } }],
+            allowed_mentions: { parse: [] }
+        });
+        if (!r.ok) console.error('moderation log failed:', r.status, JSON.stringify(r.json));
+        return r.ok;
+    } catch (err) {
+        console.error('moderation log failed:', err.message);
+        return false;
+    }
 }
 
 // =====================================================================

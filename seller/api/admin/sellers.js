@@ -10,7 +10,7 @@
 //                 delivered total, so the increase since the previous update is what that seller sold
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
-import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, sellerRankFromDiscord, RANKS, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, RANKS, HttpError } from '../../lib/server.js';
 
 // Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
 // Opening the Sellers tab refreshes every role-based seller whose check is older than this, so the
@@ -22,18 +22,16 @@ async function refreshRanks(db, sellers, accounts) {
     const stale = sellers.filter((s) => s.active && discordIdOf.get(s.user_id) &&
         (!s.role_checked_at || Date.now() - new Date(s.role_checked_at).getTime() > REFRESH_MINUTES * 60e3)).slice(0, MAX_REFRESH);
     for (const s of stale) {
-        const rank = await sellerRankFromDiscord(discordIdOf.get(s.user_id));
-        if (rank === null) continue;                       // Discord didn't answer: leave as is
-        if (rank && !RANKS.includes(rank)) continue;
-        // Hand-added sellers: only the rank follows Discord. Without a seller role, admins get the plain
-        // 'admin' look and everyone else keeps the rank set by hand.
-        if (s.source !== 'discord_role' && !rank) {
-            if (!s.is_admin || s.rank === 'admin') continue;
-            const { error } = await db.from('sellers').update({ rank: 'admin' }).eq('user_id', s.user_id).eq('source', s.source);
-            if (!error) s.rank = 'admin';
-            continue;
+        const st = await discordStanding(discordIdOf.get(s.user_id));
+        if (st === null) continue;                         // Discord didn't answer: leave as is
+        const rank = deskRank(st);
+        let patch;
+        if (s.source === 'discord_role') {
+            patch = rank ? { rank, market_admin: st.marketAdmin, role_checked_at: new Date().toISOString() } : { active: false };
+        } else {
+            // Added by hand: access stays; the look follows the roles (never 'admin' without the Market Admin role).
+            patch = { rank: rank || (s.rank === 'admin' ? 'verified' : s.rank), market_admin: st.marketAdmin, role_checked_at: new Date().toISOString() };
         }
-        const patch = rank ? { rank, role_checked_at: new Date().toISOString() } : { active: false };
         const { error } = await db.from('sellers').update(patch).eq('user_id', s.user_id).eq('source', s.source);
         if (error) { console.warn('rank refresh failed:', error.message); continue; }
         Object.assign(s, patch);
@@ -123,6 +121,7 @@ export default handler(['POST'], async (req, res) => {
                 discordUsername: a?.discord_username || null,
                 avatarUrl: a?.avatar_url || null,
                 isAdmin: isAdminSeller(s),
+                marketAdmin: Boolean(s?.market_admin),
                 rank: s?.rank || null,
                 active: Boolean(s?.active),
                 onList: Boolean(s),

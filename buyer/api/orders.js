@@ -2,7 +2,7 @@
 // Body: { airlineIds: [id, …], buyerNote, items: [{ model, qty, pricePercent, note }] }
 //   airlineIds  every one of the buyer's airlines the aircraft may be delivered to (the first one is the
 //               main airline). The older form { airlineId } is still accepted.
-import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, HttpError } from '../lib/server.js';
+import { admin, handler, requireUser, accountName, body, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, HttpError } from '../lib/server.js';
 import { priceItems, orderListValue, DAILY_LIMIT_USD } from '../lib/pricing.js';
 
 // Every new order pings the seller role on Discord, so placing orders is rate limited per account.
@@ -11,6 +11,8 @@ const MAX_ORDERS_PER_10_MIN = 5;
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     if (!account.discord_id) throw new HttpError(403, 'Your market account is not linked to a Discord login. Sign out and sign in with Discord again.');
+    // Echo server members only, and not market-banned.
+    await requireMarketAccess(account);
     const input = body(req);
     const db = admin();
 

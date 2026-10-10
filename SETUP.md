@@ -394,7 +394,7 @@ Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app
 | **Lead Ambassador** | `lead` | Everything, **as an admin**: decline for everyone, delete orders, manage any order, **Sellers** tab (performance) | bright pink |
 | **Ambassador** | `ambassador` | Take and deliver orders | softer pink |
 | **Verified Seller** | `verified` | Take and deliver orders | light pink-purple |
-| *(no seller role)* admin added by hand | `admin` | Everything an admin can do | black and white, soft white aurora |
+| **Market Admin** (role) | `admin` if they have no seller role | Everything an admin can do, plus market bans and messages (Part 11) | black and white, soft white aurora (with a seller role: that role's colour) |
 
 Anyone with one of these roles in the Echo Alliances server gets the seller desk the first time they sign in there, with the rank of their **highest** role (people keep their lower roles when promoted; that's fine). Promotions and demotions on Discord are picked up within about 10 minutes (or when they reopen the desk). Remove all three roles and they lose access. Verified Sellers apply through the separate application form; once accepted, giving them the role on Discord is all that's needed.
 
@@ -513,3 +513,35 @@ Then **redeploy both** projects. Both need the keys: the seller site sends the "
 Each device has to be switched on separately. A phone and a laptop are two devices.
 
 **10.4 💬 Check:** *"Check both health pages."* The **Phone alerts** line should be ✅.
+
+---
+
+## Part 11 — Market Admins, members only, bans and messages (≈15 min)
+
+What this switches on:
+- **Members only:** only Discord accounts that are in the Echo Alliances server can use the buyer market. Others see "Echo Market is for Echo Alliances members".
+- **Market Admin role:** gives admin rights on the seller desk (Sellers and **Moderation** tabs, decline for everyone, delete). With no seller role they get the black-and-white Admin look; with a seller role, that role's colour.
+- **Market bans** (1 week, 1 month or permanent) and **messages/warnings** to buyers, from the seller desk: click a buyer's airline name, or use the **Moderation** tab (also works with a Discord user ID for people who never used the market). Each is DMed to the person and posted in the log channel; a ban also gives the **Market Banned** role, which is taken away again when the ban ends.
+- **Market Banned role:** anyone who has it (also when given by hand on Discord) can't use the buyer market.
+- **Order messages:** a buyer can write to the seller team once an order has waited 5 days without being fully delivered. Sellers see it live on the seller desk (badge + notification); the seller handling the order also gets a DM. Any seller can answer; the buyer gets a notification and a DM.
+
+**11.1 🧑 Re-run `supabase/schema.sql`** in the SQL Editor (safe to run again).
+
+**11.2 🧑 Discord → Server Settings → Roles** (Developer Mode on):
+1. Copy the role IDs of **Market Admin** and **Market Banned** (right-click → Copy Role ID).
+2. Give the bot's role (**Echo Market**) the **Manage Roles** permission, and drag it **above Market Banned** in the role list. Without this the bot can't give or take the Market Banned role.
+3. In the logging channel: Edit Channel → Permissions → add the bot with **View Channel**, **Send Messages** and **Embed Links**. Right-click the channel → **Copy Channel ID**.
+
+**11.3 🧑 Vercel → Settings → Environment Variables**, then redeploy both projects:
+
+| Key | Project | Value |
+|---|---|---|
+| `DISCORD_GUILD_ID` | **both** (buyer is new) | Echo Alliances server ID: only its members can use the market |
+| `DISCORD_MARKET_BANNED_ROLE_ID` | **both** | Market Banned role ID |
+| `DISCORD_MARKET_ADMIN_ROLE_ID` | seller | Market Admin role ID |
+| `DISCORD_LOG_CHANNEL_ID` | seller | logging channel ID |
+| `CRON_SECRET` | seller | any random text, 16+ characters (lets Vercel run the daily clean-up of ended bans) |
+
+**11.4 💬 Check:** *"Check both health pages."* New lines: **DISCORD_GUILD_ID (Echo server: members only)**, **Market Admin**, **Market Banned**, **bot can give the Market Banned role**, **moderation log**, **CRON_SECRET**.
+
+> Admins added by hand (SQL, 8.2) keep admin rights without the Market Admin role, but only Market Admins get the black-and-white Admin look.

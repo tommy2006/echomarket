@@ -10,10 +10,11 @@
 //                                      when every active seller has passed; the last one writes the reason.
 //                                      Admins can send force: true to decline it for everyone at once.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
+//   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
-    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, BUYER_URL, HttpError
+    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, HttpError
 } from '../../lib/server.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
@@ -205,6 +206,28 @@ export default handler(['POST'], async (req, res) => {
             if (error) throw error;
             await syncDiscord(order, `👋 ${plain(accountName(account))} passed on ${ref} — ${sellersLeft} seller${sellersLeft === 1 ? '' : 's'} left`);
             return res.json({ ok: true, order, declinedForEveryone: false, sellersLeft });
+        }
+
+        case 'message': {
+            const text = cleanText(input.body, 1000);
+            if (!text) throw new HttpError(400, 'Write a message first.');
+            const { data: msg, error } = await db.from('order_messages').insert({
+                order_id: order.id, buyer_id: order.buyer_id, author_id: account.id, author_name: accountName(account),
+                from_role: 'seller', body: text
+            }).select().single();
+            if (error) throw error;
+            if (order.buyer_id) {
+                const { data: buyer } = await db.from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
+                if (buyer) await sendDM(buyer, {
+                    title: `💬 The seller team wrote about your order ${ref}`,
+                    description: `**${md(accountName(account))}** wrote:
+> ${md(text).slice(0, 1500)}
+
+Answer on Echo Market (Orders).`,
+                    url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
+                });
+            }
+            return res.json({ ok: true, order, message: msg });
         }
 
         case 'flag': {

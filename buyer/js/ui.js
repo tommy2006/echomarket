@@ -48,6 +48,8 @@ export function dbError(err) {
     if (err.code === '23505') return 'You already have an airline with that name.';
     if (err.code === '23514') return 'Airline names must be 2–60 characters, with no web addresses or invite links.';
     if (err.code === 'P0001') return err.message;
+    // Row level security refused the change: not an Echo server member, or market-banned.
+    if (err.code === '42501') return "You can't create or edit airlines right now: Echo Market is only for members of the Echo Alliances Discord server who aren't market-banned. Reload the page to see why.";
     return err.message || String(err);
 }
 

@@ -16,7 +16,8 @@ if (/sb_secret_|service_role/.test(key)) {
     process.exit(2);
 }
 
-const TABLES = ['accounts', 'alliances', 'airlines', 'sellers', 'orders', 'order_events', 'order_flags', 'order_declines', 'push_subscriptions'];
+const TABLES = ['accounts', 'alliances', 'airlines', 'sellers', 'orders', 'order_events', 'order_flags', 'order_declines', 'push_subscriptions',
+    'market_bans', 'market_messages', 'order_messages'];
 const ALLIANCES = ['Kyra', 'Proxima', 'Aegis', 'Elysium', 'Rhea', 'Vilis', 'Elion', 'Aura', 'Eos'];
 const headers = { apikey: key, Accept: 'application/json' };
 let failures = 0;

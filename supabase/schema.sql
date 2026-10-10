@@ -29,6 +29,11 @@ create table if not exists public.accounts (
     dm_status             text,                            -- 'ok' | 'blocked' (set by the server after a DM attempt)
     created_at            timestamptz not null default now()
 );
+-- Kept by the API from the account's Discord membership (DISCORD_GUILD_ID): only members of the Echo
+-- server may use the market, and the "Market Banned" Discord role blocks it like a market ban.
+alter table public.accounts add column if not exists in_guild boolean;
+alter table public.accounts add column if not exists guild_checked_at timestamptz;
+alter table public.accounts add column if not exists market_banned_role boolean not null default false;
 
 -- SECURITY: the Discord ID, name and avatar come ONLY from auth.identities, which Supabase writes
 -- during the Discord login itself. Never read auth.users.raw_user_meta_data here: any signed-in user
@@ -190,6 +195,8 @@ alter table public.sellers add column if not exists role_checked_at timestamptz;
 -- (only a look on the seller desk: being an admin still comes from is_admin). Role-based sellers get it from their Discord roles on every role check;
 -- for sellers added by hand, set it yourself (SETUP.md 8.2). is_admin = true makes anyone an admin.
 alter table public.sellers add column if not exists rank text not null default 'verified';
+-- true while the seller has the "Market Admin" Discord role (admin rights; kept with the role checks).
+alter table public.sellers add column if not exists market_admin boolean not null default false;
 alter table public.sellers drop constraint if exists sellers_rank_check;
 alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified', 'admin'));
 
@@ -394,6 +401,56 @@ end $$;
 revoke all on function public.hit_rate_limit(text, int, int) from public, anon, authenticated;
 revoke all on public.rate_limits from anon, authenticated;
 
+-- Market bans, issued by admins. Attached to the Discord account, so they cover every airline of that
+-- person, and also people who haven't signed in to the market yet. Active = not revoked and not ended.
+create table if not exists public.market_bans (
+    id              bigint generated always as identity primary key,
+    discord_id      text not null,
+    account_id      uuid references public.accounts(id) on delete set null,
+    reason          text not null,
+    duration        text not null check (duration in ('week', 'month', 'permanent')),
+    starts_at       timestamptz not null default now(),
+    ends_at         timestamptz,               -- null = permanent
+    issued_by       uuid references public.accounts(id) on delete set null,
+    issued_by_name  text,
+    source          text not null default 'web',   -- 'web' or 'bot'
+    revoked_at      timestamptz,
+    revoked_by_name text,
+    created_at      timestamptz not null default now()
+);
+create index if not exists market_bans_discord_idx on public.market_bans (discord_id);
+
+-- Messages from Market Admins to a buyer (information or a formal warning). Shown in the buyer's
+-- notifications and sent as a Discord DM.
+create table if not exists public.market_messages (
+    id           bigint generated always as identity primary key,
+    account_id   uuid references public.accounts(id) on delete cascade,
+    discord_id   text not null,
+    kind         text not null check (kind in ('info', 'warning')),
+    body         text not null,
+    sent_by      uuid references public.accounts(id) on delete set null,
+    sent_by_name text,
+    source       text not null default 'web',
+    created_at   timestamptz not null default now()
+);
+create index if not exists market_messages_account_idx on public.market_messages (account_id, created_at desc);
+create index if not exists market_messages_discord_idx on public.market_messages (discord_id);
+
+-- Messages between a buyer and the seller team about one order. Buyers can start once an order has
+-- waited 5 days without being fully delivered; any seller can answer.
+create table if not exists public.order_messages (
+    id          bigint generated always as identity primary key,
+    order_id    text not null references public.orders(id) on delete cascade,
+    buyer_id    uuid,                          -- copy of orders.buyer_id (for RLS + realtime filters)
+    author_id   uuid references public.accounts(id) on delete set null,
+    author_name text,
+    from_role   text not null check (from_role in ('buyer', 'seller')),
+    body        text not null,
+    created_at  timestamptz not null default now()
+);
+create index if not exists order_messages_order_idx on public.order_messages (order_id, created_at);
+create index if not exists order_messages_buyer_idx on public.order_messages (buyer_id, created_at desc);
+
 -- Seller-only moderation flags. Buyers can never read this table.
 create table if not exists public.order_flags (
     order_id   text primary key references public.orders(id) on delete cascade,
@@ -418,6 +475,22 @@ alter table public.order_events enable row level security;
 alter table public.order_flags  enable row level security;
 alter table public.order_declines     enable row level security;
 alter table public.push_subscriptions enable row level security;
+alter table public.market_bans        enable row level security;
+alter table public.market_messages    enable row level security;
+alter table public.order_messages     enable row level security;
+
+-- May this signed-in person use the market (create/edit airlines)? Member of the Echo server (checked
+-- by the API) and not market-banned (ban record or the Market Banned role).
+create or replace function public.has_market_access()
+returns boolean language sql stable security definer set search_path = public as $$
+    select exists (
+        select 1 from public.accounts a
+        where a.id = auth.uid() and a.in_guild is true and not a.market_banned_role
+          and not exists (select 1 from public.market_bans b
+                          where b.discord_id = a.discord_id and b.revoked_at is null
+                            and (b.ends_at is null or b.ends_at > now()))
+    );
+$$;
 
 drop policy if exists "accounts: read own or seller" on public.accounts;
 create policy "accounts: read own or seller" on public.accounts
@@ -434,8 +507,30 @@ create policy "alliances: public read" on public.alliances
     for select to anon, authenticated using (true);
 
 drop policy if exists "airlines: owner full access" on public.airlines;
-create policy "airlines: owner full access" on public.airlines
-    for all to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+drop policy if exists "airlines: owner read" on public.airlines;
+drop policy if exists "airlines: owner write with market access" on public.airlines;
+drop policy if exists "airlines: owner insert with market access" on public.airlines;
+drop policy if exists "airlines: owner delete" on public.airlines;
+create policy "airlines: owner read" on public.airlines
+    for select to authenticated using (owner_id = auth.uid());
+create policy "airlines: owner insert with market access" on public.airlines
+    for insert to authenticated with check (owner_id = auth.uid() and public.has_market_access());
+create policy "airlines: owner write with market access" on public.airlines
+    for update to authenticated using (owner_id = auth.uid() and public.has_market_access())
+    with check (owner_id = auth.uid());
+create policy "airlines: owner delete" on public.airlines
+    for delete to authenticated using (owner_id = auth.uid());
+
+drop policy if exists "bans: own or seller read" on public.market_bans;
+create policy "bans: own or seller read" on public.market_bans
+    for select to authenticated using (
+        public.is_seller() or discord_id = (select a.discord_id from public.accounts a where a.id = auth.uid()));
+drop policy if exists "market messages: own or seller read" on public.market_messages;
+create policy "market messages: own or seller read" on public.market_messages
+    for select to authenticated using (account_id = auth.uid() or public.is_seller());
+drop policy if exists "order messages: buyer or seller read" on public.order_messages;
+create policy "order messages: buyer or seller read" on public.order_messages
+    for select to authenticated using (buyer_id = auth.uid() or public.is_seller());
 
 drop policy if exists "sellers: read self or team" on public.sellers;
 create policy "sellers: read self or team" on public.sellers
@@ -469,7 +564,9 @@ create policy "flags: seller read" on public.order_flags
 grant usage on schema public to anon, authenticated, service_role;
 grant select on public.alliances to anon, authenticated;
 grant select on public.accounts, public.sellers, public.orders, public.order_events, public.order_flags,
-    public.order_declines, public.push_subscriptions to authenticated;
+    public.order_declines, public.push_subscriptions, public.market_bans, public.market_messages,
+    public.order_messages to authenticated;
+grant execute on function public.has_market_access() to authenticated;
 grant select, insert, update, delete on public.airlines to authenticated;
 grant execute on function public.is_seller() to anon, authenticated;
 -- Defence in depth: Supabase gives the browser roles every privilege on new tables by default and relies
@@ -477,8 +574,10 @@ grant execute on function public.is_seller() to anon, authenticated;
 -- (Orders, events, flags, declines, sellers and push devices are only written by the Vercel API.)
 revoke insert, update, delete, truncate, references, trigger on
     public.orders, public.order_events, public.order_flags, public.order_declines,
-    public.push_subscriptions, public.sellers, public.alliances
+    public.push_subscriptions, public.sellers, public.alliances,
+    public.market_bans, public.market_messages, public.order_messages
     from anon, authenticated;
+revoke all on public.market_bans, public.market_messages, public.order_messages from anon;
 revoke insert, delete, truncate, references, trigger on public.accounts from anon, authenticated;
 revoke all on public.airlines from anon;
 revoke truncate, references, trigger on public.airlines from authenticated;
@@ -493,7 +592,8 @@ grant execute on all functions in schema public to service_role;
 do $$
 declare t text;
 begin
-    foreach t in array array['orders', 'order_events', 'order_flags', 'order_declines'] loop
+    foreach t in array array['orders', 'order_events', 'order_flags', 'order_declines',
+                             'market_messages', 'order_messages', 'market_bans'] loop
         if not exists (
             select 1 from pg_publication_tables
             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t

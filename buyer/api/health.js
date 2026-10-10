@@ -116,12 +116,10 @@ export default async function handler(req, res) {
                 // The seller role is only looked up in this one server (recommended; see SETUP.md 8.2).
                 const pinned = (process.env.DISCORD_GUILD_ID || '').split(',').map((x) => x.trim()).filter(Boolean);
                 const pinnedOk = pinned.length > 0 && pinned.every((id) => list.some((g) => g.id === id));
-                // Only the seller site looks up seller roles, so only it needs the server pinned.
-                if (APP === 'seller' || pinned.length) {
-                    add('Discord DMs', 'DISCORD_GUILD_ID (seller role server)', pinnedOk,
-                        pinned.length ? (pinnedOk ? 'set, bot is in it' : 'set, but the bot is not in that server') : 'not set (optional, recommended)',
-                        'Discord → right-click the Echo Alliances server icon → Copy Server ID (Developer Mode on). Add it as DISCORD_GUILD_ID in the SELLER Vercel project, then redeploy.');
-                }
+                // Both sites need it: only members of this server may use the market, and roles are read here.
+                add('Discord DMs', 'DISCORD_GUILD_ID (Echo server: members only)', pinnedOk,
+                    pinned.length ? (pinnedOk ? 'set, bot is in it' : 'set, but the bot is not in that server') : 'not set (optional, recommended): anyone can sign in',
+                    'Discord → right-click the Echo Alliances server icon → Copy Server ID (Developer Mode on). Add it as DISCORD_GUILD_ID in BOTH Vercel projects, then redeploy.');
                 // Discord roles: the one new orders ping, and the three that give seller desk access.
                 const roleNames = new Map();   // role id → "@name in server"
                 for (const g of pinned.length ? list.filter((x) => pinned.includes(x.id)) : list) {
@@ -132,6 +130,43 @@ export default async function handler(req, res) {
                 if (pingRole) {
                     add('Discord roles', 'DISCORD_ROLE_ID (pinged for new orders)', roleNames.has(pingRole), roleNames.get(pingRole) || 'role not found in the server',
                         'Set DISCORD_ROLE_ID to the Verified Seller role ID (Server Settings → Roles → right-click → Copy Role ID) in BOTH Vercel projects.', { private: roleNames.has(pingRole) });
+                }
+                // Moderation roles. Market Banned is read by both sites (it blocks the market).
+                const modRoles = [['marketBanned', 'DISCORD_MARKET_BANNED_ROLE_ID', 'Market Banned', 'blocks the buyer market', 'BOTH']];
+                if (APP === 'seller') modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', 'admin rights on the seller desk', 'SELLER']);
+                for (const [key, env, label, effect, where] of modRoles) {
+                    const id = ROLE_IDS[key];
+                    add('Discord roles', `${env} (${label})`, Boolean(id) && roleNames.has(id),
+                        !id ? 'not set (optional, recommended)' : roleNames.get(id) ? `${roleNames.get(id)}: ${effect}` : 'role not found in the server',
+                        `Discord → Server Settings → Roles → right-click "${label}" → Copy Role ID. Add it as ${env} in ${where === 'BOTH' ? 'BOTH Vercel projects' : 'the SELLER Vercel project'}, then redeploy.`,
+                        { private: Boolean(id) && roleNames.has(id) });
+                }
+                // Can the bot give and take the Market Banned role? Needs "Manage Roles" and a higher position.
+                if (APP === 'seller' && ROLE_IDS.marketBanned && pinned.length) {
+                    const roles = await discordBot(`/guilds/${pinned[0]}/roles`);
+                    const botMember = await discordBot(`/guilds/${pinned[0]}/members/${me.json.id}`);
+                    const all = (roles.ok && roles.json) || [];
+                    const mine = all.filter((r) => (botMember.json?.roles || []).includes(r.id));
+                    const perms = mine.reduce((p, r) => p | BigInt(r.permissions || 0), 0n);
+                    const canManage = (perms & 0x10000000n) !== 0n || (perms & 0x8n) !== 0n;
+                    const top = Math.max(0, ...mine.map((r) => r.position));
+                    const target = all.find((r) => r.id === ROLE_IDS.marketBanned);
+                    const ok = canManage && target && top > target.position;
+                    add('Discord roles', 'bot can give the Market Banned role', Boolean(ok),
+                        ok ? 'yes' : !canManage ? 'the bot has no "Manage Roles" permission' : 'the bot\'s role is below Market Banned',
+                        'Server Settings → Roles: give the bot\'s role (Echo Market) the "Manage Roles" permission and drag it ABOVE Market Banned.');
+                }
+                if (APP === 'seller') {
+                    // Moderation log channel: bans, lifted bans and warnings are posted here by the bot.
+                    const logId = process.env.DISCORD_LOG_CHANNEL_ID;
+                    if (!logId) {
+                        add('Discord roles', 'DISCORD_LOG_CHANNEL_ID (moderation log)', false, 'not set (optional, recommended)',
+                            'Right-click the logging channel → Copy Channel ID. Add it as DISCORD_LOG_CHANNEL_ID in the SELLER Vercel project, then redeploy. The bot needs View Channel, Send Messages and Embed Links there.');
+                    } else {
+                        const ch = await discordBot(`/channels/${logId}`);
+                        add('Discord roles', 'DISCORD_LOG_CHANNEL_ID (moderation log)', ch.ok, ch.ok ? `#${ch.json.name}` : `the bot can't see that channel (HTTP ${ch.status})`,
+                            'Check the channel ID, and give the bot View Channel, Send Messages and Embed Links in that channel.', { private: ch.ok });
+                    }
                 }
                 if (APP === 'seller') {
                     const explicit = has('DISCORD_LEAD_ROLE_ID') || has('DISCORD_AMBASSADOR_ROLE_ID') || has('DISCORD_VERIFIED_SELLER_ROLE_ID');
@@ -153,6 +188,13 @@ export default async function handler(req, res) {
         } catch (err) {
             add('Discord DMs', 'bot reachable', false, err.message, 'Check DISCORD_BOT_TOKEN.', { private: true });
         }
+    }
+
+    // Daily clean-up of ended market bans (vercel.json "crons"), seller site only.
+    if (APP === 'seller') {
+        add('Moderation', 'CRON_SECRET (daily ban clean-up)', (process.env.CRON_SECRET || '').length >= 16,
+            has('CRON_SECRET') ? ((process.env.CRON_SECRET || '').length >= 16 ? 'set' : 'too short (16+ characters)') : 'not set (optional, recommended)',
+            'Add CRON_SECRET (any random text, 16+ characters) in the SELLER Vercel project, then redeploy. Without it, the Market Banned role is only removed when the person next opens the market.');
     }
 
     // 'at least one seller' is done in Part 5 (after the sites exist), so it doesn't block 'ready'.
