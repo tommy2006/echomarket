@@ -94,8 +94,11 @@ export default async function handler(req, res) {
             add('Discord channels', `webhook: ${channel}`, false, err.message, 'Check the webhook URL.', { private: true });
         }
     }
-    add('Discord channels', 'DISCORD_ROLE_ID (seller ping)', has('DISCORD_ROLE_ID'), has('DISCORD_ROLE_ID') ? 'set' : 'not set (optional)',
-        'Discord → Server Settings → Roles → right-click the seller role → Copy Role ID (needs Developer Mode). Add as DISCORD_ROLE_ID.');
+    // Without the bot the role can't be looked up, so only say whether it's set (with the bot, see 'Discord roles').
+    if (!DM_AVAILABLE || !has('DISCORD_ROLE_ID')) {
+        add('Discord channels', 'DISCORD_ROLE_ID (pinged for new orders)', has('DISCORD_ROLE_ID'), has('DISCORD_ROLE_ID') ? 'set' : 'not set (optional)',
+            'Discord → Server Settings → Roles → right-click the Verified Seller role → Copy Role ID (needs Developer Mode). Add as DISCORD_ROLE_ID in BOTH projects.');
+    }
 
     // --- DM bot
     if (!DM_AVAILABLE) {
@@ -113,9 +116,12 @@ export default async function handler(req, res) {
                 // The seller role is only looked up in this one server (recommended; see SETUP.md 8.2).
                 const pinned = (process.env.DISCORD_GUILD_ID || '').split(',').map((x) => x.trim()).filter(Boolean);
                 const pinnedOk = pinned.length > 0 && pinned.every((id) => list.some((g) => g.id === id));
-                add('Discord DMs', 'DISCORD_GUILD_ID (seller role server)', pinnedOk,
-                    pinned.length ? (pinnedOk ? 'set, bot is in it' : 'set, but the bot is not in that server') : 'not set (optional, recommended)',
-                    'Discord → right-click the Echo Alliances server icon → Copy Server ID (Developer Mode on). Add it as DISCORD_GUILD_ID in the SELLER Vercel project, then redeploy.');
+                // Only the seller site looks up seller roles, so only it needs the server pinned.
+                if (APP === 'seller' || pinned.length) {
+                    add('Discord DMs', 'DISCORD_GUILD_ID (seller role server)', pinnedOk,
+                        pinned.length ? (pinnedOk ? 'set, bot is in it' : 'set, but the bot is not in that server') : 'not set (optional, recommended)',
+                        'Discord → right-click the Echo Alliances server icon → Copy Server ID (Developer Mode on). Add it as DISCORD_GUILD_ID in the SELLER Vercel project, then redeploy.');
+                }
                 // Discord roles: the one new orders ping, and the three that give seller desk access.
                 const roleNames = new Map();   // role id → "@name in server"
                 for (const g of pinned.length ? list.filter((x) => pinned.includes(x.id)) : list) {

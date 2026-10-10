@@ -43,18 +43,20 @@ if (ping.status === 401 || ping.status === 403) {
 }
 
 // 1. Tables. RLS hides rows from anonymous visitors, so an existing table answers 200
-//    (usually with []), while a missing one answers 404 / PGRST205.
+//    (usually with []), while a missing one answers 404 / PGRST205. Tables the browser may not touch at
+//    all (e.g. airlines for anonymous visitors) answer 401 + 42501 'permission denied': they exist too.
+const lockedForAnon = (r) => (r.status === 401 || r.status === 403) && r.body?.code === '42501';
 console.log('Tables (Table Editor)');
 for (const t of TABLES) {
     const r = await get(`/rest/v1/${t}?select=*&limit=1`);
-    const exists = r.status === 200;
-    line(exists, t.padEnd(13), exists ? '' : `missing (HTTP ${r.status} ${r.body?.code || ''})`);
+    const exists = r.status === 200 || lockedForAnon(r);
+    line(exists, t.padEnd(13), exists ? (lockedForAnon(r) ? 'locked for anonymous visitors (good)' : '') : `missing (HTTP ${r.status} ${r.body?.code || ''})`);
 }
 
 // 1b. Columns added by later versions of schema.sql
 const col = await get('/rest/v1/orders?select=previous_sellers&limit=1');
 line(col.status === 200, 'orders.previous_sellers', col.status === 200 ? '' : 'missing: re-run supabase/schema.sql (safe to run again)');
-for (const [table, column] of [['orders', 'status_history'], ['orders', 'serial'], ['orders', 'airlines'], ['sellers', 'source'], ['sellers', 'role_checked_at']]) {
+for (const [table, column] of [['orders', 'status_history'], ['orders', 'serial'], ['orders', 'airlines'], ['sellers', 'source'], ['sellers', 'role_checked_at'], ['sellers', 'rank']]) {
     const c = await get(`/rest/v1/${table}?select=${column}&limit=1`);
     line(c.status === 200, `${table}.${column}`, c.status === 200 ? '' : 'missing: re-run supabase/schema.sql (safe to run again)');
 }
@@ -71,6 +73,7 @@ if (missing.length) console.log(`   missing: ${missing.join(', ')}`);
 console.log('\nSecurity (Row Level Security)');
 for (const t of ['accounts', 'airlines', 'orders', 'order_flags', 'sellers', 'order_declines', 'push_subscriptions']) {
     const r = await get(`/rest/v1/${t}?select=*&limit=1`);
+    if (lockedForAnon(r)) { line(true, `${t} locked for anonymous visitors`); continue; }
     if (r.status !== 200) continue;
     line(Array.isArray(r.body) && r.body.length === 0, `${t} hidden from anonymous visitors`);
 }
@@ -91,7 +94,7 @@ if (s.status === 200) {
 }
 
 const tablesMissing = TABLES.length - (await Promise.all(TABLES.map((t) => get(`/rest/v1/${t}?select=*&limit=1`))))
-    .filter((r) => r.status === 200).length;
+    .filter((r) => r.status === 200 || lockedForAnon(r)).length;
 if (tablesMissing === TABLES.length) {
     console.log('\n❌ No Echo Market tables exist in this project: supabase/schema.sql has not been run here yet');
     console.log('   (or it hit an error and was rolled back). Supabase → SQL Editor → New query →');
