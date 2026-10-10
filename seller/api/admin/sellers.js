@@ -10,7 +10,27 @@
 //                 delivered total, so the increase since the previous update is what that seller sold
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
-import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, sellerRankFromDiscord, RANKS, HttpError } from '../../lib/server.js';
+
+// Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
+// Opening the Sellers tab refreshes every role-based seller whose check is older than this, so the
+// leaderboard always shows current ranks (and switches off anyone who lost all seller roles).
+const REFRESH_MINUTES = 10;
+const MAX_REFRESH = 60;   // Discord lookups per load, to stay well inside Discord's rate limits
+async function refreshRanks(db, sellers, accounts) {
+    const discordIdOf = new Map(accounts.map((a) => [a.id, a.discord_id]));
+    const stale = sellers.filter((s) => s.source === 'discord_role' && s.active && discordIdOf.get(s.user_id) &&
+        (!s.role_checked_at || Date.now() - new Date(s.role_checked_at).getTime() > REFRESH_MINUTES * 60e3)).slice(0, MAX_REFRESH);
+    for (const s of stale) {
+        const rank = await sellerRankFromDiscord(discordIdOf.get(s.user_id));
+        if (rank === null) continue;                       // Discord didn't answer: leave as is
+        const patch = rank ? { rank, role_checked_at: new Date().toISOString() } : { active: false };
+        if (rank && !RANKS.includes(rank)) continue;
+        const { error } = await db.from('sellers').update(patch).eq('user_id', s.user_id).eq('source', 'discord_role');
+        if (error) { console.warn('rank refresh failed:', error.message); continue; }
+        Object.assign(s, patch);
+    }
+}
 
 const PAGE = 1000;
 async function all(query) {
@@ -47,6 +67,7 @@ export default handler(['POST'], async (req, res) => {
         ? await db.from('accounts').select('id, display_name, discord_username, discord_id, avatar_url').in('id', ids)
         : { data: [] };
     if (accErr) throw accErr;
+    await refreshRanks(db, sellers, accounts || []);
 
     const orderById = new Map(orders.map((o) => [o.id, o]));
     const stats = new Map();
