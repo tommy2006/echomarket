@@ -1,98 +1,154 @@
-# Plan: Echo Market bot commands on Discord
+# Echo Market bot: banning and ordering from Discord (plan)
 
-Status: **plan, not built yet**. Everything below reuses what the market already has: the Echo Market bot, the
-moderation rules, the order rules, the Market Banned role and the moderation log channel.
+Status: plan only, nothing built yet. It reuses what already works on the website: the Echo Market bot,
+market bans, warnings, the Market Banned role, the log channel, airline profiles and the order rules.
 
-## 1. How the bot would receive commands
+---
 
-The bot today only *sends* (DMs, role changes, log posts). To answer slash commands it does **not** need to run
-24/7: Discord can deliver each command as a web request to an **Interactions Endpoint URL**, which a Vercel
-function answers, exactly like our other `/api` functions. No new hosting, no extra cost.
+## 1. How it works (no bot running 24/7)
 
-- New function: `buyer/api/discord/interactions.js` (the buyer project, because ordering needs the aircraft
-  price list that lives there; the moderation code is shared, so it works from either project).
-- Every request is **signed by Discord**. The function verifies the Ed25519 signature with the app's public key
-  (`DISCORD_PUBLIC_KEY`) and rejects anything unsigned or older than 5 minutes. This is mandatory: without it
-  anyone could fake commands.
-- Discord wants an answer within 3 seconds. Slow work (Discord role changes, DMs) is answered with "thinking…"
-  first and finished in the background (`waitUntil`), then the reply is edited.
-- Commands are registered once for the Echo server with a small script (`npm run register-commands`), so they
-  appear immediately and only in our server.
+Discord can send each slash command to a web address. We add one function to the **buyer** Vercel site:
 
-## 2. Moderation commands (Market Admins only)
+`https://echomarket-buyer.vercel.app/api/discord/interactions`
 
-| Command | Options | Does |
+- **Signed requests.** Discord signs every command. The function checks the signature with the app's public
+  key and refuses anything unsigned or older than 5 minutes, so nobody can fake a command.
+- **3-second rule.** Discord wants a reply within 3 seconds. The function replies "working on it…" straight
+  away, finishes the slow parts (DMs, role changes, log post), then edits the reply.
+- **Private replies.** All replies are visible only to the person who ran the command.
+- **Same code as the website.** The ban, warning and order logic moves into the shared server code, and both the
+  website and the bot call it. One set of rules, no drift.
+
+---
+
+## 2. Ban via bot (Market Admins only)
+
+### Commands
+
+| Command | Fields | What it does |
 |---|---|---|
-| `/market warn` | user, message | Same as "Send message → Warning" on the seller desk |
-| `/market message` | user, message | Information message |
-| `/market ban` | user, length (1 week / 1 month / permanent), reason | Same as the seller desk ban |
-| `/market unban` | user, note (optional) | Lifts the active ban |
-| `/market info` | user | Active ban, number of warnings, recent orders (private reply) |
+| `/market ban` | **user**, **length** (1 week / 1 month / permanent), **reason** | Bans that Discord account from the buyer market |
+| `/market unban` | **user**, note (optional) | Lifts their active ban early |
+| `/market warn` | **user**, **message** | Sends a formal warning |
+| `/market message` | **user**, **message** | Sends an information message |
+| `/market info` | **user** | Shows active ban, number of warnings, recent orders |
 
-**Only Market Admins**, enforced twice:
-1. Discord side: the commands are registered hidden from everyone ("default permissions: none"); a server admin
-   then allows the **Market Admin** role under Server Settings → Integrations → Echo Market.
-2. Our side: every command re-checks that the person running it has the Market Admin role (from the signed
-   request), so a wrong Discord setting can't open it up. (Lead Ambassadors and hand-added admins can keep using
-   the seller desk; on Discord it is Market Admins only, as asked.)
+**user** is Discord's member picker, so you choose the person directly and nobody types IDs.
 
-What happens on a ban or warning (identical to the seller desk, the code is shared):
-- saved in `market_bans` / `market_messages` with `source = 'bot'` (so the seller desk Moderation tab shows it);
-- **DM to the user**; **post in the logging channel**; a ban gives the **Market Banned** role;
-- works for people who never used the web market (it's tied to the Discord account);
-- the role is removed when the ban ends (on their next visit, or by the daily clean-up already in place);
-- all replies to the admin are private ("only you can see this").
+### What happens on a ban (same as the seller desk)
+1. Saved as a market ban (marked "via bot"), so it shows on the seller desk's **Moderation** tab.
+2. The user gets the **Market Banned** role.
+3. The user gets a **DM** with the length and reason.
+4. A post goes to the **log channel**: who, by whom, length, reason.
+5. They can't use the buyer market until it ends. When it ends, the role is removed: on their next visit, or by
+   the daily clean-up that already runs.
 
-Prep work in the code: move the ban / unban / message logic out of `seller/api/admin/moderation.js` into
-`shared/lib/server.js` (`issueBan`, `liftBan`, `sendMarketMessage`), so the website and the bot run exactly the
-same rules.
+It works for people who have **never used the web market**, because bans are tied to the Discord account.
+Warnings and messages work the same way: saved, DMed, logged, and shown on the website if the person uses it.
 
-## 3. Buyer commands (airlines and orders)
+### Who can use them: Market Admins only, checked twice
+1. **Discord:** the `/market` commands are registered as hidden. In Server Settings → Integrations → Echo
+   Market, you allow them for the **Market Admin** role only.
+2. **Our code:** every command checks the signed request for the Market Admin role. If someone without it gets
+   through (for example after a wrong Discord setting), they get "Only Market Admins can do this".
 
-| Command | Options | Does |
+Extra safety: you can't ban yourself, and the bot refuses to ban another Market Admin.
+
+---
+
+## 3. Order via bot (any member)
+
+### Commands
+
+| Command | Fields | What it does |
 |---|---|---|
-| `/airline create` | name, alliance (choice of the 9) | Creates an airline profile (counts toward the 20) |
+| `/airline create` | **name**, **alliance** (choose from the 9) | Creates an airline profile |
 | `/airline list` | — | Lists your airline profiles |
-| `/order` | airline (autocomplete, up to 3 options for several airlines), price level (90 % … 50 % of list price), aircraft model (autocomplete by **name**), quantity (1–500) | Shows a private summary with the total and your 24-hour limit, and **Send order** / **Cancel** buttons |
+| `/order` | **airline**, extra airlines (up to 2 more, optional), **price level**, **aircraft**, **quantity** | Prepares an order and asks you to confirm |
 
-- **Profiles:** the bot reads the same `airlines` table as the website, so profiles made on either side show up
-  on both, and the 20-profile cap applies to both together.
-- **Model names:** autocomplete searches the price list by model name as you type (e.g. "a320" → "Airbus
-  A320neo"); codes are never asked for.
-- **Sending:** "Send order" calls the same order code the website uses (move the body of `buyer/api/orders.js`
-  into a shared `placeOrder()`), so the order gets its number, the seller ping and channel post, the buyer's DM,
-  and appears on the seller desk live, exactly like a web order. Same checks: Echo member, not market-banned,
-  price levels, 24-hour limit at list price, 5 orders per 10 minutes.
-- **One aircraft model per `/order`** in the first version (Discord commands have fixed options). Version 2: an
-  "Add another aircraft" button that builds a multi-line order in the private summary.
-- **Who can use it:** anyone in the server who has signed in on the website **once**. Their market account is
-  created by that first Discord sign-in (it's what links the Discord account to the market safely). People who
-  haven't get a private reply with the link. (Creating accounts from the bot alone would need changes to how
-  accounts are created; possible later, not needed to start.)
-- Not in v1: cancelling, order status and messaging the seller team from Discord (they stay on the website and
-  in DMs). Easy to add later with the same pattern.
+- **airline:** a dropdown with your own profiles, including ones made on the website. Profiles made with the
+  bot appear on the website too. Both count toward the same **20-profile cap**.
+- **price level:** 90 % / 80 % / 70 % / 60 % / 50 % of the in-game list price, shown as "70 % (30 % off)".
+- **aircraft:** type part of the **model name** ("a320", "777-9") and pick from the suggestions. Codes are
+  never needed.
+- **quantity:** 1–500.
 
-## 4. What you'd set up (≈15 min)
+### Confirming
+`/order` replies privately with a summary and two buttons, **Send order** and **Cancel**. The summary shows:
+- the aircraft, quantity and price level
+- the total
+- the airline(s) it can be delivered to
+- how much of the 24-hour limit it uses
 
-1. Discord Developer Portal → your app → **General Information**: copy the **Application ID** and **Public Key**.
-2. Vercel (buyer project): `DISCORD_APP_ID`, `DISCORD_PUBLIC_KEY`, plus `DISCORD_MARKET_ADMIN_ROLE_ID` and
-   `DISCORD_LOG_CHANNEL_ID` (the buyer project would now also post moderation logs). Redeploy.
-3. Developer Portal → General Information → **Interactions Endpoint URL**:
-   `https://echomarket-buyer.vercel.app/api/discord/interactions` (Discord tests it when you save).
-4. Re-authorise the bot with the commands scope (same invite link with `scope=bot%20applications.commands`).
-   It stays in the server; this only adds slash commands.
-5. Server Settings → Integrations → Echo Market: allow the `/market` commands for **Market Admin** only;
-   `/airline` and `/order` for everyone (or for a role you choose).
-6. Run `npm run register-commands` once (I'd do it with you).
+Pressing **Send order** places it exactly like a web order:
+- it gets its **#number**
+- it appears on the **seller desk** instantly
+- it is posted to the **request channel**, pinging the Verified Seller role
+- the buyer gets the **"Order received" DM**
 
-## 5. Testing
+It then shows up under **Orders** on the website, where the buyer can follow it, cancel it while nobody has
+taken it, or message the seller team after 5 days.
 
-Same approach as everything else: a local fake Discord that sends signed command requests to the function,
-covering: bad signature refused, non-Market-Admin refused, ban/warn/unban results (DM, role, log, database),
-airline creation and the 20 cap, autocomplete, order placement (seller ping, DM, seller desk), banned and
-non-member users refused.
+### Same rules as the website
+Every bot command checks the same things as the website:
+- **Members only:** you must be a member of the Echo Alliances server.
+- **No bans:** neither a market ban nor the Market Banned role.
+- **Pricing:** the price level must be one of the allowed ones, and the server recalculates every price.
+- **24-hour limit:** $10B, counted at list price.
+- **Order cap:** 5 orders per 10 minutes.
+- **Profiles:** at most 20 airline profiles.
+
+### One-time link to the website
+A bot order needs a market account, and that account is created the first time someone **signs in on the
+website with Discord**. That sign-in is what securely ties a Discord account to the market. People who haven't
+signed in yet get a private reply with the link, then everything works from Discord.
+
+### Limits of the first version
+- **One aircraft type per `/order`.** For a mixed order, run `/order` twice or use the website. Version 2 could
+  add an **Add another aircraft** button to the summary.
+- **Website only for now:** order status, cancelling and messaging the seller team.
+
+---
+
+## 4. What you would set up (≈15 minutes)
+
+1. **Fix the log channel first:** give the bot View Channel, Send Messages and Embed Links there. The health
+   page currently says it can't see it.
+2. **Discord Developer Portal → your app → General Information:** copy the **Application ID** and **Public Key**.
+3. **Vercel, buyer project → Environment Variables:** add these, then redeploy.
+   - `DISCORD_APP_ID`
+   - `DISCORD_PUBLIC_KEY`
+   - `DISCORD_MARKET_ADMIN_ROLE_ID`
+   - `DISCORD_LOG_CHANNEL_ID`
+4. **Developer Portal → General Information → Interactions Endpoint URL:** set it to
+   `https://echomarket-buyer.vercel.app/api/discord/interactions` and save. Discord tests it on save.
+5. **Give the bot permission to add commands:** open the bot's invite link again with
+   `scope=bot%20applications.commands`. The bot stays in the server; this only adds the commands.
+6. **Register the commands:** I run a one-off script with you that adds them to the Echo Alliances server, so
+   they appear straight away.
+7. **Server Settings → Integrations → Echo Market:** allow `/market` for **Market Admin** only, and `/airline`
+   and `/order` for everyone (or a role you pick).
+8. **Check:** ask me to check the health page. It will show new lines for the commands.
+
+---
+
+## 5. How it gets tested before going live
+
+Same as everything so far, on a local copy with a fake Discord that sends properly signed commands:
+- unsigned or tampered commands are refused
+- `/market` from someone without Market Admin is refused
+- a ban saves the ban, gives the role, DMs, logs, blocks the website and shows on the Moderation tab;
+  `/market unban` undoes all of it
+- warnings and messages are saved, DMed and logged
+- `/airline create` respects the 20 cap, and its profiles show on the website
+- the aircraft suggestions find models by name
+- `/order` → Send order lands on the seller desk with the ping and DM; Cancel does nothing
+- non-members, banned users and people over the limits get a clear private refusal
+
+---
 
 ## 6. Effort
 
-Roughly two working sessions: one for the endpoint, signature checks and moderation commands, one for airlines
-and orders.
+About two working sessions:
+- **Session 1:** the signed endpoint plus the `/market` commands.
+- **Session 2:** `/airline` and `/order`.
