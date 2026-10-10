@@ -552,7 +552,7 @@ What this switches on:
 
 What you get (details in docs/discord-bot-plan.md):
 - `/market ban | unban | warn | message | info`: Market Admins only. Same as the seller desk: saved, DMed, logged, Market Banned role.
-- `/airline create | list` and `/order` (with **Send order** / **Cancel**): any member who has signed in on the website once. Orders arrive on the seller desk exactly like web orders.
+- `/airline create | rename | list` and `/order` (up to 3 aircraft types, more with **Add aircraft**; then **Send order** / **Cancel**): any member who has signed in on the website once. Orders arrive on the seller desk exactly like web orders. Deleting an airline profile is website-only.
 
 Do these **in this order** (Discord checks the URL in step 2, so the website must be ready first):
 

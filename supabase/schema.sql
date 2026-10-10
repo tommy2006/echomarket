@@ -355,6 +355,52 @@ create table if not exists public.order_events (
 create index if not exists order_events_order_idx on public.order_events (order_id, created_at);
 create index if not exists order_events_buyer_idx on public.order_events (buyer_id, created_at desc);
 
+-- Renaming an airline (or moving it to another alliance), on the website or with /airline rename,
+-- also updates the orders that are still open, so the seller delivers to the right name. Each of those
+-- orders gets a RENAMED event. Finished orders keep the name they were placed with.
+create or replace function public.airline_renamed()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+    msg text := format('Airline changed: %s (%s) → %s (%s).', old.name, old.alliance, new.name, new.alliance);
+    who text := (select coalesce(a.display_name, a.discord_username, 'Unknown') from public.accounts a where a.id = new.owner_id);
+begin
+    if new.name is not distinct from old.name and new.alliance is not distinct from old.alliance then
+        return new;
+    end if;
+    -- The buyer's own open orders that deliver to this airline.
+    with changed as (
+        update public.orders o set
+            airline_name = case when o.airline_id = new.id then new.name else o.airline_name end,
+            alliance     = case when o.airline_id = new.id then new.alliance else o.alliance end,
+            airlines     = coalesce((
+                select jsonb_agg(case when e->>'id' = new.id::text
+                                      then e || jsonb_build_object('name', new.name, 'alliance', new.alliance) else e end
+                                 order by t.n)
+                from jsonb_array_elements(o.airlines) with ordinality t(e, n)), '[]'::jsonb)
+        where o.buyer_id = new.owner_id
+          and o.status in ('PENDING', 'CLAIMED', 'PARTIAL')
+          and (o.airline_id = new.id or o.airlines @> jsonb_build_array(jsonb_build_object('id', new.id::text)))
+        returning o.id, o.buyer_id
+    )
+    insert into public.order_events (order_id, buyer_id, kind, actor_id, actor_name, message)
+    select c.id, c.buyer_id, 'RENAMED', new.owner_id, who, msg from changed c;
+    -- A seller's airline on the open orders they are delivering.
+    with changed as (
+        update public.orders o set seller_airline_name = new.name, seller_alliance = new.alliance
+        where o.seller_id = new.owner_id and o.seller_airline_id = new.id
+          and o.status in ('PENDING', 'CLAIMED', 'PARTIAL')
+        returning o.id, o.buyer_id
+    )
+    insert into public.order_events (order_id, buyer_id, kind, actor_id, actor_name, message)
+    select c.id, c.buyer_id, 'RENAMED', new.owner_id, who, 'Seller''s ' || lower(left(msg, 1)) || substr(msg, 2) from changed c;
+    return new;
+end $$;
+revoke execute on function public.airline_renamed() from public, anon, authenticated;
+
+drop trigger if exists airlines_renamed on public.airlines;
+create trigger airlines_renamed after update of name, alliance on public.airlines
+    for each row execute function public.airline_renamed();
+
 -- Sellers who passed on an open order. The order is only DECLINED for the buyer once every
 -- active seller has passed (the last one writes the reason). Buyers can never read this table.
 create table if not exists public.order_declines (

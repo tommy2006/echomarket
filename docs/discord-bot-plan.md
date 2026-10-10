@@ -63,8 +63,11 @@ Extra safety: you can't ban yourself, and the bot refuses to ban another Market 
 | Command | Fields | What it does |
 |---|---|---|
 | `/airline create` | **name**, **alliance** (choose from the 9) | Creates an airline profile |
+| `/airline rename` | **airline** (yours), **name** | Renames it; open orders for it show the new name too |
 | `/airline list` | — | Lists your airline profiles |
-| `/order` | **airline**, extra airlines (up to 2 more, optional), **price level**, **aircraft**, **quantity** | Prepares an order and asks you to confirm |
+| `/order` | **airline**, extra airlines (up to 2 more, optional), **price level**, **aircraft** + **quantity** (up to 3 types: aircraft2/quantity2, aircraft3/quantity3) | Prepares an order and asks you to confirm |
+
+Deleting an airline profile is **website only** (on purpose: it's the one step that can't be undone).
 
 - **airline:** a dropdown with your own profiles, including ones made on the website. Profiles made with the
   bot appear on the website too. Both count toward the same **20-profile cap**.
@@ -74,8 +77,11 @@ Extra safety: you can't ban yourself, and the bot refuses to ban another Market 
 - **quantity:** 1–500.
 
 ### Confirming
-`/order` replies privately with a summary and two buttons, **Send order** and **Cancel**. The summary shows:
-- the aircraft, quantity and price level
+`/order` replies privately with a summary and the buttons **Send order**, **Add aircraft**, **Remove last** (when there are
+several lines) and **Cancel**. **Add aircraft** opens a small form: model name ("A350-900", "777-9"), quantity, and
+optionally its own price level. The same model at the same price level is merged into one line. Up to 20 lines,
+like the website. The summary shows:
+- each aircraft line with quantity and price level
 - the total
 - the airline(s) it can be delivered to
 - how much of the 24-hour limit it uses
@@ -104,8 +110,6 @@ website with Discord**. That sign-in is what securely ties a Discord account to 
 signed in yet get a private reply with the link, then everything works from Discord.
 
 ### Limits of the first version
-- **One aircraft type per `/order`.** For a mixed order, run `/order` twice or use the website. Version 2 could
-  add an **Add another aircraft** button to the summary.
 - **Website only for now:** order status, cancelling and messaging the seller team.
 
 ---

@@ -30,6 +30,9 @@ export const COMMANDS = [
             { type: SUB, name: 'create', description: 'Create an airline profile (up to 20)', options: [
                 { type: STRING, name: 'name', description: 'Airline name', required: true, min_length: 2, max_length: 60 },
                 { type: STRING, name: 'alliance', description: 'Alliance', required: true, autocomplete: true }] },
+            { type: SUB, name: 'rename', description: 'Rename one of your airline profiles', options: [
+                { type: STRING, name: 'airline', description: 'Which airline', required: true, autocomplete: true },
+                { type: STRING, name: 'name', description: 'New name', required: true, min_length: 2, max_length: 60 }] },
             { type: SUB, name: 'list', description: 'List your airline profiles' }
         ]
     },
@@ -39,8 +42,12 @@ export const COMMANDS = [
             { type: STRING, name: 'airline', description: 'Your airline to deliver to', required: true, autocomplete: true },
             { type: INTEGER, name: 'price', description: 'Price level: % of the in-game list price you pay', required: true,
                 choices: [90, 80, 70, 60, 50].map((p) => ({ name: `${p}% (${100 - p}% off)`, value: p })) },
-            { type: STRING, name: 'aircraft', description: 'Aircraft model (start typing its name)', required: true, autocomplete: true },
+            { type: STRING, name: 'aircraft', description: 'Aircraft model (start typing its name). More types: aircraft2/3, or "Add aircraft"', required: true, autocomplete: true },
             { type: INTEGER, name: 'quantity', description: 'How many (1-500)', required: true, min_value: 1, max_value: 500 },
+            { type: STRING, name: 'aircraft2', description: 'Second aircraft model (optional)', required: false, autocomplete: true },
+            { type: INTEGER, name: 'quantity2', description: 'How many of the second aircraft', required: false, min_value: 1, max_value: 500 },
+            { type: STRING, name: 'aircraft3', description: 'Third aircraft model (optional)', required: false, autocomplete: true },
+            { type: INTEGER, name: 'quantity3', description: 'How many of the third aircraft', required: false, min_value: 1, max_value: 500 },
             { type: STRING, name: 'airline2', description: 'Also OK to deliver to (optional)', required: false, autocomplete: true },
             { type: STRING, name: 'airline3', description: 'Also OK to deliver to (optional)', required: false, autocomplete: true },
             { type: STRING, name: 'note', description: 'Note for the seller (optional)', required: false, max_length: 200 }

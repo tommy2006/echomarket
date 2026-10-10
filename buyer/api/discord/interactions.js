@@ -6,8 +6,9 @@
 // (orders), so a ban or an order from Discord is exactly the same as one from the website.
 //
 //   /market ban|unban|warn|message|info   Market Admins only (DISCORD_MARKET_ADMIN_ROLE_ID), checked here too
-//   /airline create|list                   any member who has signed in on the website once
-//   /order                                 same, then "Send order" / "Cancel" buttons
+//   /airline create|rename|list            any member who has signed in on the website once (deleting: website only)
+//   /order                                 same: up to 3 aircraft types, then "Send order" / "Add aircraft" /
+//                                          "Remove last" / "Cancel" buttons ("Add aircraft" opens a small form)
 // /airline and /order only work in the ordering channel(s) chosen on the seller desk (market_settings
 // order_channel_ids; empty = any channel). /market works everywhere.
 import { createPublicKey, verify } from 'crypto';
@@ -18,7 +19,7 @@ import {
 } from '../../lib/server.js';
 import { resolveTarget, issueBan, liftBan, sendMarketMessage, moderationSummary } from '../../lib/moderation.js';
 import { previewOrder, placeOrder } from '../../lib/orders.js';
-import { AIRCRAFT, PRICE_LEVELS } from '../../lib/pricing.js';
+import { AIRCRAFT, PRICE_LEVELS, MAX_LINES, MAX_QTY_PER_LINE } from '../../lib/pricing.js';
 
 // Discord reads the raw body for the signature, so it must not be parsed first.
 export const config = { api: { bodyParser: false } };
@@ -138,103 +139,241 @@ async function market(i) {
 }
 
 // ------------------------------------------------------------------ /airline
+const UUID = /^[0-9a-f-]{36}$/i;
+// The buyer's airline for what they picked (an id from the suggestions) or typed (its name).
+async function findOwnAirline(account, value) {
+    const v = String(value || '').trim();
+    if (!v) return null;
+    const db = admin();
+    if (UUID.test(v)) {
+        const { data } = await db.from('airlines').select('*').eq('id', v).eq('owner_id', account.id).maybeSingle();
+        return data || null;
+    }
+    const { data } = await db.from('airlines').select('*').eq('owner_id', account.id);
+    return (data || []).find((a) => a.name.toLowerCase() === v.toLowerCase()) || null;
+}
+const airlineError = (error, name) => {
+    if (error.code === '23505') return say(`You already have an airline called **${name}**.`);
+    if (error.code === '23514') return say('Airline names must be 2–60 characters, with no web addresses or invite links.');
+    if (error.code === 'P0001') return say(`You already have ${MAX_AIRLINES} airline profiles, the maximum.`);
+    throw error;
+};
+
 async function airline(i) {
     const me = i.member.user;
     const account = await accountFor(me.id);
     if (!account) return say(signInText());
     const sub = i.data.options?.[0];
+    const o = opts(sub?.options);
     const db = admin();
     if (sub?.name === 'list') {
         const { data } = await db.from('airlines').select('name, alliance').eq('owner_id', account.id).order('created_at');
         if (!data?.length) return say('You have no airline profiles yet. Create one with `/airline create`.');
-        return say(`**Your airlines (${data.length}/${MAX_AIRLINES})**\n${data.map((a) => `• ${a.name} (${a.alliance})`).join('\n')}`);
+        return say(`**Your airlines (${data.length}/${MAX_AIRLINES})**\n${data.map((a) => `• ${a.name} (${a.alliance})`).join('\n')}\n-# Rename with \`/airline rename\`. Deleting a profile is done on the website${BUYER_URL ? `: ${BUYER_URL}/#airlines` : '.'}`);
     }
     if (sub?.name === 'create') {
-        const o = opts(sub.options);
         await requireMarketAccess(account);
         await rateLimit('airline-bot:' + me.id, 20, 600);
         const name = cleanText(o.name, 60);
         const { data: alliance } = await db.from('alliances').select('name').eq('name', String(o.alliance || '')).maybeSingle();
         if (!alliance) return say('Pick an alliance from the list.');
         const { data, error } = await db.from('airlines').insert({ owner_id: account.id, name, alliance: alliance.name }).select().single();
-        if (error) {
-            if (error.code === '23505') return say(`You already have an airline called **${name}**.`);
-            if (error.code === '23514') return say('Airline names must be 2–60 characters, with no web addresses or invite links.');
-            if (error.code === 'P0001') return say(`You already have ${MAX_AIRLINES} airline profiles, the maximum.`);
-            throw error;
-        }
+        if (error) return airlineError(error, name);
         const { count } = await db.from('airlines').select('id', { count: 'exact', head: true }).eq('owner_id', account.id);
         return say(`✈️ Created **${data.name}** (${data.alliance}). You have ${count}/${MAX_AIRLINES} airline profiles; they also show on the website.`);
+    }
+    if (sub?.name === 'rename') {
+        await requireMarketAccess(account);
+        await rateLimit('airline-bot:' + me.id, 20, 600);
+        const current = await findOwnAirline(account, o.airline);
+        if (!current) return say('Pick one of your airlines from the list (start typing its name).');
+        const name = cleanText(o.name, 60);
+        if (current.name === name) return say(`It's already called **${name}**.`);
+        // The database also updates the orders for this airline that are still open (airline_renamed()).
+        const { data, error } = await db.from('airlines').update({ name }).eq('id', current.id).eq('owner_id', account.id).select().single();
+        if (error) return airlineError(error, name);
+        return say(`✏️ **${current.name}** is now called **${data.name}** (${data.alliance}). Your open orders for it show the new name too, on the website as well.`);
     }
     return say('Unknown command.');
 }
 
 // ------------------------------------------------------------------ /order
-const findModel = (text) => {
-    const t = String(text || '').trim().toLowerCase();
-    return AIRCRAFT.find((a) => a.model.toLowerCase() === t) || null;
-};
 const short = (n) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2).replace(/\.?0+$/, '')}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M` : `$${Math.round(n).toLocaleString('en-US')}`);
+const norm = (s) => String(s || '').toLowerCase().replace(/[\s\-_.]/g, '');
+// The aircraft a typed name means: that exact model, the only one ending in it ("A350-900" = Airbus A350-900,
+// not the A350-900ULR), or the only one containing it.
+function matchModel(text) {
+    const q = norm(text);
+    if (!q) return { aircraft: null, suggestions: [] };
+    const exact = AIRCRAFT.find((a) => norm(a.model) === q);
+    if (exact) return { aircraft: exact };
+    const ending = AIRCRAFT.filter((a) => norm(a.model).endsWith(q));
+    if (ending.length === 1) return { aircraft: ending[0] };
+    const hits = AIRCRAFT.filter((a) => norm(a.model).includes(q));
+    return hits.length === 1 ? { aircraft: hits[0] } : { aircraft: null, suggestions: hits.slice(0, 6).map((a) => a.model) };
+}
+const notFound = (text, m) => `I couldn't find the aircraft **${cleanText(text, 60)}**.${m.suggestions?.length ? ` Did you mean ${m.suggestions.join(', ')}?` : ''} Type its name and pick one of the suggestions.`;
+// Adds a line to the order; the same model at the same price level is merged into one line.
+// Returns the new list, or a text saying why it can't be added.
+function addLine(items, model, qty, pricePercent) {
+    const same = items.find((it) => it.model === model && it.pricePercent === pricePercent);
+    if (same) {
+        if (same.qty + qty > MAX_QTY_PER_LINE) return `That makes ${same.qty + qty}× ${model}; the most per aircraft type is ${MAX_QTY_PER_LINE}.`;
+        return items.map((it) => (it === same ? { ...it, qty: it.qty + qty } : it));
+    }
+    if (items.length >= MAX_LINES) return `An order can have at most ${MAX_LINES} aircraft lines.`;
+    return [...items, { model, qty, pricePercent }];
+}
+
+// The private summary with its buttons. notice: a line above it (what just changed, or why it didn't).
+function summary(p, pendingId, notice = '') {
+    const levels = new Set(p.items.map((it) => it.pricePercent));
+    const lines = p.items.map((it, n) => `${n + 1}. **${it.qty}× ${it.model}** · ${it.pricePercent}% · ${short(it.totalUSD)}`);
+    return {
+        content: notice,
+        embeds: [{
+            title: '🛒 Your order — check it, then send',
+            color: 0xFFFFFF,
+            description: lines.join('\n'),
+            fields: [
+                { name: 'Aircraft', value: `${p.totalQty} in ${p.items.length} type${p.items.length === 1 ? '' : 's'}`, inline: true },
+                { name: 'Price level', value: levels.size === 1 ? `${p.items[0].pricePercent}% of list (${100 - p.items[0].pricePercent}% off)` : 'per line, above', inline: true },
+                { name: 'Total', value: short(p.totalUSD), inline: true },
+                { name: p.airlines.length > 1 ? 'Deliver to any of' : 'Deliver to', value: p.airlines.map((a) => `${a.name} (${a.alliance})`).join('\n') },
+                { name: '24-hour limit (at list price)', value: `${short(p.used + p.listTotalUSD)} of ${short(p.limit)} after this order` },
+                ...(p.buyerNote ? [{ name: 'Note for the seller', value: p.buyerNote }] : [])
+            ],
+            footer: { text: `Expires ${PENDING_MINUTES} minutes after /order · only you can see this` }
+        }],
+        components: [{ type: 1, components: [
+            { type: 2, style: 3, label: 'Send order', custom_id: `order:send:${pendingId}` },
+            { type: 2, style: 1, label: 'Add aircraft', emoji: { name: '➕' }, custom_id: `order:add:${pendingId}`, disabled: p.items.length >= MAX_LINES },
+            ...(p.items.length > 1 ? [{ type: 2, style: 2, label: 'Remove last', custom_id: `order:pop:${pendingId}` }] : []),
+            { type: 2, style: 2, label: 'Cancel', custom_id: `order:cancel:${pendingId}` }
+        ] }]
+    };
+}
+const preview = async (account, payload) => ({ ...(await previewOrder(account, payload)), buyerNote: payload.buyerNote || payload.items?.[0]?.note || '' });
 
 async function order(i) {
     const me = i.member.user;
     const account = await accountFor(me.id);
     if (!account) return say(signInText());
     const o = opts(i.data.options);
-    const aircraft = findModel(o.aircraft);
-    if (!aircraft) return say(`I couldn't find the aircraft **${cleanText(o.aircraft, 80)}**. Start typing its name and pick one of the suggestions.`);
-    if (!PRICE_LEVELS.includes(Number(o.price))) return say('Pick a price level from the list.');
-    const airlineIds = [o.airline, o.airline2, o.airline3].filter(Boolean);
-    const payload = { airlineIds, items: [{ model: aircraft.model, qty: Number(o.quantity), pricePercent: Number(o.price), note: cleanText(o.note, 200) }] };
+    const price = Number(o.price);
+    if (!PRICE_LEVELS.includes(price)) return say('Pick a price level from the list.');
+    let items = [];
+    for (const [text, qty] of [[o.aircraft, o.quantity], [o.aircraft2, o.quantity2], [o.aircraft3, o.quantity3]]) {
+        if (!text && !qty) continue;
+        if (!text) return say(`You gave a quantity (${qty}) without its aircraft. Fill in the matching \`aircraft\` option too.`);
+        if (!qty) return say(`How many **${cleanText(text, 60)}**? Fill in the matching \`quantity\` option too.`);
+        const m = matchModel(text);
+        if (!m.aircraft) return say(notFound(text, m));
+        const next = addLine(items, m.aircraft.model, Number(qty), price);
+        if (typeof next === 'string') return say(next);
+        items = next;
+    }
     return later(i, async () => {
-        const p = await previewOrder(account, payload);
+        const airlineIds = [];
+        for (const value of [o.airline, o.airline2, o.airline3].filter(Boolean)) {
+            const a = await findOwnAirline(account, value);
+            if (!a) throw new HttpError(400, `**${cleanText(value, 60)}** isn't one of your airlines. Pick one from the suggestions, or create it with \`/airline create\`.`);
+            airlineIds.push(a.id);
+        }
+        const payload = { airlineIds, items, buyerNote: cleanText(o.note, 200) };
+        const p = await preview(account, payload);
         const { data: pending, error } = await admin().from('bot_pending_orders')
             .insert({ discord_id: me.id, account_id: account.id, payload }).select('id').single();
         if (error) throw error;
-        const it = p.items[0];
-        return {
-            content: '',
-            embeds: [{
-                title: '🛒 Your order — check it, then send',
-                color: 0xFFFFFF,
-                fields: [
-                    { name: 'Aircraft', value: `${it.qty}× ${it.model}`, inline: true },
-                    { name: 'Price level', value: `${it.pricePercent}% of list (${100 - it.pricePercent}% off)`, inline: true },
-                    { name: 'Total', value: short(p.totalUSD), inline: true },
-                    { name: p.airlines.length > 1 ? 'Deliver to any of' : 'Deliver to', value: p.airlines.map((a) => `${a.name} (${a.alliance})`).join('\n') },
-                    { name: '24-hour limit (at list price)', value: `${short(p.used + p.listTotalUSD)} of ${short(p.limit)} after this order` },
-                    ...(it.note ? [{ name: 'Note for the seller', value: it.note }] : [])
-                ],
-                footer: { text: `Expires in ${PENDING_MINUTES} minutes · only you can see this` }
-            }],
-            components: [{ type: 1, components: [
-                { type: 2, style: 3, label: 'Send order', custom_id: `order:send:${pending.id}` },
-                { type: 2, style: 2, label: 'Cancel', custom_id: `order:cancel:${pending.id}` }
-            ] }]
-        };
+        return summary(p, pending.id, items.length < MAX_LINES ? '-# More aircraft types? Press **Add aircraft** before sending.' : '');
     });
 }
 
-async function orderButton(i) {
+// "Add aircraft" form. The price level is optional: empty = the same as the order's first line.
+const addForm = (id, pricePercent) => ({
+    custom_id: `order:added:${id}`, title: 'Add aircraft to your order',
+    components: [
+        { type: 1, components: [{ type: 4, custom_id: 'model', label: 'Aircraft model', style: 1, required: true, min_length: 2, max_length: 60, placeholder: 'e.g. A350-900, 737 MAX 8, E195-E2' }] },
+        { type: 1, components: [{ type: 4, custom_id: 'qty', label: 'How many (1-500)', style: 1, required: true, min_length: 1, max_length: 3 }] },
+        { type: 1, components: [{ type: 4, custom_id: 'price', label: 'Price level % (90, 80, 70, 60 or 50)', style: 1, required: false, max_length: 3, placeholder: `Empty = ${pricePercent}%, like the rest of the order` }] }
+    ]
+});
+// Text inputs of a submitted form, by custom_id (works with both the old and the new form layout).
+function formValues(components = []) {
+    const out = {};
+    const walk = (list) => (list || []).forEach((c) => {
+        if (c?.custom_id && typeof c.value === 'string') out[c.custom_id] = c.value;
+        walk(c?.components);
+        if (c?.component) walk([c.component]);
+    });
+    walk(components);
+    return out;
+}
+
+// Buttons on the summary (send, add, remove last, cancel) and the "Add aircraft" form.
+async function orderComponent(i) {
     const [, action, id] = String(i.data.custom_id || '').split(':');
     const me = (i.member || i).user;
-    if (!/^[0-9a-f-]{36}$/i.test(id || '')) return say('This button has expired.');
+    if (!UUID.test(id || '')) return say('This button has expired.');
     const db = admin();
     const { data: pending } = await db.from('bot_pending_orders').select('*').eq('id', id).maybeSingle();
     if (!pending || pending.discord_id !== me.id) return say("This isn't your order.");
     const closed = (content) => ({ type: 7, data: { content, embeds: [], components: [] } });
     if (pending.used_at) return closed('This order was already sent or cancelled.');
     if (Date.now() - new Date(pending.created_at).getTime() > PENDING_MINUTES * 60e3) return closed('⌛ This order expired. Run `/order` again.');
-    // Claim it, so a double click can't send it twice.
-    const { data: claimed } = await db.from('bot_pending_orders').update({ used_at: new Date().toISOString() }).eq('id', id).is('used_at', null).select('id');
+    const items = Array.isArray(pending.payload?.items) ? pending.payload.items : [];
+
+    if (action === 'add') {
+        if (items.length >= MAX_LINES) return say(`An order can have at most ${MAX_LINES} aircraft lines.`);
+        return { type: 9, data: addForm(id, items[0]?.pricePercent || PRICE_LEVELS[0]) };
+    }
+    if (action === 'added' || action === 'pop') {
+        let next, notice;
+        if (action === 'pop') {
+            if (items.length < 2) return say('An order needs at least one aircraft. Press **Cancel** to drop it.');
+            next = items.slice(0, -1);
+            notice = `↩️ Removed ${items.at(-1).qty}× ${items.at(-1).model}.`;
+        } else {
+            const f = formValues(i.data.components);
+            const m = matchModel(f.model);
+            if (!m.aircraft) return say(notFound(f.model, m));
+            const qty = Number(String(f.qty || '').trim());
+            if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY_PER_LINE) return say(`The quantity must be a whole number from 1 to ${MAX_QTY_PER_LINE}.`);
+            const priceText = String(f.price || '').replace('%', '').trim();
+            const price = priceText ? Number(priceText) : (items[0]?.pricePercent || PRICE_LEVELS[0]);
+            if (!PRICE_LEVELS.includes(price)) return say(`The price level must be ${PRICE_LEVELS.join(', ')} (percent of list price), or empty.`);
+            next = addLine(items, m.aircraft.model, qty, price);
+            if (typeof next === 'string') return say(next);
+            notice = `➕ Added ${qty}× ${m.aircraft.model}.`;
+        }
+        const payload = { ...pending.payload, items: next };
+        return later(i, async () => {
+            const account = await accountFor(me.id);
+            if (!account) throw new HttpError(403, signInText());
+            let p;
+            try { p = await preview(account, payload); }
+            catch (err) {
+                if (!(err instanceof HttpError)) throw err;
+                // Doesn't fit (for example over the 24-hour limit): keep the order as it was and say why.
+                return summary(await preview(account, pending.payload), id, `⚠️ Not changed: ${err.message}`);
+            }
+            const { data: saved } = await db.from('bot_pending_orders').update({ payload }).eq('id', id).is('used_at', null).select('id');
+            if (!saved?.length) return { content: 'This order was already sent or cancelled.', embeds: [], components: [] };
+            return summary(p, id, notice);
+        }, { update: true });
+    }
+
+    // Send or cancel. Claim it first, so a double click can't send it twice.
+    const { data: claimed } = await db.from('bot_pending_orders').update({ used_at: new Date().toISOString() }).eq('id', id).is('used_at', null).select('id, payload');
     if (!claimed?.length) return closed('This order was already sent or cancelled.');
     if (action === 'cancel') return closed('Order cancelled. Nothing was sent.');
+    if (action !== 'send') return say('This button has expired.');
     return later(i, async () => {
         const account = await accountFor(me.id);
         if (!account) throw new HttpError(403, signInText());
-        const placed = await placeOrder(account, pending.payload);
+        const placed = await placeOrder(account, claimed[0].payload);
         return {
-            content: `✅ **Order ${orderRef(placed)} sent to the sellers.** You'll get a DM when a seller takes it. Follow it on ${BUYER_URL ? `${BUYER_URL}/#orders` : 'the website'}.`,
+            content: `✅ **Order ${orderRef(placed)} sent to the sellers** (${placed.total_qty} aircraft). You'll get a DM when a seller takes it. Follow it on ${BUYER_URL ? `${BUYER_URL}/#orders` : 'the website'}.`,
             embeds: [], components: []
         };
     }, { update: true });
@@ -248,15 +387,15 @@ async function autocomplete(i) {
     const focused = list.find((o) => o.focused);
     const typed = String(focused?.value || '').toLowerCase();
     let choices = [];
-    if (i.data.name === 'order' && /^airline\d?$/.test(focused?.name)) {
+    const airlineField = (i.data.name === 'order' && /^airline\d?$/.test(focused?.name)) || (i.data.name === 'airline' && focused?.name === 'airline');
+    if (airlineField) {
         const account = await accountFor(me.id);
         if (account) {
             const { data } = await admin().from('airlines').select('id, name, alliance').eq('owner_id', account.id).order('created_at');
             choices = (data || []).filter((a) => !typed || a.name.toLowerCase().includes(typed))
                 .map((a) => ({ name: `${a.name} (${a.alliance})`.slice(0, 100), value: a.id }));
         }
-    } else if (i.data.name === 'order' && focused?.name === 'aircraft') {
-        const norm = (s) => s.toLowerCase().replace(/[\s\-_.]/g, '');
+    } else if (i.data.name === 'order' && /^aircraft\d?$/.test(focused?.name)) {
         const q = norm(typed);
         choices = AIRCRAFT.filter((a) => !q || norm(a.model).includes(q))
             .map((a) => ({ name: `${a.model} · list ${short(a.price)}`.slice(0, 100), value: a.model }));
@@ -298,7 +437,7 @@ export default async function handler(req, res) {
             }
         }
         if (i.type === 4) return send(await autocomplete(i));
-        if (i.type === 3 && String(i.data?.custom_id || '').startsWith('order:')) return send(await orderButton(i));
+        if ((i.type === 3 || i.type === 5) && String(i.data?.custom_id || '').startsWith('order:')) return send(await orderComponent(i));
         if (i.type === 2) {
             if (i.data.name === 'market') return send(await market(i));
             if (i.data.name === 'airline') return send(await airline(i));

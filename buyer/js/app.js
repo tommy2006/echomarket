@@ -415,6 +415,7 @@ function describe(ev) {
         case 'DECLINED': return `${ev.order_id} was declined: ${ev.message || ''}`;
         case 'NOTE': return `${ev.order_id}: new note from the seller — "${ev.message}"`;
         case 'CANCELLED': return `${ev.order_id} was cancelled.`;
+        case 'RENAMED': return `${ev.order_id}: ${ev.message}`;
         default: return `${ev.order_id}: ${ev.message || 'updated'}`;
     }
 }
@@ -1144,7 +1145,7 @@ function AirlinesView({ session, airlines, orders, dataReady, defaultAirline, se
                     </div>
                     <div className="flex gap-1 mt-4">
                         ${!isDefault && html`<${Button} size="sm" variant="secondary" onClick=${() => { setDefaultAirlineId(a.id); toast(`${a.name} is now your default airline.`); }}>Make default<//>`}
-                        <${Button} size="sm" variant="ghost" icon="pencil" onClick=${() => onEdit(a)}>Edit<//>
+                        <${Button} size="sm" variant="ghost" icon="pencil" onClick=${() => onEdit(a)}>Rename / edit<//>
                         <${Button} size="sm" variant="ghost" icon="trash-2" className="ml-auto !text-slate-500 hover:!text-rose-300" onClick=${() => remove(a)} aria-label=${'Delete ' + a.name} />
                     </div>
                 </article>`;
@@ -1175,8 +1176,8 @@ function AirlineForm({ state, alliances, count, userId, onClose, onSaved }) {
         onSaved(res.data, !editing);
     };
 
-    return html`<${Modal} open=${true} onClose=${onClose} title=${editing ? 'Edit airline' : 'New airline profile'} size="sm"
-        subtitle=${editing ? null : `${count} of ${MAX_AIRLINES} used`}
+    return html`<${Modal} open=${true} onClose=${onClose} title=${editing ? 'Rename or edit airline' : 'New airline profile'} size="sm"
+        subtitle=${editing ? 'Your open orders for this airline will show the new name too.' : `${count} of ${MAX_AIRLINES} used`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//><${Button} busy=${busy} disabled=${!valid} onClick=${save}>${editing ? 'Save' : 'Create airline'}<//>`}>
         <form onSubmit=${save} className="space-y-4">
             <label className="block">
