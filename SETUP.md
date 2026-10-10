@@ -387,25 +387,44 @@ When the admins add the bot to the main server later, nothing else changes. A bo
 
 Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app`.
 
-**8.2 Sellers get in through the Discord seller role (automatic).**
-Anyone with the seller role (`DISCORD_ROLE_ID`, the same role new orders ping) in a server the bot is in gets the seller desk the first time they sign in there. Take the role away and they lose access the next time they open it. Nothing goes through you.
-- Requirements: the bot is in that server (Part 6) and `DISCORD_ROLE_ID` is set in the **seller** Vercel project. `/api/health` shows a line **"seller role → seller desk"**.
+**8.2 Seller hierarchy: who gets the seller desk (automatic, from Discord roles).**
+
+| Discord role | Seller desk rank | Can do | Tint on the seller desk |
+|---|---|---|---|
+| **Lead Ambassador** | `lead` | Everything, **as an admin**: decline for everyone, delete orders, manage any order, **Sellers** tab (performance) | bright pink |
+| **Ambassador** | `ambassador` | Take and deliver orders | softer pink |
+| **Verified Seller** | `verified` | Take and deliver orders | light pink-purple |
+
+Anyone with one of these roles in the Echo Alliances server gets the seller desk the first time they sign in there, with the rank of their highest role. Promotions and demotions on Discord are picked up within about 10 minutes (or when they reopen the desk). Remove all three roles and they lose access. Verified Sellers apply through the separate application form; once accepted, giving them the role on Discord is all that's needed.
+
+**Vercel settings** (Settings → Environment Variables; get each ID with Server Settings → Roles → right-click the role → **Copy Role ID**, Developer Mode on):
+
+| Key | Project | Value |
+|---|---|---|
+| `DISCORD_LEAD_ROLE_ID` | seller | the **Lead Ambassador** role ID |
+| `DISCORD_AMBASSADOR_ROLE_ID` | seller | the **Ambassador** role ID (the old "Alliance Ambassador" role, renamed, so this is the ID that is in `DISCORD_ROLE_ID` today) |
+| `DISCORD_VERIFIED_SELLER_ROLE_ID` | seller | the **Verified Seller** role ID |
+| `DISCORD_ROLE_ID` | **both** | the role **pinged for new orders**: change it to the **Verified Seller** role ID (they complete the orders) |
+| `DISCORD_GUILD_ID` | seller | the Echo Alliances server ID (right-click the server icon → **Copy Server ID**) |
+
+Redeploy both projects afterwards. `/api/health` on the seller site lists each role under **Discord roles**.
+- If none of the three role IDs is set, `DISCORD_ROLE_ID` counts as the Verified Seller role (the old setup).
 - Got the role a minute ago? On the "not on the seller list" screen, click **Check again**.
-- Only one server should count? Add `DISCORD_GUILD_ID` (right-click the server icon → **Copy Server ID**) to the seller project.
 
-By hand, for people without the role, or for admins: 💬 *"Add Discord ID 123… as a seller."* Add *"…as an admin"* if they should be able to delete orders and manage any order. People added by hand are never changed by the role check.
+By hand, for people without a role, or for admins: 💬 *"Add Discord ID 123… as a seller."* People added by hand are never changed by the role check; set their rank yourself (below).
 
-**Making someone an admin.** Admins can decline an order for everyone, delete orders, manage any seller's order, and see the **Sellers** tab (seller performance). In Supabase → **SQL Editor**, replace the Discord ID and run:
+**Making someone an admin by hand** (anyone besides the Lead Ambassador, who is an admin through the role). Admins can decline an order for everyone, delete orders, manage any seller's order, and see the **Sellers** tab. In Supabase → **SQL Editor**, replace the Discord ID, pick the rank they should show as (`'lead'`, `'ambassador'` or `'verified'`), and run:
 
 ```sql
-insert into public.sellers (user_id, is_admin, active, source, note)
-select id, true, true, 'manual', 'Made admin by hand'
+insert into public.sellers (user_id, is_admin, active, source, rank, note)
+select id, true, true, 'manual', 'ambassador', 'Made admin by hand'
 from public.accounts where discord_id = '123456789012345678'
-on conflict (user_id) do update set is_admin = true, active = true, source = 'manual';
+on conflict (user_id) do update set is_admin = true, active = true, source = 'manual', rank = excluded.rank;
 ```
 
 - It works whether or not they are already a seller. They must have signed in on the market once (otherwise nothing happens: check with `supabase/queries/list-buyers.sql`).
-- `source = 'manual'` means losing the Discord role no longer removes them: admin is your decision, not the role's.
+- `source = 'manual'` means losing the Discord role no longer removes them: admin is your decision, not the role's. Their rank (and tint) stays what you set.
+- To only change someone's rank (no admin): `update public.sellers set rank = 'ambassador', source = 'manual' where user_id = (select id from public.accounts where discord_id = '123456789012345678');` Leave `source` alone if they should keep following their Discord role.
 - To take admin away again (they stay a normal seller): `update public.sellers set is_admin = false where user_id = (select id from public.accounts where discord_id = '123456789012345678');`
 - They see the change after reloading the seller desk.
 

@@ -34,10 +34,10 @@
             background-image:
                 radial-gradient(1.5px 1.5px at 31px 47px, rgba(255,240,250,.85), rgba(0,0,0,0)),
                 radial-gradient(1.5px 1.5px at 157px 119px, rgba(255,255,255,.6), rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 89px 191px, rgba(255,214,236,.8), rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 89px 191px, rgb(var(--sky-200) / .8), rgba(0,0,0,0)),
                 radial-gradient(1.5px 1.5px at 211px 23px, rgba(255,255,255,.5), rgba(0,0,0,0)),
                 radial-gradient(1.5px 1.5px at 271px 149px, rgba(255,255,255,.55), rgba(0,0,0,0)),
-                radial-gradient(2.5px 2.5px at 53px 293px, rgba(249,168,212,.75), rgba(0,0,0,0)),
+                radial-gradient(2.5px 2.5px at 53px 293px, rgb(var(--sky-300) / .75), rgba(0,0,0,0)),
                 radial-gradient(1.5px 1.5px at 389px 71px, rgba(255,255,255,.6), rgba(0,0,0,0)),
                 radial-gradient(1.5px 1.5px at 443px 331px, rgba(255,255,255,.5), rgba(0,0,0,0)),
                 linear-gradient(to bottom, #000000 0%, #050505 60%, #0B0B0D 100%);
@@ -46,17 +46,17 @@
             background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat;
             background-attachment: fixed;
         }
-        /* Faint pink aurora.
+        /* Faint aurora in the seller's rank tint (CSS variables set by js/theme.js).
            body::before and body::after are two layers of soft aurora clouds. They drift, stretch and
            tilt on different slow cycles (≈70s and ≈95s), so the combined glow slowly changes shape. */
         body::before, body::after { content: ""; position: fixed; z-index: -1; pointer-events: none; will-change: transform, opacity; }
         body::before {
             inset: -15% -20% 10% -20%;
             background:
-                radial-gradient(ellipse 24% 40% at 14% 42%, rgba(255, 46, 160, .80), transparent 70%),
-                radial-gradient(ellipse 22% 48% at 38% 34%, rgba(255, 79, 178, .70), transparent 70%),
-                radial-gradient(ellipse 20% 38% at 60% 44%, rgba(232, 72, 240, .60), transparent 70%),
-                radial-gradient(ellipse 22% 46% at 82% 36%, rgba(255, 110, 190, .70), transparent 70%);
+                radial-gradient(ellipse 24% 40% at 14% 42%, rgb(var(--sky-500) / .80), transparent 70%),
+                radial-gradient(ellipse 22% 48% at 38% 34%, rgb(var(--sky-400) / .70), transparent 70%),
+                radial-gradient(ellipse 20% 38% at 60% 44%, rgb(var(--sky-600) / .60), transparent 70%),
+                radial-gradient(ellipse 22% 46% at 82% 36%, rgb(var(--sky-400) / .70), transparent 70%);
             filter: blur(60px);
             opacity: .2;
             transform-origin: 30% 20%;
@@ -65,9 +65,9 @@
         body::after {
             inset: -10% -20% 20% -20%;
             background:
-                radial-gradient(ellipse 34% 26% at 26% 56%, rgba(255, 92, 170, .50), transparent 72%),
-                radial-gradient(ellipse 30% 30% at 55% 24%, rgba(244, 114, 182, .45), transparent 72%),
-                radial-gradient(ellipse 36% 24% at 78% 58%, rgba(217, 70, 239, .45), transparent 72%);
+                radial-gradient(ellipse 34% 26% at 26% 56%, rgb(var(--sky-500) / .50), transparent 72%),
+                radial-gradient(ellipse 30% 30% at 55% 24%, rgb(var(--sky-300) / .45), transparent 72%),
+                radial-gradient(ellipse 36% 24% at 78% 58%, rgb(var(--sky-600) / .45), transparent 72%);
             filter: blur(70px);
             opacity: .15;
             transform-origin: 70% 30%;

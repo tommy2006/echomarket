@@ -10,7 +10,7 @@
 //                 delivered total, so the increase since the previous update is what that seller sold
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
-import { admin, handler, requireUser, requireActiveSeller, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
 
 const PAGE = 1000;
 async function all(query) {
@@ -93,7 +93,8 @@ export default handler(['POST'], async (req, res) => {
                 name: a ? accountName(a) : 'Unknown account',
                 discordUsername: a?.discord_username || null,
                 avatarUrl: a?.avatar_url || null,
-                isAdmin: Boolean(s?.is_admin),
+                isAdmin: isAdminSeller(s),
+                rank: s?.rank || null,
                 active: Boolean(s?.active),
                 onList: Boolean(s),
                 source: s?.source || null,

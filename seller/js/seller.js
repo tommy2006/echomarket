@@ -11,6 +11,18 @@ import {
 } from './ui.js';
 
 const LS_SELL_AS = 'echo_seller_airline_v2';
+
+// Echo hierarchy (sellers.rank). Lead Ambassadors are admins; anyone else can be made admin by hand.
+const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller' };
+const rankOf = (row) => (RANK_LABEL[row?.rank] ? row.rank : 'verified');
+// Effective admin, the same rule as the server's isAdminSeller().
+const withAdmin = (row) => row && { ...row, is_admin: Boolean(row.is_admin || row.rank === 'lead') };
+function RankBadge({ rank, admin }) {
+    const c = window.ECHO_RANK_COLORS?.[rank] || {};
+    return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black whitespace-nowrap"
+        style=${{ color: c.text, backgroundColor: (c.soft || '#888') + '26', border: `1px solid ${(c.soft || '#888')}55` }}>
+        ${RANK_LABEL[rank] || 'Seller'}${admin && rank !== 'lead' ? ' · admin' : ''}</span>`;
+}
 const LS_PAGE_SIZE = 'echo_seller_page_size_v1';
 const PAGE_SIZES = [5, 10, 25, 50, 'all'];
 
@@ -103,7 +115,7 @@ function App() {
                 if (r?.changed && r.seller) {
                     const again = await sb.from('sellers').select('*').eq('user_id', userId).maybeSingle();
                     me = again.data?.active ? again.data : null;
-                    if (me) toast('Welcome to the seller desk! You were added because you have the seller role on Discord.', 'success');
+                    if (me) toast(`Welcome to the seller desk! You were added because you're a ${RANK_LABEL[rankOf(me)]} on Discord.`, 'success');
                 }
             } else {
                 // Role sellers can only read orders while their role was confirmed in the last hour, so refresh
@@ -113,9 +125,12 @@ function App() {
                     roleChecked.current = true;
                     const r = await api('/api/enroll').catch(() => null);
                     if (r && !r.seller) me = null;
+                    else if (r?.rank) me = { ...me, rank: r.rank };   // promoted or demoted on Discord
                 }
             }
         }
+        me = withAdmin(me);
+        if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
         const [ord, fl, air, dec, team] = await Promise.all([
@@ -281,7 +296,7 @@ function App() {
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <div className="leading-tight">
                     <p className="font-extrabold text-white">Seller desk</p>
-                    <p className="text-[11px] text-slate-500">Echo Market${seller.is_admin ? ' · admin' : ''}</p>
+                    <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${seller.is_admin && rankOf(seller) !== 'lead' ? ' · admin' : ''}</p>
                 </div>
                 <div className="flex-1"></div>
                 <${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />
@@ -372,7 +387,7 @@ function SignInScreen() {
         <div className="w-full max-w-sm text-center">
             <img src="echo_logo.png" alt="" className="w-14 h-14 rounded-2xl mx-auto" />
             <h1 className="text-2xl font-black text-white mt-5">Echo Market seller desk</h1>
-            <p className="text-sm text-slate-400 mt-2">Sign in with the Discord account the admins added to the seller list.</p>
+            <p className="text-sm text-slate-400 mt-2">For Verified Sellers, Ambassadors and the Lead Ambassador. Sign in with your Discord account.</p>
             <${Button} variant="discord" size="lg" className="w-full mt-7" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in with Discord<//>
             <a href=${CONFIG.BUYER_URL || "#"} className="inline-block mt-6 text-xs font-bold text-slate-500 hover:text-slate-300">← Back to Echo Market</a>
         </div>
@@ -386,7 +401,7 @@ function NotASeller({ account }) {
             <div className="w-14 h-14 rounded-2xl mx-auto bg-slate-900 border border-slate-800 flex items-center justify-center"><${Icon} name="lock" className="w-6 h-6 text-slate-400" /></div>
             <h1 className="text-xl font-black text-white mt-5">You're not on the seller list yet</h1>
             <p className="text-sm text-slate-400 mt-2">Signed in as <b className="text-slate-200">${account?.display_name || account?.discord_username}</b>.
-                Members with the <b className="text-slate-200">seller role</b> on the Echo Discord server get in automatically. Got the role just now? Check again.
+                <b className="text-slate-200">Verified Sellers</b>, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.
                 Otherwise, send your Discord ID to an Echo Market admin.</p>
             <button onClick=${copy} className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-sm hover:border-slate-600">
                 ${account?.discord_id || 'unknown'} <${Icon} name="copy" className="w-4 h-4 text-slate-500" />
@@ -415,7 +430,7 @@ function PeriodPicker({ days, setDays }) {
     </div>`;
 }
 
-const sellerTags = (x) => [x.isAdmin && 'admin', x.source === 'discord_role' ? 'via Discord role' : x.onList && 'added by hand',
+const sellerTags = (x) => [x.source === 'discord_role' ? 'via Discord role' : x.onList && 'added by hand',
     !x.onList ? 'no longer on the list' : !x.active && 'switched off'].filter(Boolean);
 
 function SellerStats({ userId, onOpenOrder }) {
@@ -463,7 +478,8 @@ function SellerStats({ userId, onOpenOrder }) {
                         <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${i + 1}</span>
                         <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
                         <div className="flex-1 min-w-0">
-                            <p className="font-bold text-white truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</p>
+                            <p className="font-bold text-white truncate flex items-center gap-2"><span className="truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</span>
+                                ${x.onList && html`<${RankBadge} rank=${rankOf(x)} admin=${x.isAdmin} />`}</p>
                             <p className="text-[11px] text-slate-500 truncate">${[...sellerTags(x),
                                 x.inProgress ? `${x.inProgress} in progress` : null,
                                 x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
@@ -476,7 +492,7 @@ function SellerStats({ userId, onOpenOrder }) {
                     </div>
                     <div className="flex items-center gap-3 mt-2.5 pl-9">
                         <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Orders taken, compared with the most active seller">
-                            <div className="h-full rounded-full bg-sky-400" style=${{ width: Math.round(x.ordersTaken / max * 100) + '%' }}></div>
+                            <div className="h-full rounded-full" style=${{ width: Math.round(x.ordersTaken / max * 100) + '%', backgroundColor: window.ECHO_RANK_COLORS?.[rankOf(x)]?.bar || '#F472B6' }}></div>
                         </div>
                         <span className="text-[10px] text-slate-600 tabular-nums shrink-0" title="Approximate value of the aircraft they delivered">≈ ${fmtUSDShort(x.saleValue)}</span>
                     </div>
@@ -504,7 +520,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
     const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
 
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${x.name + (x.id === userId ? ' (you)' : '')}
-        subtitle=${sellerTags(x).join(' · ') || 'seller'}>
+        subtitle=${[x.onList ? RANK_LABEL[rankOf(x)] + (x.isAdmin && rankOf(x) !== 'lead' ? ' · admin' : '') : null, ...sellerTags(x)].filter(Boolean).join(' · ')}>
         <div className="space-y-5">
             <div className="flex items-center gap-4">
                 <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-14 h-14" />
@@ -591,7 +607,8 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs }) {
                 <${Avatar} account=${account} size="w-10 h-10" />
                 <div className="min-w-0">
                     <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || 'Signed in'}</p>
-                    <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}${seller?.is_admin ? ' · admin' : ''}</p>
+                    <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</p>
+                    <div className="mt-1.5"><${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} /></div>
                 </div>
             </div>
             ${airlines.length > 0 && html`<label className="sm:hidden block px-3 py-2">

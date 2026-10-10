@@ -6,7 +6,7 @@
 // Full view: set HEALTH_TOKEN in this Vercel project to any long random text, then open
 // /api/health?token=<that text>. The full view is never cached.
 import { timingSafeEqual } from 'crypto';
-import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, WEBHOOKS, DM_AVAILABLE, PUSH_AVAILABLE, discordBot } from '../lib/server.js';
+import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, WEBHOOKS, DM_AVAILABLE, PUSH_AVAILABLE, discordBot, ROLE_IDS } from '../lib/server.js';
 
 const has = (n) => Boolean(process.env[n]);
 
@@ -116,18 +116,32 @@ export default async function handler(req, res) {
                 add('Discord DMs', 'DISCORD_GUILD_ID (seller role server)', pinnedOk,
                     pinned.length ? (pinnedOk ? 'set, bot is in it' : 'set, but the bot is not in that server') : 'not set (optional, recommended)',
                     'Discord → right-click the Echo Alliances server icon → Copy Server ID (Developer Mode on). Add it as DISCORD_GUILD_ID in the SELLER Vercel project, then redeploy.');
-                // Seller role → automatic seller desk access (see seller/api/enroll.js)
-                const roleId = process.env.DISCORD_ROLE_ID;
-                if (roleId && list.length) {
-                    let found = null;
-                    for (const g of pinned.length ? list.filter((x) => pinned.includes(x.id)) : list) {
-                        const roles = await discordBot(`/guilds/${g.id}/roles`);
-                        const role = roles.ok && (roles.json || []).find((r) => r.id === roleId);
-                        if (role) { found = `@${role.name} in ${g.name}`; break; }
+                // Discord roles: the one new orders ping, and the three that give seller desk access.
+                const roleNames = new Map();   // role id → "@name in server"
+                for (const g of pinned.length ? list.filter((x) => pinned.includes(x.id)) : list) {
+                    const roles = await discordBot(`/guilds/${g.id}/roles`);
+                    for (const r of (roles.ok && roles.json) || []) roleNames.set(r.id, `@${r.name} in ${g.name}`);
+                }
+                const pingRole = process.env.DISCORD_ROLE_ID;
+                if (pingRole) {
+                    add('Discord roles', 'DISCORD_ROLE_ID (pinged for new orders)', roleNames.has(pingRole), roleNames.get(pingRole) || 'role not found in the server',
+                        'Set DISCORD_ROLE_ID to the Verified Seller role ID (Server Settings → Roles → right-click → Copy Role ID) in BOTH Vercel projects.', { private: roleNames.has(pingRole) });
+                }
+                if (APP === 'seller') {
+                    const explicit = has('DISCORD_LEAD_ROLE_ID') || has('DISCORD_AMBASSADOR_ROLE_ID') || has('DISCORD_VERIFIED_SELLER_ROLE_ID');
+                    for (const [rank, key, label] of [['lead', 'DISCORD_LEAD_ROLE_ID', 'Lead Ambassador'],
+                        ['ambassador', 'DISCORD_AMBASSADOR_ROLE_ID', 'Ambassador'], ['verified', 'DISCORD_VERIFIED_SELLER_ROLE_ID', 'Verified Seller']]) {
+                        const id = ROLE_IDS[rank];
+                        if (!has(key)) {
+                            add('Discord roles', `${key} (${label} → seller desk)`, false,
+                                explicit ? 'not set (optional)' : rank === 'verified' && id ? 'not set (optional, recommended): DISCORD_ROLE_ID is used instead' : 'not set (optional, recommended)',
+                                `Discord → Server Settings → Roles → right-click "${label}" → Copy Role ID. Add it as ${key} in the SELLER Vercel project, then redeploy.`);
+                            continue;
+                        }
+                        add('Discord roles', `${key} (${label} → seller desk)`, roleNames.has(id),
+                            roleNames.get(id) ? `${roleNames.get(id)}: gets the seller desk${rank === 'lead' ? ' as admin' : ''}` : 'role not found in the server',
+                            `Check ${key}: it must be the ID of the ${label} role in the Echo Alliances server.`, { private: roleNames.has(id) });
                     }
-                    add('Discord DMs', 'seller role → seller desk', Boolean(found),
-                        found ? `${found}: members get the seller desk automatically` : 'the bot is not in the server that has this role',
-                        'Invite the bot to the server that has the seller role, and check DISCORD_ROLE_ID (and DISCORD_GUILD_ID).', { private: Boolean(found) });
                 }
             }
         } catch (err) {

@@ -185,6 +185,16 @@ alter table public.sellers add column if not exists source text not null default
 -- When a 'discord_role' seller's role was last confirmed with Discord. Their access only counts while
 -- this is recent (1 hour for reading orders, 10 minutes for seller actions; see is_seller() and the API).
 alter table public.sellers add column if not exists role_checked_at timestamptz;
+-- Rank in the Echo hierarchy: 'lead' = Lead Ambassador (also an admin), 'ambassador' = Ambassador,
+-- 'verified' = Verified Seller. Role-based sellers get it from their Discord roles on every role check;
+-- for sellers added by hand, set it yourself (SETUP.md 8.2). is_admin = true makes anyone an admin.
+alter table public.sellers add column if not exists rank text not null default 'verified';
+do $$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'sellers_rank_check') then
+        alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified'));
+    end if;
+end $$;
 
 create or replace function public.is_seller()
 returns boolean language sql stable security definer set search_path = public as $$

@@ -113,9 +113,15 @@ export async function rateLimit(key, max, seconds, message = 'Too many tries. Wa
     if (data === false) throw new HttpError(429, message);
 }
 
+// Seller ranks (Echo hierarchy): 'lead' = Lead Ambassador, 'ambassador' = Ambassador,
+// 'verified' = Verified Seller. Lead Ambassadors are admins. Others can be made admin by hand
+// (sellers.is_admin, see SETUP.md 8.2), whatever their rank.
+export const RANKS = ['lead', 'ambassador', 'verified'];
+export const isAdminSeller = (row) => Boolean(row && (row.is_admin || row.rank === 'lead'));
+
 export async function getSeller(accountId) {
     const { data } = await admin().from('sellers').select('*').eq('user_id', accountId).maybeSingle();
-    return data && data.active ? data : null;
+    return data && data.active ? { ...data, is_admin_manual: data.is_admin, is_admin: isAdminSeller(data) } : null;
 }
 
 // For seller ACTIONS: like getSeller(), but people who are sellers because of their Discord role must
@@ -128,21 +134,24 @@ export async function requireActiveSeller(account) {
     if (seller.source !== 'discord_role') return seller;
     const age = seller.role_checked_at ? Date.now() - new Date(seller.role_checked_at).getTime() : Infinity;
     if (age < ROLE_RECHECK_MINUTES * 60e3) return seller;
-    const has = account.discord_id ? await hasSellerRole(account.discord_id) : false;
-    if (has === false) {
+    const rank = account.discord_id ? await sellerRankFromDiscord(account.discord_id) : false;
+    if (rank === false) {
         await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
-        throw new HttpError(403, 'You no longer have the seller role on Discord, so your seller access was switched off.');
+        throw new HttpError(403, 'You no longer have a seller role on Discord (Verified Seller, Ambassador or Lead Ambassador), so your seller access was switched off.');
     }
-    if (has === null) {
+    if (rank === null) {
         if (age < 60 * 60e3) return seller;
         throw new HttpError(503, "Couldn't confirm your seller role with Discord right now. Try again in a minute.");
     }
-    await markRoleChecked(account.id);
-    return seller;
+    await markRoleChecked(account.id, rank);
+    const row = { ...seller, rank };
+    return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }) };
 }
-export async function markRoleChecked(accountId) {
-    const { error } = await admin().from('sellers').update({ role_checked_at: new Date().toISOString() }).eq('user_id', accountId);
-    if (error) console.warn('role_checked_at not saved (re-run schema.sql?):', error.message);
+// Records a successful role check, and the rank the Discord roles give (role-based sellers only).
+export async function markRoleChecked(accountId, rank) {
+    const patch = { role_checked_at: new Date().toISOString(), ...(RANKS.includes(rank) ? { rank } : {}) };
+    const { error } = await admin().from('sellers').update(patch).eq('user_id', accountId);
+    if (error) console.warn('role check not saved (re-run schema.sql?):', error.message);
 }
 
 export function accountName(account) {
@@ -428,14 +437,25 @@ export async function dmBuyer(order, kind, extra = '') {
 }
 
 // =====================================================================
-//  Seller role → seller desk access. Anyone with the seller role (DISCORD_ROLE_ID, the same role new
-//  orders ping) in a Discord server the bot is in can use the seller desk. DISCORD_GUILD_ID can pin
-//  it to one server; otherwise every server the bot is in is checked.
+//  Discord roles → seller desk access and rank. Anyone with one of these roles in the Discord server
+//  (DISCORD_GUILD_ID; otherwise every server the bot is in) can use the seller desk:
+//    DISCORD_LEAD_ROLE_ID             Lead Ambassador   → rank 'lead' (also an admin)
+//    DISCORD_AMBASSADOR_ROLE_ID       Ambassador        → rank 'ambassador'
+//    DISCORD_VERIFIED_SELLER_ROLE_ID  Verified Seller   → rank 'verified'
+//  The highest one wins. If none of the three is set, DISCORD_ROLE_ID (the role new orders ping)
+//  counts as the Verified Seller role, which is how it worked before the hierarchy.
 // =====================================================================
-export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && SELLER_ROLE_ID);
+export const ROLE_IDS = {
+    lead: env('DISCORD_LEAD_ROLE_ID'),
+    ambassador: env('DISCORD_AMBASSADOR_ROLE_ID'),
+    verified: env('DISCORD_VERIFIED_SELLER_ROLE_ID')
+};
+if (!ROLE_IDS.lead && !ROLE_IDS.ambassador && !ROLE_IDS.verified) ROLE_IDS.verified = SELLER_ROLE_ID;
+export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && (ROLE_IDS.lead || ROLE_IDS.ambassador || ROLE_IDS.verified));
 
-// true / false = has the role or not; null = couldn't tell (Discord down, bad token…). Never throws.
-export async function hasSellerRole(discordId) {
+// Highest seller rank someone's Discord roles give: 'lead' | 'ambassador' | 'verified',
+// false = none of the roles, null = couldn't tell (Discord down, bad token…). Never throws.
+export async function sellerRankFromDiscord(discordId) {
     if (!SELLER_ROLE_SYNC || !discordId) return null;
     try {
         let guildIds = env('DISCORD_GUILD_ID').split(',').map((s) => s.trim()).filter(Boolean);
@@ -445,20 +465,29 @@ export async function hasSellerRole(discordId) {
             guildIds = (guilds.json || []).map((g) => g.id);
         }
         let known = false;
+        let best = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
             if (m.ok) {
                 known = true;
-                if ((m.json.roles || []).includes(SELLER_ROLE_ID)) return true;
+                const roles = m.json.roles || [];
+                const rank = RANKS.find((r) => ROLE_IDS[r] && roles.includes(ROLE_IDS[r]));
+                if (rank && (!best || RANKS.indexOf(rank) < RANKS.indexOf(best))) best = rank;
             } else if (m.status === 404) {
                 known = true;   // not in this server
             }
         }
-        return known ? false : null;
+        return best || (known ? false : null);
     } catch (err) {
-        console.error('hasSellerRole failed:', err.message);
+        console.error('sellerRankFromDiscord failed:', err.message);
         return null;
     }
+}
+
+// true / false / null: has any seller role (see sellerRankFromDiscord).
+export async function hasSellerRole(discordId) {
+    const rank = await sellerRankFromDiscord(discordId);
+    return rank === null ? null : Boolean(rank);
 }
 
 // =====================================================================
