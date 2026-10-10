@@ -545,3 +545,35 @@ What this switches on:
 **11.4 💬 Check:** *"Check both health pages."* New lines: **DISCORD_GUILD_ID (Echo server: members only)**, **Market Admin**, **Market Banned**, **bot can give the Market Banned role**, **moderation log**, **CRON_SECRET**.
 
 > Admins added by hand (SQL, 8.2) keep admin rights without the Market Admin role, but only Market Admins get the black-and-white Admin look.
+
+---
+
+## Part 12 — Discord bot commands: /market, /airline, /order (≈15 min)
+
+What you get (details in docs/discord-bot-plan.md):
+- `/market ban | unban | warn | message | info`: Market Admins only. Same as the seller desk: saved, DMed, logged, Market Banned role.
+- `/airline create | list` and `/order` (with **Send order** / **Cancel**): any member who has signed in on the website once. Orders arrive on the seller desk exactly like web orders.
+
+Do these **in this order** (Discord checks the URL in step 2, so the website must be ready first):
+
+**12.1 🧑 Vercel → buyer project → Settings → Environment Variables**, add, then **redeploy the buyer project**:
+
+| Key | Value |
+|---|---|
+| `DISCORD_PUBLIC_KEY` | Developer Portal → your app → **General Information** → **Public Key** |
+| `DISCORD_MARKET_ADMIN_ROLE_ID` | Market Admin role ID (same as in the seller project) |
+| `DISCORD_LOG_CHANNEL_ID` | logging channel ID (same as in the seller project) |
+
+(`DISCORD_GUILD_ID` and `DISCORD_MARKET_BANNED_ROLE_ID` are already there from Part 11.)
+
+**12.2 🧑 Developer Portal → General Information → Interactions Endpoint URL:** `https://echomarket-buyer.vercel.app/api/discord/interactions` → **Save Changes**. Discord sends a test request; it saves only if the site answers correctly.
+
+**12.3 🧑 Let the bot add commands:** open the bot's invite link again with the commands scope, pick the Echo Alliances server, and authorise:
+`https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=0`
+The bot stays in the server and keeps its role; this only allows slash commands.
+
+**12.4 🧑 Seller desk → Moderation → Discord bot commands → Install commands.** It should then say *Installed: /market, /airline, /order*. (Use **Update commands** after future changes.)
+
+**12.5 🧑 Discord → Server Settings → Integrations → Echo Market:** `/market` is hidden from everyone by default. Under it, add the **Market Admin** role (and leave everyone else off). `/airline` and `/order` are open to everyone; restrict them to a role here if you like. Even if `/market` were shown to someone else, the bot still refuses anyone without the Market Admin role.
+
+**12.6 💬 Check:** *"Check both health pages."* The buyer page shows **DISCORD_PUBLIC_KEY (bot commands)** ✅. Then try `/market info @someone` and `/airline list` in the server.

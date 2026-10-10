@@ -13,6 +13,8 @@ export const MAX_QTY_PER_LINE = 500;
 const PRICELIST = JSON.parse(readFileSync(new URL('../aircraft_pricelist.json', import.meta.url), 'utf8'));
 // ICAO codes repeat across variants (A321neo/LR/XLR are all A21N), so the model name is the key.
 const BY_MODEL = new Map(PRICELIST.map((a) => [a.model, a]));
+// The aircraft list (model, code, price, …), e.g. for the Discord bot's model search.
+export const AIRCRAFT = PRICELIST;
 
 export function priceItems(rawItems) {
     if (!Array.isArray(rawItems) || rawItems.length === 0) throw new HttpError(400, 'Your order is empty.');

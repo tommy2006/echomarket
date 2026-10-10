@@ -451,6 +451,19 @@ create table if not exists public.order_messages (
 create index if not exists order_messages_order_idx on public.order_messages (order_id, created_at);
 create index if not exists order_messages_buyer_idx on public.order_messages (buyer_id, created_at desc);
 
+-- Orders prepared with the Discord bot's /order, waiting for the buyer to press "Send order" (15 minutes).
+-- Only the API uses this table.
+create table if not exists public.bot_pending_orders (
+    id         uuid primary key default gen_random_uuid(),
+    discord_id text not null,
+    account_id uuid not null references public.accounts(id) on delete cascade,
+    payload    jsonb not null,
+    created_at timestamptz not null default now(),
+    used_at    timestamptz
+);
+alter table public.bot_pending_orders enable row level security;   -- no policies: API only
+revoke all on public.bot_pending_orders from anon, authenticated;
+
 -- Seller-only moderation flags. Buyers can never read this table.
 create table if not exists public.order_flags (
     order_id   text primary key references public.orders(id) on delete cascade,

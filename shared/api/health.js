@@ -133,7 +133,7 @@ export default async function handler(req, res) {
                 }
                 // Moderation roles. Market Banned is read by both sites (it blocks the market).
                 const modRoles = [['marketBanned', 'DISCORD_MARKET_BANNED_ROLE_ID', 'Market Banned', 'blocks the buyer market', 'BOTH']];
-                if (APP === 'seller') modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', 'admin rights on the seller desk', 'SELLER']);
+                modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', APP === 'seller' ? 'admin rights on the seller desk' : 'may use the bot\'s /market commands', 'BOTH']);
                 for (const [key, env, label, effect, where] of modRoles) {
                     const id = ROLE_IDS[key];
                     add('Discord roles', `${env} (${label})`, Boolean(id) && roleNames.has(id),
@@ -156,12 +156,13 @@ export default async function handler(req, res) {
                         ok ? 'yes' : !canManage ? 'the bot has no "Manage Roles" permission' : 'the bot\'s role is below Market Banned',
                         'Server Settings → Roles: give the bot\'s role (Echo Market) the "Manage Roles" permission and drag it ABOVE Market Banned.');
                 }
-                if (APP === 'seller') {
-                    // Moderation log channel: bans, lifted bans and warnings are posted here by the bot.
+                {
+                    // Moderation log channel: bans, lifted bans and warnings are posted here by the bot
+                    // (from the seller desk, and from the bot's /market commands on the buyer site).
                     const logId = process.env.DISCORD_LOG_CHANNEL_ID;
                     if (!logId) {
                         add('Discord roles', 'DISCORD_LOG_CHANNEL_ID (moderation log)', false, 'not set (optional, recommended)',
-                            'Right-click the logging channel → Copy Channel ID. Add it as DISCORD_LOG_CHANNEL_ID in the SELLER Vercel project, then redeploy. The bot needs View Channel, Send Messages and Embed Links there.');
+                            'Right-click the logging channel → Copy Channel ID. Add it as DISCORD_LOG_CHANNEL_ID in BOTH Vercel projects, then redeploy. The bot needs View Channel, Send Messages and Embed Links there.');
                     } else {
                         const ch = await discordBot(`/channels/${logId}`);
                         add('Discord roles', 'DISCORD_LOG_CHANNEL_ID (moderation log)', ch.ok, ch.ok ? `#${ch.json.name}` : `the bot can't see that channel (HTTP ${ch.status})`,
@@ -188,6 +189,14 @@ export default async function handler(req, res) {
         } catch (err) {
             add('Discord DMs', 'bot reachable', false, err.message, 'Check DISCORD_BOT_TOKEN.', { private: true });
         }
+    }
+
+    // Discord slash commands (/market, /airline, /order) are answered by the buyer site.
+    if (APP === 'buyer') {
+        const key = (process.env.DISCORD_PUBLIC_KEY || '').trim();
+        add('Discord commands', 'DISCORD_PUBLIC_KEY (bot commands)', /^[0-9a-f]{64}$/i.test(key),
+            !key ? 'not set (optional)' : /^[0-9a-f]{64}$/i.test(key) ? 'set' : 'not a valid public key (64 characters, 0-9 and a-f)',
+            'Discord Developer Portal → your app → General Information → copy the Public Key. Add it as DISCORD_PUBLIC_KEY in the BUYER Vercel project, redeploy, then set the Interactions Endpoint URL to ' + (BUYER_URL || 'https://<buyer site>') + '/api/discord/interactions.');
     }
 
     // Daily clean-up of ended market bans (vercel.json "crons"), seller site only.

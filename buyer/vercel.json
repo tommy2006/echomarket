@@ -2,6 +2,9 @@
   "functions": {
     "api/orders.js": {
       "includeFiles": "aircraft_pricelist.json"
+    },
+    "api/discord/interactions.js": {
+      "includeFiles": "aircraft_pricelist.json"
     }
   },
   "redirects": [

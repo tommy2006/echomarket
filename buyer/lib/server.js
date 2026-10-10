@@ -373,7 +373,7 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
 //  bot must be in the same Discord server as the buyer.
 // =====================================================================
 const BOT_TOKEN = env('DISCORD_BOT_TOKEN');
-const DISCORD_API = process.env.DISCORD_API_BASE || 'https://discord.com/api/v10';
+export const DISCORD_API = process.env.DISCORD_API_BASE || 'https://discord.com/api/v10';
 export const DM_AVAILABLE = Boolean(BOT_TOKEN);
 
 export async function discordBot(path, method = 'GET', payload) {

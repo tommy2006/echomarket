@@ -1,0 +1,107 @@
+// Placing an order: every check and side effect in one place, used by the website (api/orders.js) and the
+// Discord bot (api/discord/interactions.js), so an order from either is identical.
+import { admin, accountName, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, HttpError } from './server.js';
+import { priceItems, orderListValue, DAILY_LIMIT_USD } from './pricing.js';
+
+// Every new order pings the seller role on Discord, so placing orders is rate limited per account.
+export const MAX_ORDERS_PER_10_MIN = 5;
+
+// The buyer's own airlines, in the order given. Throws when any isn't theirs.
+export async function ownAirlines(account, airlineIds) {
+    const wanted = [...new Set((airlineIds || []).filter((id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))].slice(0, 20);
+    if (!wanted.length) throw new HttpError(400, 'Choose at least one of your airlines for this order.');
+    const { data: owned, error } = await admin().from('airlines').select('*').in('id', wanted).eq('owner_id', account.id);
+    if (error) throw error;
+    if ((owned || []).length !== wanted.length) throw new HttpError(400, 'Choose your own airline profiles for this order.');
+    return wanted.map((id) => owned.find((a) => a.id === id));
+}
+
+// List-price value of this account's orders in the last 24 hours (cancelled and declined don't count).
+export async function usedLast24h(accountId) {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await admin().from('orders').select('items, total_usd')
+        .eq('buyer_id', accountId).gte('created_at', since).not('status', 'in', '(CANCELLED,DECLINED)');
+    if (error) throw error;
+    return (data || []).reduce((s, o) => s + orderListValue(o), 0);
+}
+
+const overLimit = (used, listTotalUSD) => {
+    const left = Math.max(0, DAILY_LIMIT_USD - used);
+    return new HttpError(400, `This order goes over the 24-hour limit, which counts aircraft at full list price. This order is $${listTotalUSD.toLocaleString('en-US')} at list price; you have $${left.toLocaleString('en-US')} of list-price quota left today.`);
+};
+
+// Checks without placing anything (the bot's summary before "Send order").
+export async function previewOrder(account, { airlineIds, items: rawItems }) {
+    if (!account.discord_id) throw new HttpError(403, 'Your market account is not linked to a Discord login.');
+    await requireMarketAccess(account);
+    const airlines = await ownAirlines(account, airlineIds);
+    const priced = priceItems(rawItems);
+    const used = await usedLast24h(account.id);
+    if (used + priced.listTotalUSD > DAILY_LIMIT_USD) throw overLimit(used, priced.listTotalUSD);
+    return { airlines, ...priced, used, limit: DAILY_LIMIT_USD };
+}
+
+// Places the order. Returns the saved order row.
+export async function placeOrder(account, { airlineIds, items: rawItems, buyerNote }) {
+    if (!account.discord_id) throw new HttpError(403, 'Your market account is not linked to a Discord login. Sign out and sign in with Discord again.');
+    // Echo server members only, and not market-banned.
+    await requireMarketAccess(account);
+    const db = admin();
+    const airlines = await ownAirlines(account, airlineIds);
+    const airline = airlines[0];
+    const { items, totalQty, totalUSD, listTotalUSD } = priceItems(rawItems);
+
+    // Cheap first check on the orders already placed (also covers a database without the rate-limit function).
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { count: recentCount, error: countErr } = await db.from('orders').select('id', { count: 'exact', head: true })
+        .eq('buyer_id', account.id).gte('created_at', tenMinAgo);
+    if (countErr) throw countErr;
+    if ((recentCount || 0) >= MAX_ORDERS_PER_10_MIN) {
+        throw new HttpError(429, `You can send at most ${MAX_ORDERS_PER_10_MIN} orders per 10 minutes. Put more aircraft in one order instead.`);
+    }
+
+    // Rolling 24h limit, counted across ALL of this account's airlines, at 100% LIST price:
+    // a 50% order uses up the same quota as the same aircraft at 90%.
+    const used = await usedLast24h(account.id);
+    if (used + listTotalUSD > DAILY_LIMIT_USD) throw overLimit(used, listTotalUSD);
+
+    // Atomic counter in the database, so orders sent at the same moment can't all slip under the cap.
+    // Counted here, after every other check, so refused orders don't use up the allowance.
+    await rateLimit('orders:' + account.id, MAX_ORDERS_PER_10_MIN, 600,
+        `You can send at most ${MAX_ORDERS_PER_10_MIN} orders per 10 minutes. Put more aircraft in one order instead.`);
+
+    const row = {
+        buyer_id: account.id,
+        buyer_discord_id: account.discord_id,
+        buyer_name: accountName(account),
+        airline_id: airline.id,
+        airline_name: airline.name,
+        alliance: airline.alliance,
+        airlines: airlines.map((a) => ({ id: a.id, name: a.name, alliance: a.alliance })),
+        items,
+        total_qty: totalQty,
+        total_usd: totalUSD,
+        buyer_note: cleanText(buyerNote, 1000) || null
+    };
+    let { data: order, error } = await db.from('orders').insert(row).select().single();
+    // Database not updated yet (no "airlines" column): save the main airline only.
+    if (error?.code === 'PGRST204' && airlines.length === 1) {
+        delete row.airlines;
+        ({ data: order, error } = await db.from('orders').insert(row).select().single());
+    }
+    if (error?.code === 'PGRST204') throw new HttpError(503, 'Ordering for several airlines needs a database update (re-run supabase/schema.sql). Pick one airline for now.');
+    if (error) throw error;
+
+    // Two orders sent at the same moment could both pass the check above. Re-check with this order
+    // included; if the total is now over the limit, take this one back.
+    const total = await usedLast24h(account.id);
+    if (total > DAILY_LIMIT_USD) {
+        await db.from('orders').delete().eq('id', order.id);
+        throw overLimit(total - listTotalUSD, listTotalUSD);
+    }
+
+    await addEvent(order, 'CREATED', account, { message: `Order sent for ${airlines.map((a) => a.name).join(', ')}.` });
+    await syncDiscord(order, `📦 New order ${orderRef(order)}`, { pingSellers: true });
+    await dmBuyer(order, 'CREATED');
+    return order;
+}

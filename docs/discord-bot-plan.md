@@ -1,7 +1,7 @@
 # Echo Market bot: banning and ordering from Discord (plan)
 
-Status: plan only, nothing built yet. It reuses what already works on the website: the Echo Market bot,
-market bans, warnings, the Market Banned role, the log channel, airline profiles and the order rules.
+Status: **built** (October 2026). Setup steps: SETUP.md Part 12. It reuses what already works on the website: the
+Echo Market bot, market bans, warnings, the Market Banned role, the log channel, airline profiles and the order rules.
 
 ---
 
@@ -110,29 +110,13 @@ signed in yet get a private reply with the link, then everything works from Disc
 
 ---
 
-## 4. What you would set up (≈15 minutes)
+## 4. Setup
 
-1. **Fix the log channel first:** give the bot View Channel, Send Messages and Embed Links there. The health
-   page currently says it can't see it.
-2. **Discord Developer Portal → your app → General Information:** copy the **Application ID** and **Public Key**.
-3. **Vercel, buyer project → Environment Variables:** add these, then redeploy.
-   - `DISCORD_APP_ID`
-   - `DISCORD_PUBLIC_KEY`
-   - `DISCORD_MARKET_ADMIN_ROLE_ID`
-   - `DISCORD_LOG_CHANNEL_ID`
-4. **Developer Portal → General Information → Interactions Endpoint URL:** set it to
-   `https://echomarket-buyer.vercel.app/api/discord/interactions` and save. Discord tests it on save.
-5. **Give the bot permission to add commands:** open the bot's invite link again with
-   `scope=bot%20applications.commands`. The bot stays in the server; this only adds the commands.
-6. **Register the commands:** I run a one-off script with you that adds them to the Echo Alliances server, so
-   they appear straight away.
-7. **Server Settings → Integrations → Echo Market:** allow `/market` for **Market Admin** only, and `/airline`
-   and `/order` for everyone (or a role you pick).
-8. **Check:** ask me to check the health page. It will show new lines for the commands.
+See SETUP.md Part 12 (the order matters: the website must have the public key before Discord can verify the URL).
 
 ---
 
-## 5. How it gets tested before going live
+## 5. How it was tested
 
 Same as everything so far, on a local copy with a fake Discord that sends properly signed commands:
 - unsigned or tampered commands are refused
@@ -146,9 +130,3 @@ Same as everything so far, on a local copy with a fake Discord that sends proper
 - non-members, banned users and people over the limits get a clear private refusal
 
 ---
-
-## 6. Effort
-
-About two working sessions:
-- **Session 1:** the signed endpoint plus the `/market` commands.
-- **Session 2:** `/airline` and `/order`.

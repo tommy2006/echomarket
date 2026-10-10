@@ -865,6 +865,33 @@ function MessageDialog({ target, onClose, onDone }) {
     <//>`;
 }
 
+// Installs / checks the bot's slash commands (/market, /airline, /order) in the Echo server.
+function DiscordCommandsCard() {
+    const [state, setState] = useState(null);   // null = checking, { commands } or { error }
+    const [busy, setBusy] = useState(false);
+    const run = async (action) => {
+        setBusy(true);
+        try {
+            const r = await api('/api/admin/discord-commands', { action });
+            setState({ commands: r.commands });
+            if (action === 'install') toast('Discord commands installed.', 'success');
+        } catch (err) {
+            setState({ error: err.message });
+            if (action === 'install') toast(err.message, 'error');
+        } finally { setBusy(false); }
+    };
+    useEffect(() => { run('status'); }, []);
+    const text = !state ? 'Checking…' : state.error ? state.error
+        : state.commands.length ? `Installed: ${state.commands.join(', ')}` : 'Not installed yet: /market (Market Admins), /airline and /order.';
+    return html`<div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-1 min-w-0">
+            <p className="font-bold text-white text-sm flex items-center gap-2"><${DiscordLogo} className="w-4 h-4" /> Discord bot commands</p>
+            <p className="text-xs text-slate-400 mt-0.5">${text}</p>
+        </div>
+        <${Button} size="sm" variant="secondary" icon="refresh-cw" busy=${busy} onClick=${() => run('install')}>${state?.commands?.length ? 'Update commands' : 'Install commands'}<//>
+    </div>`;
+}
+
 // The Moderation tab: active bans, recent messages, and banning/messaging anyone by Discord ID
 // (also people who never used the market).
 function ModerationView({ userId }) {
@@ -900,6 +927,7 @@ function ModerationView({ userId }) {
             <h2 className="text-lg font-extrabold text-white">Moderation</h2>
             <p className="text-xs text-slate-500">Admins only. Market bans cover every airline of a Discord account. Everything here is DMed to the person and logged.</p>
         </div>
+        <${DiscordCommandsCard} />
         <div className="card p-4 space-y-2">
             <p className="field-label !mb-0">Ban or message anyone by Discord ID (also people who never used the market)</p>
             <div className="flex gap-2">

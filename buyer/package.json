@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
+    "@vercel/functions": "^3.9.11",
     "web-push": "^3.6.7"
   }
 }
