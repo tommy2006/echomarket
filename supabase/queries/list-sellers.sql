@@ -10,7 +10,7 @@ select
     a.display_name                                              as name,
     a.discord_username                                          as discord_username,
     a.discord_id                                                as discord_id,
-    case s.rank when 'lead' then 'Lead Ambassador' when 'ambassador' then 'Ambassador' else 'Verified Seller' end as rank,
+    case s.rank when 'lead' then 'Lead Ambassador' when 'ambassador' then 'Ambassador' when 'admin' then 'Admin (no seller role)' else 'Verified Seller' end as rank,
     (s.is_admin or s.rank = 'lead')                             as admin,
     s.is_admin                                                  as admin_by_hand,
     s.active                                                    as active,
@@ -23,4 +23,4 @@ select
     s.note                                                      as note
 from public.sellers s
 join public.accounts a on a.id = s.user_id
-order by s.active desc, case s.rank when 'lead' then 0 when 'ambassador' then 1 else 2 end, s.is_admin desc, a.display_name;
+order by s.active desc, case s.rank when 'lead' then 0 when 'admin' then 1 when 'ambassador' then 2 else 3 end, s.is_admin desc, a.display_name;

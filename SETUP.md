@@ -394,6 +394,7 @@ Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app
 | **Lead Ambassador** | `lead` | Everything, **as an admin**: decline for everyone, delete orders, manage any order, **Sellers** tab (performance) | bright pink |
 | **Ambassador** | `ambassador` | Take and deliver orders | softer pink |
 | **Verified Seller** | `verified` | Take and deliver orders | light pink-purple |
+| *(no seller role)* admin added by hand | `admin` | Everything an admin can do | black and white, soft white aurora |
 
 Anyone with one of these roles in the Echo Alliances server gets the seller desk the first time they sign in there, with the rank of their **highest** role (people keep their lower roles when promoted; that's fine). Promotions and demotions on Discord are picked up within about 10 minutes (or when they reopen the desk). Remove all three roles and they lose access. Verified Sellers apply through the separate application form; once accepted, giving them the role on Discord is all that's needed.
 

@@ -13,15 +13,22 @@ import {
 const LS_SELL_AS = 'echo_seller_airline_v2';
 
 // Echo hierarchy (sellers.rank). Lead Ambassadors are admins; anyone else can be made admin by hand.
-const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller' };
-const rankOf = (row) => (RANK_LABEL[row?.rank] ? row.rank : 'verified');
+const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Admin' };
+// 'admin' = admin added by hand without any Discord seller role (black-and-white look); only shown while
+// they really are an admin.
+const rankOf = (row) => {
+    const r = RANK_LABEL[row?.rank] ? row.rank : 'verified';
+    return r === 'admin' && !(row.is_admin || row.isAdmin) ? 'verified' : r;
+};
+// "· admin" after the title, unless the title already says so.
+const adminSuffix = (row) => ((row?.is_admin || row?.isAdmin) && !['lead', 'admin'].includes(rankOf(row)) ? ' · admin' : '');
 // Effective admin, the same rule as the server's isAdminSeller().
 const withAdmin = (row) => row && { ...row, is_admin: Boolean(row.is_admin || row.rank === 'lead') };
 function RankBadge({ rank, admin }) {
     const c = window.ECHO_RANK_COLORS?.[rank] || {};
     return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black whitespace-nowrap"
         style=${{ color: c.text, backgroundColor: (c.soft || '#888') + '26', border: `1px solid ${(c.soft || '#888')}55` }}>
-        ${RANK_LABEL[rank] || 'Seller'}${admin && rank !== 'lead' ? ' · admin' : ''}</span>`;
+        ${RANK_LABEL[rank] || 'Seller'}${admin && !['lead', 'admin'].includes(rank) ? ' · admin' : ''}</span>`;
 }
 const LS_PAGE_SIZE = 'echo_seller_page_size_v1';
 const PAGE_SIZES = [5, 10, 25, 50, 'all'];
@@ -298,7 +305,7 @@ function App() {
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <div className="leading-tight">
                     <p className="font-extrabold text-white">Seller desk</p>
-                    <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${seller.is_admin && rankOf(seller) !== 'lead' ? ' · admin' : ''}</p>
+                    <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${adminSuffix(seller)}</p>
                 </div>
                 <div className="flex-1"></div>
                 <${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />
@@ -522,7 +529,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
     const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
 
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${x.name + (x.id === userId ? ' (you)' : '')}
-        subtitle=${[x.onList ? RANK_LABEL[rankOf(x)] + (x.isAdmin && rankOf(x) !== 'lead' ? ' · admin' : '') : null, ...sellerTags(x)].filter(Boolean).join(' · ')}>
+        subtitle=${[x.onList ? RANK_LABEL[rankOf(x)] + adminSuffix(x) : null, ...sellerTags(x)].filter(Boolean).join(' · ')}>
         <div className="space-y-5">
             <div className="flex items-center gap-4">
                 <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-14 h-14" />

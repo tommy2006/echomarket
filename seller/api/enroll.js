@@ -4,7 +4,8 @@
 // with the matching rank; losing all of them switches it off again.
 // Rows added by hand (source 'manual', e.g. admins or blocked people) keep their access and admin
 // status; only their rank follows their highest Discord seller role, if they have one (it sets the
-// colour and title on the seller desk). Without any seller role they keep the rank set by hand.
+// colour and title on the seller desk). Without any seller role, admins get the plain 'admin' look and
+// everyone else keeps the rank set by hand.
 import { admin, handler, requireUser, sellerRankFromDiscord, markRoleChecked, rateLimit, SELLER_ROLE_SYNC } from '../lib/server.js';
 
 const RANK_NOTE = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller' };
@@ -21,12 +22,12 @@ export default handler(['POST'], async (req, res) => {
         let rank = row.rank;
         if (SELLER_ROLE_SYNC && account.discord_id) {
             const fromDiscord = await sellerRankFromDiscord(account.discord_id);
-            if (fromDiscord) {
-                rank = fromDiscord;
-                if (rank !== row.rank) {
-                    const { error: rankErr } = await db.from('sellers').update({ rank }).eq('user_id', account.id);
-                    if (rankErr) throw rankErr;
-                }
+            if (fromDiscord) rank = fromDiscord;
+            else if (fromDiscord === false && row.is_admin) rank = 'admin';
+            if (rank !== row.rank) {
+                const { error: rankErr } = await db.from('sellers').update({ rank }).eq('user_id', account.id);
+                // 23514: database not updated for the 'admin' look yet; the desk still gets it below.
+                if (rankErr && rankErr.code !== '23514') throw rankErr;
             }
         }
         return reply(row.active, rank !== row.rank, { source: row.source, rank });

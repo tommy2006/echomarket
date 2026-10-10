@@ -25,8 +25,14 @@ async function refreshRanks(db, sellers, accounts) {
         const rank = await sellerRankFromDiscord(discordIdOf.get(s.user_id));
         if (rank === null) continue;                       // Discord didn't answer: leave as is
         if (rank && !RANKS.includes(rank)) continue;
-        // Hand-added sellers: only the rank follows Discord, and only if they have a seller role.
-        if (s.source !== 'discord_role' && !rank) continue;
+        // Hand-added sellers: only the rank follows Discord. Without a seller role, admins get the plain
+        // 'admin' look and everyone else keeps the rank set by hand.
+        if (s.source !== 'discord_role' && !rank) {
+            if (!s.is_admin || s.rank === 'admin') continue;
+            const { error } = await db.from('sellers').update({ rank: 'admin' }).eq('user_id', s.user_id).eq('source', s.source);
+            if (!error) s.rank = 'admin';
+            continue;
+        }
         const patch = rank ? { rank, role_checked_at: new Date().toISOString() } : { active: false };
         const { error } = await db.from('sellers').update(patch).eq('user_id', s.user_id).eq('source', s.source);
         if (error) { console.warn('rank refresh failed:', error.message); continue; }
