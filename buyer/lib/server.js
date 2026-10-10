@@ -604,6 +604,23 @@ export async function setMarketBannedRole(discordId, on, reason) {
         return false;
     }
 }
+// Market settings (public.market_settings), cached for a minute per server instance.
+const settingsCache = new Map();
+export async function getSetting(key, fallback = null) {
+    const hit = settingsCache.get(key);
+    if (hit && Date.now() - hit.at < 60e3) return hit.value;
+    const { data, error } = await admin().from('market_settings').select('value').eq('key', key).maybeSingle();
+    if (error) { console.warn('setting not read (re-run schema.sql?):', error.message); return fallback; }
+    const value = data ? data.value : fallback;
+    settingsCache.set(key, { value, at: Date.now() });
+    return value;
+}
+export async function setSetting(key, value, by) {
+    const { error } = await admin().from('market_settings').upsert({ key, value, updated_at: new Date().toISOString(), updated_by: by || null });
+    if (error) throw error;
+    settingsCache.set(key, { value, at: Date.now() });
+}
+
 export const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
 export async function logModeration(embed) {
     if (!BOT_TOKEN || !LOG_CHANNEL_ID) return false;

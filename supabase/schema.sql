@@ -451,6 +451,22 @@ create table if not exists public.order_messages (
 create index if not exists order_messages_order_idx on public.order_messages (order_id, created_at);
 create index if not exists order_messages_buyer_idx on public.order_messages (buyer_id, created_at desc);
 
+-- Market-wide settings that admins change on the seller desk (no redeploy needed), e.g.
+--   order_channel_ids: Discord channels where buyers may use /order and /airline (empty = anywhere).
+-- Sellers can read them; only the API writes them.
+create table if not exists public.market_settings (
+    key        text primary key,
+    value      jsonb not null,
+    updated_at timestamptz not null default now(),
+    updated_by text
+);
+alter table public.market_settings enable row level security;
+drop policy if exists "settings: seller read" on public.market_settings;
+create policy "settings: seller read" on public.market_settings for select to authenticated using (public.is_seller());
+grant select on public.market_settings to authenticated;
+revoke insert, update, delete, truncate, references, trigger on public.market_settings from anon, authenticated;
+revoke all on public.market_settings from anon;
+
 -- Orders prepared with the Discord bot's /order, waiting for the buyer to press "Send order" (15 minutes).
 -- Only the API uses this table.
 create table if not exists public.bot_pending_orders (

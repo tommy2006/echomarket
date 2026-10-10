@@ -865,30 +865,46 @@ function MessageDialog({ target, onClose, onDone }) {
     <//>`;
 }
 
-// Installs / checks the bot's slash commands (/market, /airline, /order) in the Echo server.
+// The bot's slash commands (/market, /airline, /order): install / update them, and choose the channel(s)
+// where buyers may use /order and /airline. Saved on the server, so changing channel needs no redeploy.
 function DiscordCommandsCard() {
-    const [state, setState] = useState(null);   // null = checking, { commands } or { error }
-    const [busy, setBusy] = useState(false);
-    const run = async (action) => {
-        setBusy(true);
+    const [state, setState] = useState(null);   // null = checking, { commands, orderChannels } or { error }
+    const [busy, setBusy] = useState('');
+    const [channelText, setChannelText] = useState('');
+    const run = async (action, extra = {}) => {
+        setBusy(action);
         try {
-            const r = await api('/api/admin/discord-commands', { action });
-            setState({ commands: r.commands });
+            const r = await api('/api/admin/discord-commands', { action, ...extra });
+            setState({ commands: r.commands, orderChannels: r.orderChannels || [] });
+            setChannelText((r.orderChannels || []).map((c) => c.id).join(', '));
             if (action === 'install') toast('Discord commands installed.', 'success');
+            if (action === 'channel') toast(r.orderChannels?.length ? `Buyers can now order only in ${r.orderChannels.map((c) => '#' + c.name).join(', ')}.` : 'Buyers can now order in any channel.', 'success');
         } catch (err) {
-            setState({ error: err.message });
-            if (action === 'install') toast(err.message, 'error');
-        } finally { setBusy(false); }
+            if (action === 'status') setState({ error: err.message }); else toast(err.message, 'error');
+        } finally { setBusy(''); }
     };
     useEffect(() => { run('status'); }, []);
-    const text = !state ? 'Checking…' : state.error ? state.error
+    const cmdText = !state ? 'Checking…' : state.error ? state.error
         : state.commands.length ? `Installed: ${state.commands.join(', ')}` : 'Not installed yet: /market (Market Admins), /airline and /order.';
-    return html`<div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex-1 min-w-0">
-            <p className="font-bold text-white text-sm flex items-center gap-2"><${DiscordLogo} className="w-4 h-4" /> Discord bot commands</p>
-            <p className="text-xs text-slate-400 mt-0.5">${text}</p>
+    const channels = state?.orderChannels || [];
+    return html`<div className="card p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+                <p className="font-bold text-white text-sm flex items-center gap-2"><${DiscordLogo} className="w-4 h-4" /> Discord bot commands</p>
+                <p className="text-xs text-slate-400 mt-0.5">${cmdText}</p>
+            </div>
+            <${Button} size="sm" variant="secondary" icon="refresh-cw" busy=${busy === 'install'} onClick=${() => run('install')}>${state?.commands?.length ? 'Update commands' : 'Install commands'}<//>
         </div>
-        <${Button} size="sm" variant="secondary" icon="refresh-cw" busy=${busy} onClick=${() => run('install')}>${state?.commands?.length ? 'Update commands' : 'Install commands'}<//>
+        ${state && !state.error && html`<div className="pt-3 border-t border-slate-800 space-y-2">
+            <p className="text-sm text-slate-200"><b>Ordering channel:</b> ${channels.length
+                ? channels.map((c) => c.error ? html`<span key=${c.id} className="text-rose-300"> ${c.error}</span>` : html`<span key=${c.id} className="font-mono text-sky-300"> #${c.name}</span>`)
+                : html`<span className="text-amber-300"> any channel (not restricted)</span>`}</p>
+            <p className="text-[11px] text-slate-500">Buyers can use /order and /airline only here; elsewhere the bot tells them where to go. /market works in any channel for Market Admins. Right-click the channel → Copy Channel ID. Several: separate with commas. Empty = any channel.</p>
+            <div className="flex gap-2">
+                <input value=${channelText} onChange=${(e) => setChannelText(e.target.value)} placeholder="Channel ID, e.g. 1234567890123456789" className="input font-mono" />
+                <${Button} size="sm" icon="check" busy=${busy === 'channel'} onClick=${() => run('channel', { channelIds: channelText })}>Save<//>
+            </div>
+        </div>`}
     </div>`;
 }
 

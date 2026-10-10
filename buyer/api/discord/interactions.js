@@ -8,10 +8,12 @@
 //   /market ban|unban|warn|message|info   Market Admins only (DISCORD_MARKET_ADMIN_ROLE_ID), checked here too
 //   /airline create|list                   any member who has signed in on the website once
 //   /order                                 same, then "Send order" / "Cancel" buttons
+// /airline and /order only work in the ordering channel(s) chosen on the seller desk (market_settings
+// order_channel_ids; empty = any channel). /market works everywhere.
 import { createPublicKey, verify } from 'crypto';
 import { waitUntil } from '@vercel/functions';
 import {
-    admin, accountName, cleanText, requireMarketAccess, rateLimit, activeBan, banText, orderRef, ROLE_IDS, GUILD_IDS,
+    admin, accountName, cleanText, requireMarketAccess, rateLimit, activeBan, banText, orderRef, getSetting, ROLE_IDS, GUILD_IDS,
     DISCORD_API, BUYER_URL, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, issueBan, liftBan, sendMarketMessage, moderationSummary } from '../../lib/moderation.js';
@@ -265,6 +267,14 @@ async function autocomplete(i) {
     return { type: 8, data: { choices: choices.slice(0, 25) } };
 }
 
+// The ordering channel(s), or null when buyers may use the commands anywhere.
+async function wrongChannel(i) {
+    const ids = await getSetting('order_channel_ids', []);
+    if (!Array.isArray(ids) || !ids.length) return null;
+    return ids.includes(i.channel_id || i.channel?.id) ? null : ids;
+}
+const BUYER_COMMANDS = ['order', 'airline'];
+
 // ------------------------------------------------------------------ entry
 export default async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
@@ -279,6 +289,13 @@ export default async function handler(req, res) {
     try {
         if (!i.guild_id || (GUILD_IDS.length && !GUILD_IDS.includes(i.guild_id))) {
             return send(i.type === 4 ? { type: 8, data: { choices: [] } } : say('Use Echo Market commands in the Echo Alliances server.'));
+        }
+        if ((i.type === 2 || i.type === 4) && BUYER_COMMANDS.includes(i.data?.name)) {
+            const ids = await wrongChannel(i);
+            if (ids) {
+                if (i.type === 4) return send({ type: 8, data: { choices: [] } });
+                return send(say(`🛒 Echo Market ordering happens in ${ids.map((id) => `<#${id}>`).join(' or ')}. Use \`/${i.data.name}\` there.`));
+            }
         }
         if (i.type === 4) return send(await autocomplete(i));
         if (i.type === 3 && String(i.data?.custom_id || '').startsWith('order:')) return send(await orderButton(i));

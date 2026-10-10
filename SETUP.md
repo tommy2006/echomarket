@@ -577,3 +577,12 @@ The bot stays in the server and keeps its role; this only allows slash commands.
 **12.5 🧑 Discord → Server Settings → Integrations → Echo Market:** `/market` is hidden from everyone by default. Under it, add the **Market Admin** role (and leave everyone else off). `/airline` and `/order` are open to everyone; restrict them to a role here if you like. Even if `/market` were shown to someone else, the bot still refuses anyone without the Market Admin role.
 
 **12.6 💬 Check:** *"Check both health pages."* The buyer page shows **DISCORD_PUBLIC_KEY (bot commands)** ✅. Then try `/market info @someone` and `/airline list` in the server.
+
+**12.7 🧑 Ordering channel** (where buyers use `/order` and `/airline`; `/market` works everywhere):
+1. Right-click the channel → **Copy Channel ID**. Make sure the bot can see it (Edit Channel → Permissions → Echo Market: **View Channel**).
+2. Seller desk → **Moderation** → Discord bot commands → **Ordering channel** → paste the ID → **Save**. It takes effect within a minute; no redeploy. Used elsewhere, the bot privately tells buyers which channel to use. To move from the test channel to the official one later, just paste the new ID and Save (or several IDs, separated by commas, during a switch-over).
+3. For a private ordering channel (buyers never see each other): Edit Channel → Permissions → @everyone (or the member role):
+   - **View Channel** ✅ and **Use Application Commands** ✅, so they can open it and run the commands;
+   - **Send Messages** ❌, so nobody can chat there;
+   - **Read Message History** ❌ (optional, extra tidy).
+   The bot's replies are private ("Only you can see this"), so every buyer sees only their own orders; nothing is posted in the channel itself.
