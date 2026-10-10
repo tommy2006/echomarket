@@ -107,9 +107,10 @@ function App() {
         ]);
         setAccount(acc.data || null);
         let me = sel.data?.active ? sel.data : null;
-        // People with the seller role on Discord get in automatically (see api/enroll.js).
-        // Not a seller yet: wait for the check. Already in through the role: re-check in the background.
-        if (!sel.data || sel.data.source === 'discord_role') {
+        // People with a seller role on Discord get in automatically (see api/enroll.js), and everyone's rank
+        // (colour and title) follows the highest seller role on their Discord profile, also for people added
+        // by hand. Not a seller yet (or switched off after losing the role): wait for the check.
+        if (!sel.data || sel.data.active || sel.data.source === 'discord_role') {
             if (!me) {
                 const r = await api('/api/enroll').catch(() => null);
                 if (r?.changed && r.seller) {
@@ -119,9 +120,10 @@ function App() {
                 }
             } else {
                 // Role sellers can only read orders while their role was confirmed in the last hour, so refresh
-                // the check first when it's older than 30 minutes (or once per visit).
+                // the check first when it's older than 30 minutes (or once per visit). This also brings the
+                // rank (colour and title) up to date with the highest seller role on Discord.
                 const age = me.role_checked_at ? Date.now() - new Date(me.role_checked_at).getTime() : Infinity;
-                if (!roleChecked.current || age > 30 * 60e3) {
+                if (!roleChecked.current || (me.source === 'discord_role' && age > 30 * 60e3)) {
                     roleChecked.current = true;
                     const r = await api('/api/enroll').catch(() => null);
                     if (r && !r.seller) me = null;

@@ -395,7 +395,7 @@ Send sellers the seller desk address separately: `https://SELLER-SITE.vercel.app
 | **Ambassador** | `ambassador` | Take and deliver orders | softer pink |
 | **Verified Seller** | `verified` | Take and deliver orders | light pink-purple |
 
-Anyone with one of these roles in the Echo Alliances server gets the seller desk the first time they sign in there, with the rank of their highest role. Promotions and demotions on Discord are picked up within about 10 minutes (or when they reopen the desk). Remove all three roles and they lose access. Verified Sellers apply through the separate application form; once accepted, giving them the role on Discord is all that's needed.
+Anyone with one of these roles in the Echo Alliances server gets the seller desk the first time they sign in there, with the rank of their **highest** role (people keep their lower roles when promoted; that's fine). Promotions and demotions on Discord are picked up within about 10 minutes (or when they reopen the desk). Remove all three roles and they lose access. Verified Sellers apply through the separate application form; once accepted, giving them the role on Discord is all that's needed.
 
 **Vercel settings** (Settings → Environment Variables; get each ID with Server Settings → Roles → right-click the role → **Copy Role ID**, Developer Mode on):
 
@@ -411,7 +411,7 @@ Redeploy both projects afterwards. `/api/health` on the seller site lists each r
 - If none of the three role IDs is set, `DISCORD_ROLE_ID` counts as the Verified Seller role (the old setup).
 - Got the role a minute ago? On the "not on the seller list" screen, click **Check again**.
 
-By hand, for people without a role, or for admins: 💬 *"Add Discord ID 123… as a seller."* People added by hand are never changed by the role check; set their rank yourself (below).
+By hand, for people without a role, or for admins: 💬 *"Add Discord ID 123… as a seller."* People added by hand keep their access and admin status whatever their Discord roles are. Their **rank** (title and colour) still follows the highest seller role on their Discord profile, if they have one; without any seller role it stays what you set (below).
 
 **Making someone an admin by hand** (anyone besides the Lead Ambassador, who is an admin through the role). Admins can decline an order for everyone, delete orders, manage any seller's order, and see the **Sellers** tab. In Supabase → **SQL Editor**, replace the Discord ID, pick the rank they should show as (`'lead'`, `'ambassador'` or `'verified'`), and run:
 

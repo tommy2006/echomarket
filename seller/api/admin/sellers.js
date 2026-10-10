@@ -19,14 +19,16 @@ const REFRESH_MINUTES = 10;
 const MAX_REFRESH = 60;   // Discord lookups per load, to stay well inside Discord's rate limits
 async function refreshRanks(db, sellers, accounts) {
     const discordIdOf = new Map(accounts.map((a) => [a.id, a.discord_id]));
-    const stale = sellers.filter((s) => s.source === 'discord_role' && s.active && discordIdOf.get(s.user_id) &&
+    const stale = sellers.filter((s) => s.active && discordIdOf.get(s.user_id) &&
         (!s.role_checked_at || Date.now() - new Date(s.role_checked_at).getTime() > REFRESH_MINUTES * 60e3)).slice(0, MAX_REFRESH);
     for (const s of stale) {
         const rank = await sellerRankFromDiscord(discordIdOf.get(s.user_id));
         if (rank === null) continue;                       // Discord didn't answer: leave as is
-        const patch = rank ? { rank, role_checked_at: new Date().toISOString() } : { active: false };
         if (rank && !RANKS.includes(rank)) continue;
-        const { error } = await db.from('sellers').update(patch).eq('user_id', s.user_id).eq('source', 'discord_role');
+        // Hand-added sellers: only the rank follows Discord, and only if they have a seller role.
+        if (s.source !== 'discord_role' && !rank) continue;
+        const patch = rank ? { rank, role_checked_at: new Date().toISOString() } : { active: false };
+        const { error } = await db.from('sellers').update(patch).eq('user_id', s.user_id).eq('source', s.source);
         if (error) { console.warn('rank refresh failed:', error.message); continue; }
         Object.assign(s, patch);
     }
