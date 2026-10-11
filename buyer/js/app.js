@@ -3,7 +3,7 @@
 // Security); anything that needs validation or Discord (placing / cancelling an
 // order) goes through our Vercel API in /api.
 import {
-    html, useState, useEffect, useMemo, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
+    html, useState, useEffect, useMemo, useRef, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
@@ -12,7 +12,7 @@ import {
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
-const PRICE_LEVELS = [90, 80, 70, 60, 50];
+const PRICE_LEVELS = [50, 60, 70, 80, 90];   // shown left to right, lowest first
 const MAX_AIRLINES = 20;
 const MAX_QTY = 500;
 const DAILY_LIMIT_USD = 10_000_000_000;
@@ -429,6 +429,16 @@ function FullPageSpinner() {
 
 function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour }) {
     const [menu, setMenu] = useState(false);
+    const menuRef = useRef(null);
+    // The account menu closes when you click or tap anywhere outside it, or press Escape.
+    useEffect(() => {
+        if (!menu) return;
+        const outside = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(false); };
+        const esc = (e) => { if (e.key === 'Escape') setMenu(false); };
+        document.addEventListener('pointerdown', outside);
+        document.addEventListener('keydown', esc);
+        return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', esc); };
+    }, [menu]);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
             <a href="/" onClick=${navTo('home')} className="flex items-center gap-2.5 shrink-0">
@@ -452,8 +462,8 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                     <${Icon} name="bell" className="w-5 h-5" />
                     ${unread > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">${unread}</span>`}
                 </button>
-                <div className="relative">
-                    <button onClick=${() => setMenu(!menu)} aria-label="Account menu" className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
+                <div className="relative" ref=${menuRef}>
+                    <button onClick=${() => setMenu(!menu)} aria-label="Account menu" aria-expanded=${menu} className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
                         <${Avatar} account=${account} />
                         <${Icon} name="chevron-down" className="w-4 h-4 text-slate-500" />
                     </button>
@@ -675,6 +685,23 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
 // =========================================================================
 //  Shop
 // =========================================================================
+// Small manufacturer marks: a monogram on a transparent background, drawn in the text colour.
+const MAKERS = {
+    AIRBUS: { mark: 'A', name: 'Airbus' }, BOEING: { mark: 'B', name: 'Boeing' }, BOMBARDIER: { mark: 'BD', name: 'Bombardier' },
+    EMBRAER: { mark: 'E', name: 'Embraer' }, ATR: { mark: 'ATR', name: 'ATR' }, 'DE HAVILLAND': { mark: 'DHC', name: 'De Havilland' },
+    COMAC: { mark: 'C', name: 'COMAC' }
+};
+const makerName = (c) => MAKERS[c]?.name || c;
+function MakerMark({ maker, size = 20 }) {
+    const mark = MAKERS[maker]?.mark || String(maker || '?').slice(0, 1);
+    const w = mark.length >= 3 ? 30 : 20;   // longer marks get a wider badge instead of smaller letters
+    return html`<svg viewBox=${`0 0 ${w} 20`} width=${size * w / 20} height=${size} className="shrink-0" aria-hidden="true">
+        <rect x="1" y="1" width=${w - 2} height="18" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.2" />
+        <text x=${w / 2} y="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fontSize=${mark.length === 2 ? 9 : 10.5}
+            fontWeight="800" fontFamily="'Plus Jakarta Sans', sans-serif">${mark}</text>
+    </svg>`;
+}
+
 function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('ALL');
@@ -696,6 +723,35 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
         };
         return [...filtered].sort(sorters[sort]);
     }, [pricelist, query, category, sort]);
+    // "By family": one section per aircraft family (A320 and A320neo, 737 and 737 MAX are separate families).
+    const groups = useMemo(() => {
+        if (sort !== 'family') return null;
+        const byFamily = new Map();
+        list.forEach((a) => { if (!byFamily.has(a.family)) byFamily.set(a.family, []); byFamily.get(a.family).push(a); });
+        return [...byFamily].map(([family, models]) => ({ family, maker: models[0].category, models }));
+    }, [list, sort]);
+
+    const card = (a) => html`<article key=${a.model} className="card p-4 flex flex-col">
+        <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+                <p className="label text-slate-500 flex items-center gap-1.5"><${MakerMark} maker=${a.category} size=${14} />${makerName(a.category)} · ${a.code}</p>
+                <h3 className="font-extrabold text-white mt-1 leading-tight">${a.model}</h3>
+            </div>
+            ${inCart[a.model] && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${inCart[a.model]} in order</span>`}
+        </div>
+        <div className="flex gap-4 mt-3 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />${a.seats} seats</span>
+            <span className="flex items-center gap-1.5"><${Icon} name="route" className="w-3.5 h-3.5" />${a.range.toLocaleString()} km</span>
+        </div>
+        <div className="flex items-end justify-between mt-4 pt-3 border-t border-slate-800">
+            <div>
+                <p className="text-lg font-black text-white">${fmtUSDShort(a.price * priceLevel / 100)}</p>
+                <p className="text-[11px] text-slate-500">list ${fmtUSDShort(a.price)} · ${priceLevel}%</p>
+            </div>
+            <${Button} size="sm" icon="plus" onClick=${() => onPick(a.model)}>Add<//>
+        </div>
+    </article>`;
+    const grid = (models) => html`<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">${models.map(card)}</div>`;
 
     return html`<section className="space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-end gap-4 justify-between">
@@ -718,7 +774,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
                 <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search model, family or ICAO code…" className="input pl-10" />
             </label>
             <select value=${sort} onChange=${(e) => setSort(e.target.value)} className="input md:!w-52">
-                <option value="family">Sort: manufacturer</option>
+                <option value="family">Group: by family</option>
                 <option value="price-asc">Price: low to high</option>
                 <option value="price-desc">Price: high to low</option>
                 <option value="seats">Most seats</option>
@@ -728,33 +784,21 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
             ${categories.map((c) => html`<button key=${c} onClick=${() => setCategory(c)}
                 className=${`shrink-0 px-3.5 py-1.5 rounded-full border text-xs font-bold ${category === c ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
-                ${c === 'ALL' ? 'All makers' : c}</button>`)}
+                <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? 'All makers' : makerName(c)}</span></button>`)}
         </div>
 
         ${!pricelist.length ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
         : !list.length ? html`<${EmptyState} icon="search-x" title="No aircraft match" text="Try a different search or maker." />`
-        : html`<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            ${list.map((a) => html`<article key=${a.model} className="card p-4 flex flex-col">
-                <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                        <p className="label text-slate-500">${a.category} · ${a.code}</p>
-                        <h3 className="font-extrabold text-white mt-1 leading-tight">${a.model}</h3>
-                    </div>
-                    ${inCart[a.model] && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${inCart[a.model]} in order</span>`}
-                </div>
-                <div className="flex gap-4 mt-3 text-xs text-slate-400">
-                    <span className="flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />${a.seats} seats</span>
-                    <span className="flex items-center gap-1.5"><${Icon} name="route" className="w-3.5 h-3.5" />${a.range.toLocaleString()} km</span>
-                </div>
-                <div className="flex items-end justify-between mt-4 pt-3 border-t border-slate-800">
-                    <div>
-                        <p className="text-lg font-black text-white">${fmtUSDShort(a.price * priceLevel / 100)}</p>
-                        <p className="text-[11px] text-slate-500">list ${fmtUSDShort(a.price)} · ${priceLevel}%</p>
-                    </div>
-                    <${Button} size="sm" icon="plus" onClick=${() => onPick(a.model)}>Add<//>
-                </div>
-            </article>`)}
-        </div>`}
+        : groups ? html`<div className="space-y-6">
+            ${groups.map((g) => html`<section key=${g.family} className="space-y-2.5">
+                <h3 className="flex items-center gap-2 text-sm font-extrabold text-white">
+                    <span className="text-slate-300"><${MakerMark} maker=${g.maker} /></span>${g.family}
+                    <span className="text-xs font-semibold text-slate-500">· ${plural(g.models.length, 'model')}</span>
+                </h3>
+                ${grid(g.models)}
+            </section>`)}
+        </div>`
+        : grid(list)}
     </section>`;
 }
 
@@ -1019,7 +1063,7 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
             <${StatusBadge} status=${displayStatus(order)} />
         </div>
 
-        ${!closed && html`<${OrderStepper} order=${order} />`}
+        ${(!closed || order.status === 'FULFILLED') && html`<${OrderStepper} order=${order} />`}
 
         ${handoff && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
             <${Icon} name="repeat" className="w-4 h-4 text-amber-300" />

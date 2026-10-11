@@ -180,14 +180,18 @@ export function OrderStepper({ order }) {
     const steps = ['Sent', 'Seller assigned', 'Delivering', 'Delivered'];
     const reached = { PENDING: order.filled > 0 ? 2 : 0, CLAIMED: 1, PARTIAL: 2, FULFILLED: 3 }[order.status];
     if (reached === undefined) return null;
+    // Accent colour while in progress, green once everything is delivered.
+    const done = order.status === 'FULFILLED';
+    const on = done ? 'bg-emerald-400 border-emerald-400 text-slate-950' : 'bg-sky-400 border-sky-400 text-slate-950';
+    const line = done ? 'bg-emerald-400' : 'bg-sky-400';
     return html`<ol className="flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold">
         ${steps.map((s, i) => html`
             <li key=${s} className="flex items-center gap-1 flex-1 min-w-0">
-                <span className=${`w-5 h-5 shrink-0 rounded-full flex items-center justify-center border ${i <= reached ? 'bg-sky-400 border-sky-400 text-slate-950' : 'border-slate-700 text-slate-500'}`}>
+                <span className=${`w-5 h-5 shrink-0 rounded-full flex items-center justify-center border ${i <= reached ? on : 'border-slate-700 text-slate-500'}`}>
                     ${i < reached || order.status === 'FULFILLED' ? html`<${Icon} name="check" className="w-3 h-3" />` : i + 1}
                 </span>
                 <span className=${`truncate ${i <= reached ? 'text-slate-200' : 'text-slate-500'}`}>${s}</span>
-                ${i < steps.length - 1 && html`<span className=${`h-px flex-1 min-w-2 ${i < reached ? 'bg-sky-400' : 'bg-slate-700'}`}></span>`}
+                ${i < steps.length - 1 && html`<span className=${`h-px flex-1 min-w-2 ${i < reached ? line : 'bg-slate-700'}`}></span>`}
             </li>`)}
     </ol>`;
 }
@@ -211,9 +215,10 @@ export function ItemProgress({ order, compact = false }) {
 // instead of progress towards a goal (accent, green when done).
 export function ProgressBar({ value, max, usage = false }) {
     const pct = max ? Math.round((value / max) * 100) : 0;
+    const full = max > 0 && value >= max;   // exact, so 199 of 200 (rounds to 100%) still shows as in progress
     const fill = usage
-        ? (pct >= 100 ? 'bg-red-500' : pct >= 90 ? 'bg-orange-500' : pct >= 75 ? 'bg-yellow-400' : 'bg-sky-400')
-        : (pct >= 100 ? 'bg-emerald-400' : 'bg-sky-400');
+        ? (full ? 'bg-red-500' : pct >= 90 ? 'bg-orange-500' : pct >= 75 ? 'bg-yellow-400' : 'bg-sky-400')
+        : (full ? 'bg-emerald-400' : 'bg-sky-400');
     return html`<div className="h-2 rounded-full bg-slate-800 overflow-hidden">
         <div className=${`h-full rounded-full transition-all ${fill}`} style=${{ width: Math.min(100, pct) + '%' }}></div>
     </div>`;
