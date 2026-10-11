@@ -685,15 +685,34 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
 // =========================================================================
 //  Shop
 // =========================================================================
-// Small manufacturer marks: a monogram on a transparent background, drawn in the text colour.
+// Manufacturer logos: single-colour cut-outs in img/makers (made from the files in /visuals), painted in the
+// surrounding text colour so they stay grey like the rest of the UI. logo = width / height of the file;
+// scale shrinks wide wordmarks so they don't dominate; wordmark = the logo spells the name, so the text is hidden. Makers without a logo file get a letter badge.
 const MAKERS = {
-    AIRBUS: { mark: 'A', name: 'Airbus' }, BOEING: { mark: 'B', name: 'Boeing' }, BOMBARDIER: { mark: 'BD', name: 'Bombardier' },
-    EMBRAER: { mark: 'E', name: 'Embraer' }, ATR: { mark: 'ATR', name: 'ATR' }, 'DE HAVILLAND': { mark: 'DHC', name: 'De Havilland' },
-    COMAC: { mark: 'C', name: 'COMAC' }
+    AIRBUS: { mark: 'A', name: 'Airbus' },
+    BOEING: { mark: 'B', name: 'Boeing', logo: 'boeing', ratio: 1.188 },
+    BOMBARDIER: { mark: 'BD', name: 'Bombardier', logo: 'bombardier', ratio: 1.062 },
+    EMBRAER: { mark: 'E', name: 'Embraer', logo: 'embraer', ratio: 0.984 },
+    ATR: { mark: 'ATR', name: 'ATR', logo: 'atr', ratio: 4.109, scale: 0.6, wordmark: true },   // the logo is the name
+    'DE HAVILLAND': { mark: 'DHC', name: 'De Havilland', logo: 'dhc', ratio: 1 },
+    COMAC: { mark: 'C', name: 'COMAC', logo: 'comac', ratio: 2.219, scale: 0.8 },
+    UAC: { mark: 'U', name: 'UAC', logo: 'uac', ratio: 1 }
 };
 const makerName = (c) => MAKERS[c]?.name || c;
+// The maker's name next to its logo (only for screen readers when the logo already spells it).
+const makerLabel = (c) => (MAKERS[c]?.wordmark ? html`<span className="sr-only">${makerName(c)}</span>` : makerName(c));
 function MakerMark({ maker, size = 20 }) {
-    const mark = MAKERS[maker]?.mark || String(maker || '?').slice(0, 1);
+    const m = MAKERS[maker];
+    if (m?.logo) {
+        const h = Math.round(size * (m.scale || 1));
+        const url = `url(img/makers/${m.logo}.png)`;
+        return html`<span aria-hidden="true" className="inline-block shrink-0" style=${{
+            width: Math.round(h * m.ratio) + 'px', height: h + 'px', backgroundColor: 'currentColor',
+            WebkitMaskImage: url, maskImage: url, WebkitMaskSize: 'contain', maskSize: 'contain',
+            WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center'
+        }}></span>`;
+    }
+    const mark = m?.mark || String(maker || '?').slice(0, 1);
     const w = mark.length >= 3 ? 30 : 20;   // longer marks get a wider badge instead of smaller letters
     return html`<svg viewBox=${`0 0 ${w} 20`} width=${size * w / 20} height=${size} className="shrink-0" aria-hidden="true">
         <rect x="1" y="1" width=${w - 2} height="18" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.2" />
@@ -734,7 +753,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
     const card = (a) => html`<article key=${a.model} className="card p-4 flex flex-col">
         <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-                <p className="label text-slate-500 flex items-center gap-1.5"><${MakerMark} maker=${a.category} size=${14} />${makerName(a.category)} · ${a.code}</p>
+                <p className="label text-slate-500 flex items-center gap-1.5"><${MakerMark} maker=${a.category} size=${14} />${makerLabel(a.category)} · ${a.code}</p>
                 <h3 className="font-extrabold text-white mt-1 leading-tight">${a.model}</h3>
             </div>
             ${inCart[a.model] && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${inCart[a.model]} in order</span>`}
@@ -784,7 +803,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
             ${categories.map((c) => html`<button key=${c} onClick=${() => setCategory(c)}
                 className=${`shrink-0 px-3.5 py-1.5 rounded-full border text-xs font-bold ${category === c ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
-                <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? 'All makers' : makerName(c)}</span></button>`)}
+                <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? 'All makers' : makerLabel(c)}</span></button>`)}
         </div>
 
         ${!pricelist.length ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
