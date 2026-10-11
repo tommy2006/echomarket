@@ -15,6 +15,7 @@ HEIGHT = 64   # shown at 14-20 px, so this is sharp on high-DPI phones too
 BOLDER = {'dhc': 5}   # thin-lined logos: thicken strokes (px at original size) so they survive shrinking
 # file, output name, optional crop as fractions of the original (left, top, right, bottom)
 LOGOS = [
+    ('airbus_logo.png', 'airbus', None),
     ('Boeing_logo.png', 'boeing', None),
     ('Bombardier_logo.png', 'bombardier', None),
     ('Embraer_logo.png', 'embraer', None),
@@ -30,9 +31,13 @@ def ink(img):
     flat = Image.new('RGBA', rgba.size, (255, 255, 255, 255))
     flat.alpha_composite(rgba)                               # transparent areas count as background
     r, g, b, _ = flat.split()
-    darkest = ImageChops.darker(ImageChops.darker(r, g), b)  # min channel: catches dark AND coloured ink
-    v = ImageOps.invert(darkest)                             # 255 - min(r, g, b)
-    w, h = v.size
+    w, h = flat.size
+    lum = flat.convert('L')
+    if sorted(lum.getpixel((x, y)) for x in (0, w - 1) for y in (0, h - 1))[1] < 110:
+        v = lum                                              # light logo on a dark background (Airbus): brightness
+    else:
+        darkest = ImageChops.darker(ImageChops.darker(r, g), b)  # min channel: catches dark AND coloured ink
+        v = ImageOps.invert(darkest)                         # 255 - min(r, g, b)
     corners = [v.getpixel((x, y)) for x in (0, w - 1) for y in (0, h - 1)]
     bg = sorted(corners)[1]                                  # background level (light grey for ATR)
     hist = v.histogram()

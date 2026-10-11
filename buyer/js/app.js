@@ -689,7 +689,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
 // surrounding text colour so they stay grey like the rest of the UI. logo = width / height of the file;
 // scale shrinks wide wordmarks so they don't dominate; wordmark = the logo spells the name, so the text is hidden. Makers without a logo file get a letter badge.
 const MAKERS = {
-    AIRBUS: { mark: 'A', name: 'Airbus' },
+    AIRBUS: { mark: 'A', name: 'Airbus', logo: 'airbus', ratio: 1.188 },
     BOEING: { mark: 'B', name: 'Boeing', logo: 'boeing', ratio: 1.188 },
     BOMBARDIER: { mark: 'BD', name: 'Bombardier', logo: 'bombardier', ratio: 1.062 },
     EMBRAER: { mark: 'E', name: 'Embraer', logo: 'embraer', ratio: 0.984 },
@@ -725,6 +725,13 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('ALL');
     const [sort, setSort] = useState('family');
+    // Family sections the buyer folded away. Everything starts expanded; while searching, all matches show.
+    const [collapsed, setCollapsed] = useState(() => new Set());
+    const toggleFamily = (family) => setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(family)) next.delete(family); else next.add(family);
+        return next;
+    });
     const categories = useMemo(() => ['ALL', ...new Set(pricelist.map((a) => a.category))], [pricelist]);
     const inCart = useMemo(() => cart.reduce((m, c) => ({ ...m, [c.model]: (m[c.model] || 0) + c.qty }), {}), [cart]);
 
@@ -808,14 +815,32 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
 
         ${!pricelist.length ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
         : !list.length ? html`<${EmptyState} icon="search-x" title="No aircraft match" text="Try a different search or maker." />`
-        : groups ? html`<div className="space-y-6">
-            ${groups.map((g) => html`<section key=${g.family} className="space-y-2.5">
-                <h3 className="flex items-center gap-2 text-sm font-extrabold text-white">
-                    <span className="text-slate-300"><${MakerMark} maker=${g.maker} /></span>${g.family}
-                    <span className="text-xs font-semibold text-slate-500">· ${plural(g.models.length, 'model')}</span>
-                </h3>
-                ${grid(g.models)}
-            </section>`)}
+        : groups ? html`<div className="space-y-4">
+            ${!query.trim() && groups.length > 1 && html`<div className="flex justify-end -mb-2">
+                <button type="button" className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1"
+                    onClick=${() => setCollapsed(collapsed.size ? new Set() : new Set(groups.map((g) => g.family)))}>
+                    <${Icon} name=${collapsed.size ? 'chevrons-up-down' : 'chevrons-down-up'} className="w-3.5 h-3.5" />${collapsed.size ? 'Expand all' : 'Collapse all'}
+                </button>
+            </div>`}
+            ${groups.map((g) => {
+                const open = Boolean(query.trim()) || !collapsed.has(g.family);
+                const ordered = g.models.reduce((n, a) => n + (inCart[a.model] || 0), 0);
+                return html`<section key=${g.family} className="space-y-2.5">
+                    <h3>
+                        <button type="button" onClick=${() => toggleFamily(g.family)} aria-expanded=${open}
+                            className="group w-full flex items-center gap-2 py-1 text-left text-sm font-extrabold text-white">
+                            <span className="text-slate-300"><${MakerMark} maker=${g.maker} /></span>
+                            <span className="min-w-0 truncate">${g.family}</span>
+                            <span className="shrink-0 text-xs font-semibold text-slate-500">· ${plural(g.models.length, 'model')}</span>
+                            ${!open && ordered > 0 && html`<span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-400/15 text-sky-300">${ordered} in order</span>`}
+                            <span className="ml-auto shrink-0 text-slate-500 group-hover:text-white">
+                                <${Icon} name="chevron-down" className=${`w-4 h-4 transition-transform ${open ? '' : '-rotate-90'}`} />
+                            </span>
+                        </button>
+                    </h3>
+                    ${open && grid(g.models)}
+                </section>`;
+            })}
         </div>`
         : grid(list)}
     </section>`;

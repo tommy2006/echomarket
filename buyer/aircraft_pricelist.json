@@ -73,5 +73,7 @@
   { "family": "De Havilland Canada Dash 8 Family", "model": "De Havilland Canada Dash 8 Q400", "code": "DH8D", "range": 2040, "seats": 90, "price": 45100000, "category": "DE HAVILLAND" },
   { "family": "Comac ARJ-21 Family", "model": "Comac ARJ-21-700", "code": "AJ27", "range": 3700, "seats": 90, "price": 51000000, "category": "COMAC" },
   { "family": "Comac C919 Family", "model": "Comac C919-100STD", "code": "C919", "range": 4139, "seats": 192, "price": 81200000, "category": "COMAC" },
-  { "family": "Comac C919 Family", "model": "Comac C919-100ER", "code": "C919", "range": 5576, "seats": 192, "price": 83200000, "category": "COMAC" }
+  { "family": "Comac C919 Family", "model": "Comac C919-100ER", "code": "C919", "range": 5576, "seats": 192, "price": 83200000, "category": "COMAC" },
+  { "family": "Sukhoi Superjet 100 Family", "model": "Sukhoi Superjet 100-95B", "code": "SU95", "range": 3045, "seats": 103, "price": 54000000, "category": "UAC" },
+  { "family": "Sukhoi Superjet 100 Family", "model": "Sukhoi Superjet 100-95LR", "code": "SU95", "range": 4578, "seats": 103, "price": 57000000, "category": "UAC" }
 ]
