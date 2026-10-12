@@ -43,6 +43,8 @@ export default handler(['POST'], async (req, res) => {
     const isOwner = order.seller_id === account.id;
     const helpers = orderHelpers(order);
     const myHelp = helpers.find((h) => h.seller_id === account.id) || null;   // I joined this order
+    // Clears the sellers who joined (only once schema.sql has the column, so claiming keeps working before that).
+    const noHelpers = 'helpers' in order ? { helpers: [] } : {};
     const mustOwn = () => {
         if (!isOwner && !seller.is_admin) {
             throw new HttpError(403, `This order is handled by ${order.seller_airline_name || 'another seller'}.`);
@@ -84,7 +86,7 @@ export default handler(['POST'], async (req, res) => {
                 seller_airline_name: airline.name,
                 seller_alliance: airline.alliance,
                 claimed_at: new Date().toISOString(),
-                helpers: []
+                ...noHelpers
             }, ['PENDING']);
             // Taking it means you no longer pass on it.
             await db.from('order_declines').delete().eq('order_id', order.id).eq('seller_id', account.id);
@@ -99,6 +101,7 @@ export default handler(['POST'], async (req, res) => {
         }
 
         case 'join': {
+            if (!('helpers' in order)) throw new HttpError(503, 'Taking over needs a database update: an admin must re-run supabase/schema.sql.');
             if (!ACTIVE.includes(order.status)) throw new HttpError(409, 'Only orders that are being delivered can be taken over.');
             if (isOwner || myHelp) throw new HttpError(409, 'You are already delivering this order.');
             const hoursTaken = (Date.now() - new Date(order.claimed_at || order.created_at).getTime()) / 36e5;
@@ -194,7 +197,7 @@ export default handler(['POST'], async (req, res) => {
                 status: 'PENDING',
                 items: items.map((it) => ({ ...it, locked: it.filled })),
                 previous_sellers: leaving,
-                helpers: [],
+                ...noHelpers,
                 seller_id: null, seller_name: null, seller_airline_id: null,
                 seller_airline_name: null, seller_alliance: null, claimed_at: null
             }, ACTIVE, { owned: true });
