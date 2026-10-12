@@ -93,7 +93,7 @@ Pressing **Send order** places it exactly like a web order:
 - the buyer gets the **"Order received" DM**
 
 It then shows up under **Orders** on the website, where the buyer can follow it, cancel it while nobody has
-taken it, or message the seller team after 5 days.
+taken it, or message the seller team after 24 hours.
 
 ### Same rules as the website
 Every bot command checks the same things as the website:

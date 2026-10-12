@@ -2,13 +2,13 @@
 //   { action: 'cancel', reason }   cancel an order nobody has taken yet (and nothing has been delivered:
 //                                  a partly delivered order waiting for a new seller can't be cancelled)
 //   { action: 'message', body }    write to the seller team. Allowed once the order has waited
-//                                  CONTACT_AFTER_DAYS without being fully delivered, or to answer a seller.
+//                                  CONTACT_AFTER_HOURS without being fully delivered, or to answer a seller.
 import {
     admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, orderRef, accountName,
     requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, HttpError
 } from '../../lib/server.js';
 
-export const CONTACT_AFTER_DAYS = 5;
+export const CONTACT_AFTER_HOURS = 24;
 const OPEN = ['PENDING', 'CLAIMED', 'PARTIAL'];
 
 export default handler(['POST'], async (req, res) => {
@@ -23,13 +23,13 @@ export default handler(['POST'], async (req, res) => {
         await rateLimit('buyer-msg:' + account.id, 10, 3600, 'You can send 10 messages per hour. Wait a bit and try again.');
         const text = cleanText(input.body, 1000);
         if (!text) throw new HttpError(400, 'Write a message first.');
-        const ageDays = (Date.now() - new Date(order.created_at).getTime()) / 864e5;
+        const ageHours = (Date.now() - new Date(order.created_at).getTime()) / 36e5;
         const { count: sellerMessages } = await db.from('order_messages').select('id', { count: 'exact', head: true })
             .eq('order_id', order.id).eq('from_role', 'seller');
-        const waitedLongEnough = ageDays >= CONTACT_AFTER_DAYS && OPEN.includes(order.status);
+        const waitedLongEnough = ageHours >= CONTACT_AFTER_HOURS && OPEN.includes(order.status);
         if (!waitedLongEnough && !sellerMessages) {
             throw new HttpError(409, OPEN.includes(order.status)
-                ? `You can contact the seller team once an order has waited ${CONTACT_AFTER_DAYS} days without being fully delivered.`
+                ? `You can contact the seller team once an order has waited ${CONTACT_AFTER_HOURS} hours without being fully delivered.`
                 : 'This order is finished, so it can no longer be discussed here. Ask on the Echo Discord server.');
         }
         const { data: msg, error } = await db.from('order_messages').insert({

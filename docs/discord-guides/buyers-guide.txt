@@ -1,0 +1,27 @@
+# 🛒 Echo Market · Buyers' Guide
+Order aircraft from the alliance's sellers, *below the in-game list price*.
+
+## 1 · Sign in
+Open **<https://echomarket-buyer.vercel.app>** and press **Sign in with Discord**. Only members of this server can use the market.
+-# The market rules pop up on your first visit; they're always behind the 📜 button at the top.
+
+## 2 · Create your airline
+**Airlines → New airline**: name + alliance (up to 20 profiles). Use **Rename / edit** to update a profile.
+
+## 3 · Place an order
+**Shop** → pick a model, the quantity and a **price level** (50–90 % of the list price).
+Open your order (🛒), tick the airline(s) that may receive the planes, then **Send order**.
+-# Limits: $10B per 24 hours (counted at list price) · 5 orders per 10 minutes.
+
+**On Discord instead?** In the ordering channel:
+> `/airline create` → make a profile
+> `/order` → up to 3 aircraft types, ➕ **Add aircraft** for more, then **Send order**
+
+## 4 · Receive your planes
+When a seller takes your order you get a **DM**. They list the aircraft on the in-game market for you, so ***buy exactly what they listed.***
+If more sellers join (*"… will also be delivering"*), your order shows **how many each seller listed**. Buy from each one accordingly.
+
+## 5 · Need help?
+Not fully delivered after **24 hours**? Open it under **Orders → Contact the seller team**.
+
+> ⚠️ Only buy planes **you** ordered, and never re-sell market planes outside the alliance.

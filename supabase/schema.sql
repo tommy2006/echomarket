@@ -34,6 +34,8 @@ create table if not exists public.accounts (
 alter table public.accounts add column if not exists in_guild boolean;
 alter table public.accounts add column if not exists guild_checked_at timestamptz;
 alter table public.accounts add column if not exists market_banned_role boolean not null default false;
+-- When the buyer first read the market rules (shown once on their first sign-in; always in the rules menu).
+alter table public.accounts add column if not exists rules_seen_at timestamptz;
 
 -- SECURITY: the Discord ID, name and avatar come ONLY from auth.identities, which Supabase writes
 -- during the Discord login itself. Never read auth.users.raw_user_meta_data here: any signed-in user
@@ -259,6 +261,10 @@ alter table public.orders add column if not exists previous_sellers jsonb not nu
 -- alliances): [{ id, name, alliance }]. The first one is also in airline_id / airline_name / alliance.
 -- Empty for older orders, which only have that one airline.
 alter table public.orders add column if not exists airlines jsonb not null default '[]'::jsonb;
+-- Take over: sellers who joined an order another seller took 12+ hours earlier and hadn't finished. The order's
+-- seller stays on it; each seller records only what they listed in-game, so the buyer sees who listed what:
+-- [{ seller_id, seller_name, seller_airline_id, seller_airline_name, seller_alliance, joined_at, items: [n per line] }]
+alter table public.orders add column if not exists helpers jsonb not null default '[]'::jsonb;
 -- Each entry of orders.items also carries "filled" (delivered so far for that aircraft type)
 -- and "locked" (delivered before the current seller took over, which they cannot undo).
 
@@ -483,7 +489,7 @@ create index if not exists market_messages_account_idx on public.market_messages
 create index if not exists market_messages_discord_idx on public.market_messages (discord_id);
 
 -- Messages between a buyer and the seller team about one order. Buyers can start once an order has
--- waited 5 days without being fully delivered; any seller can answer.
+-- waited 24 hours without being fully delivered; any seller can answer.
 create table if not exists public.order_messages (
     id          bigint generated always as identity primary key,
     order_id    text not null references public.orders(id) on delete cascade,
@@ -573,9 +579,9 @@ create policy "accounts: read own or seller" on public.accounts
 drop policy if exists "accounts: update own" on public.accounts;
 create policy "accounts: update own" on public.accounts
     for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
--- Users may only change their notification settings; Discord fields come from the trigger.
+-- Users may only change their notification settings (and mark the rules as read); Discord fields come from the trigger.
 revoke update on public.accounts from authenticated, anon;
-grant update (notifications_seen_at, dm_enabled) on public.accounts to authenticated;
+grant update (notifications_seen_at, dm_enabled, rules_seen_at) on public.accounts to authenticated;
 
 drop policy if exists "alliances: public read" on public.alliances;
 create policy "alliances: public read" on public.alliances

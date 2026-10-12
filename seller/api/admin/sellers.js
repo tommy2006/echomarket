@@ -93,7 +93,7 @@ export default handler(['POST'], async (req, res) => {
         if (!inPeriod) continue;
         const s = row(e.actor_id);
         s.lastActive = e.created_at;
-        if (e.kind === 'CLAIMED') {
+        if (e.kind === 'CLAIMED' || e.kind === 'JOINED') {   // JOINED: took over part of an order
             s.ordersTaken++;
             if (e.actor_id === one) taken.push({ orderId: e.order_id, at: e.created_at });
         }

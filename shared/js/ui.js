@@ -155,6 +155,59 @@ export function orderLines(order) {
         return { ...it, filled, locked: Math.max(0, Math.min(filled, Math.floor(Number(it.locked)) || 0)) };
     });
 }
+// Take over (same rules as lib/server.js): TAKEOVER_HOURS after an order was taken, other sellers can join it.
+// Each seller records only what they listed in-game; deliveryShares() says who listed how many of each type.
+export const TAKEOVER_HOURS = 12;
+export const orderHelpers = (order) => (Array.isArray(order.helpers) ? order.helpers : []).filter((h) => h && h.seller_id);
+export function deliveryShares(order) {
+    const items = orderLines(order);
+    const helpers = orderHelpers(order);
+    const counts = (arr) => items.map((it, i) => Math.max(0, Math.min(it.qty, Math.floor(Number(arr?.[i])) || 0)));
+    const helperSum = items.map((_, i) => helpers.reduce((sum, h) => sum + (Math.floor(Number(h.items?.[i])) || 0), 0));
+    const shares = (Array.isArray(order.previous_sellers) ? order.previous_sellers : []).map((p) => ({
+        role: 'earlier', sellerId: p.seller_id, name: p.seller_name, airline: p.seller_airline_name, alliance: p.seller_alliance,
+        items: Array.isArray(p.items) ? counts(p.items) : null, total: Number(p.delivered) || 0
+    }));
+    if (order.seller_id) shares.push({
+        role: 'seller', sellerId: order.seller_id, name: order.seller_name, airline: order.seller_airline_name, alliance: order.seller_alliance,
+        items: items.map((it, i) => Math.max(0, it.filled - it.locked - helperSum[i]))
+    });
+    helpers.forEach((h) => shares.push({
+        role: 'helper', sellerId: h.seller_id, name: h.seller_name, airline: h.seller_airline_name, alliance: h.seller_alliance,
+        items: counts(h.items), joinedAt: h.joined_at
+    }));
+    shares.forEach((sh) => { if (sh.items) sh.total = sh.items.reduce((a, b) => a + b, 0); });
+    return shares;
+}
+// [{ model, n }] that one seller listed (empty when nothing yet).
+export const shareLines = (order, share) => {
+    const items = orderLines(order);
+    return share.items ? share.items.map((n, i) => ({ model: items[i]?.model, n })).filter((x) => x.n > 0) : [];
+};
+// Hours left before other sellers may take over a taken order (0 = now).
+export const takeoverIn = (order, now = Date.now()) =>
+    Math.max(0, TAKEOVER_HOURS - (now - new Date(order.claimed_at || order.created_at).getTime()) / 36e5);
+
+// "Listed by each seller": one row per seller with their own counts. Shown to the buyer (so they buy the
+// right aircraft from the right seller in-game) and to sellers. Hidden while only one seller is involved.
+export function SellerShares({ order, userId = null, compact = false }) {
+    const shares = deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0);
+    if (shares.length < 2) return null;
+    const label = { earlier: 'earlier seller', seller: 'seller', helper: 'also delivering' };
+    return html`<div className=${`rounded-2xl border border-slate-800 bg-slate-950 ${compact ? 'p-2.5' : 'p-3'} space-y-2`}>
+        <p className="label text-slate-500">Listed by each seller</p>
+        <ul className="space-y-2">
+            ${shares.map((sh, i) => html`<li key=${i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+                <span className="font-bold text-white">${sh.airline || sh.name}</span>
+                <span className="text-xs text-slate-500">${sh.alliance ? `${sh.alliance} · ` : ''}${sh.name}${sh.sellerId && sh.sellerId === userId ? ' (you)' : ''} · ${label[sh.role]}</span>
+                <span className="basis-full text-slate-200">${sh.items
+                    ? (shareLines(order, sh).map((x) => `${x.n}× ${x.model}`).join(', ') || html`<span className="text-slate-500">nothing listed yet</span>`)
+                    : `${sh.total} aircraft`}</span>
+            </li>`)}
+        </ul>
+    </div>`;
+}
+
 export const ACTIVE_STATUSES = ['PENDING', 'CLAIMED', 'PARTIAL'];
 export const CLOSED_STATUSES = ['CANCELLED', 'DECLINED'];
 
@@ -425,4 +478,84 @@ export async function disablePush() {
     if (!sub) return;
     await api('/api/push', { action: 'unsubscribe', endpoint: sub.endpoint }).catch(() => {});
     await sub.unsubscribe();
+}
+
+// =========================================================================
+//  First-time walkthrough (buyer site and seller desk)
+// =========================================================================
+// The visible element for a tour anchor (desktop top bar or phone bottom bar).
+function tourTarget(key) {
+    if (!key) return null;
+    return [...document.querySelectorAll(`[data-tour="${key}"]`)].find((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }) || null;
+}
+
+// A short first-time walkthrough that spotlights real buttons (elements with data-tour="<target>").
+// steps: [{ target, icon, title(name), text }]. onDone(true) after the last step, onDone(false) when skipped.
+export function GuidedTour({ steps, name, onDone, finishLabel = 'Done', finishIcon = 'check', label = 'Tour' }) {
+    const [i, setI] = useState(0);
+    const [rect, setRect] = useState(null);
+    const step = steps[i];
+    const last = i === steps.length - 1;
+
+    useEffect(() => {
+        const measure = () => {
+            const el = tourTarget(step.target);
+            setRect(el ? el.getBoundingClientRect() : null);
+        };
+        measure();
+        // Re-measure on resize, rotation and layout changes (the target moves between top and bottom bars).
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        ro?.observe(document.documentElement);
+        window.addEventListener('resize', measure);
+        window.addEventListener('scroll', measure, true);
+        return () => { ro?.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
+    }, [i]);
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key === 'Escape') onDone(false);
+            if (e.key === 'ArrowRight' && !last) setI(i + 1);
+            if (e.key === 'ArrowLeft' && i > 0) setI(i - 1);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [i]);
+
+    // Card goes below the target, or above it when the target is near the bottom (phone nav bar).
+    const pad = 8, vw = window.innerWidth, vh = window.innerHeight, cardW = Math.min(340, vw - 32);
+    let cardStyle = { width: cardW + 'px' };
+    if (rect) {
+        const left = Math.max(16, Math.min(vw - cardW - 16, rect.left + rect.width / 2 - cardW / 2));
+        cardStyle = rect.top > vh / 2
+            ? { ...cardStyle, left: left + 'px', bottom: (vh - rect.top + pad + 10) + 'px' }
+            : { ...cardStyle, left: left + 'px', top: (rect.bottom + pad + 10) + 'px' };
+    }
+
+    return html`<div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label=${label}>
+        ${rect ? html`<div className="absolute rounded-2xl ring-2 ring-sky-300 transition-all duration-300 pointer-events-none"
+            style=${{ left: rect.left - pad + 'px', top: rect.top - pad + 'px', width: rect.width + pad * 2 + 'px', height: rect.height + pad * 2 + 'px',
+                boxShadow: '0 0 0 9999px rgba(3, 6, 20, 0.72)' }}></div>`
+            : html`<div className="absolute inset-0 bg-[rgba(3,6,20,0.72)]"></div>`}
+        <div className=${`absolute card !bg-slate-900 p-5 shadow-2xl animate-pop ${rect ? '' : 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'}`} style=${cardStyle}>
+            <div className="flex items-start gap-3">
+                <span className="w-10 h-10 shrink-0 rounded-xl bg-sky-400/15 text-sky-300 flex items-center justify-center"><${Icon} name=${step.icon} className="w-5 h-5" /></span>
+                <div className="min-w-0">
+                    <h2 className="font-extrabold text-white leading-snug">${step.title(name)}</h2>
+                    <p className="text-sm text-slate-300 mt-1 leading-relaxed">${step.text}</p>
+                </div>
+            </div>
+            <div className="flex items-center gap-2 mt-4">
+                <div className="flex gap-1 mr-auto" aria-label=${`Step ${i + 1} of ${steps.length}`}>
+                    ${steps.map((_, j) => html`<span key=${j} className=${`h-1.5 rounded-full transition-all ${j === i ? 'w-5 bg-sky-400' : 'w-1.5 bg-slate-700'}`}></span>`)}
+                </div>
+                ${!last && html`<${Button} variant="ghost" size="sm" onClick=${() => onDone(false)}>Skip<//>`}
+                ${i > 0 && html`<${Button} variant="secondary" size="sm" onClick=${() => setI(i - 1)}>Back<//>`}
+                ${last
+                    ? html`<${Button} size="sm" icon=${finishIcon} onClick=${() => onDone(true)}>${finishLabel}<//>`
+                    : html`<${Button} size="sm" onClick=${() => setI(i + 1)}>${i === 0 ? 'Show me' : 'Next'}<//>`}
+            </div>
+        </div>
+    </div>`;
 }

@@ -1,10 +1,16 @@
 // POST /api/orders/:orderId — every seller action on an order.
 // Body: { action, ... }
 //   claim     { airlineId }            take an open order as one of your airlines
+//   join      { airlineId }            "take over": join an order another seller took TAKEOVER_HOURS ago and
+//                                      hasn't finished. Their seller stays on it; the buyer is told you will
+//                                      also be delivering (orders.helpers)
 //   release   {}                       give it back to the open queue. If you already delivered some
-//                                      aircraft, the rest is handed to the other sellers ("pass on the rest")
-//   progress  { items: [n, n, …], note }  delivered so far, per aircraft type (same order as order.items)
-//             { filled, note }            (older form: one total; spread over the lines in order)
+//                                      aircraft, the rest is handed to the other sellers ("pass on the rest").
+//                                      With sellers who joined, the first of them takes over the order instead.
+//                                      A seller who joined stops delivering (what they listed stays counted).
+//   progress  { mine: [n, n, …], note }   aircraft YOU listed so far, per aircraft type (same order as order.items)
+//             { items: [n, n, …], note }  (older form: delivered in total per type, by the order's seller)
+//             { filled, note }            (oldest form: one total; spread over the lines in order)
 //   note      { sellerNote }           note visible to the buyer
 //   decline   { reason, force }        pass on an open order. The order is only DECLINED for the buyer
 //                                      when every active seller has passed; the last one writes the reason.
@@ -14,7 +20,8 @@
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
-    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, HttpError
+    loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
+    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, HttpError
 } from '../../lib/server.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
@@ -34,6 +41,8 @@ export default handler(['POST'], async (req, res) => {
     const items = orderItems(order);
     const ref = orderRef(order);   // "#42 · ECH-…" for Discord and alerts
     const isOwner = order.seller_id === account.id;
+    const helpers = orderHelpers(order);
+    const myHelp = helpers.find((h) => h.seller_id === account.id) || null;   // I joined this order
     const mustOwn = () => {
         if (!isOwner && !seller.is_admin) {
             throw new HttpError(403, `This order is handled by ${order.seller_airline_name || 'another seller'}.`);
@@ -41,9 +50,11 @@ export default handler(['POST'], async (req, res) => {
     };
     // Conditional update: fails (409) if someone changed the order's status meanwhile. For actions only the
     // order's seller (or an admin) may do, the database also checks the seller hasn't changed in between.
-    const update = async (patch, expectedStatuses, { owned = false } = {}) => {
+    // version: also require the order to be exactly as loaded (several sellers can update the same order).
+    const update = async (patch, expectedStatuses, { owned = false, version = false } = {}) => {
         let q = db.from('orders').update(patch).eq('id', order.id);
         if (expectedStatuses) q = q.in('status', expectedStatuses);
+        if (version) q = q.eq('updated_at', order.updated_at);
         if (owned) {
             const sellerId = seller.is_admin ? order.seller_id : account.id;
             q = sellerId ? q.eq('seller_id', sellerId) : q.is('seller_id', null);
@@ -72,7 +83,8 @@ export default handler(['POST'], async (req, res) => {
                 seller_airline_id: airline.id,
                 seller_airline_name: airline.name,
                 seller_alliance: airline.alliance,
-                claimed_at: new Date().toISOString()
+                claimed_at: new Date().toISOString(),
+                helpers: []
             }, ['PENDING']);
             // Taking it means you no longer pass on it.
             await db.from('order_declines').delete().eq('order_id', order.id).eq('seller_id', account.id);
@@ -86,22 +98,103 @@ export default handler(['POST'], async (req, res) => {
             return res.json({ ok: true, order: updated });
         }
 
+        case 'join': {
+            if (!ACTIVE.includes(order.status)) throw new HttpError(409, 'Only orders that are being delivered can be taken over.');
+            if (isOwner || myHelp) throw new HttpError(409, 'You are already delivering this order.');
+            const hoursTaken = (Date.now() - new Date(order.claimed_at || order.created_at).getTime()) / 36e5;
+            if (hoursTaken < TAKEOVER_HOURS) {
+                const left = Math.ceil(TAKEOVER_HOURS - hoursTaken);
+                throw new HttpError(409, `You can take over ${TAKEOVER_HOURS} hours after the order was taken: in about ${left} hour${left === 1 ? '' : 's'}.`);
+            }
+            if (helpers.length >= MAX_HELPERS) throw new HttpError(409, `${MAX_HELPERS} other sellers are already helping with this order.`);
+            const { data: airline } = await db.from('airlines').select('*')
+                .eq('id', input.airlineId || '00000000-0000-0000-0000-000000000000')
+                .eq('owner_id', account.id).maybeSingle();
+            if (!airline) throw new HttpError(400, 'Pick one of your airline profiles to sell as.');
+            const updated = await update({
+                helpers: [...helpers, {
+                    seller_id: account.id, seller_name: accountName(account),
+                    seller_airline_id: airline.id, seller_airline_name: airline.name, seller_alliance: airline.alliance,
+                    joined_at: new Date().toISOString(), items: items.map(() => 0)
+                }]
+            }, ACTIVE, { version: true });
+            await db.from('order_declines').delete().eq('order_id', order.id).eq('seller_id', account.id);
+            await addEvent(updated, 'JOINED', account, {
+                filled: updated.filled,
+                message: `${airline.name} (${airline.alliance}) will also be delivering. Each seller lists their own aircraft: buy exactly what each one listed.`
+            });
+            await syncDiscord(updated, `🤝 ${ref}: ${plain(airline.name)} will also be delivering`);
+            await dmBuyer(updated, 'JOINED', '', airline.name);
+            // Let the order's seller know someone joined.
+            if (order.seller_id) {
+                const { data: first } = await db.from('accounts').select('*').eq('id', order.seller_id).maybeSingle();
+                if (first) await sendDM(first, {
+                    title: `🤝 ${md(airline.name)} joined your order ${ref}`,
+                    description: `The order was taken ${Math.floor(hoursTaken)} hours ago and isn't fully delivered, so **${md(airline.name)}** (${md(accountName(account))}) took over part of it. You both stay on the order: record only the aircraft **you** list.`,
+                    url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined
+                });
+            }
+            return res.json({ ok: true, order: updated });
+        }
+
         case 'release': {
+            // A seller who joined stops delivering: what they listed stays counted (locked) and is shown as theirs.
+            if (myHelp && !isOwner) {
+                if (!ACTIVE.includes(order.status)) throw new HttpError(409, 'This order is no longer being delivered.');
+                const listed = items.map((it, i) => Math.floor(Number(myHelp.items?.[i])) || 0);
+                const total = listed.reduce((a, b) => a + b, 0);
+                const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
+                const updated = await update({
+                    items: items.map((it, i) => ({ ...it, locked: Math.min(it.filled, it.locked + listed[i]) })),
+                    helpers: helpers.filter((h) => h.seller_id !== account.id),
+                    previous_sellers: total > 0 ? [...previous, {
+                        seller_id: account.id, seller_name: myHelp.seller_name, seller_airline_name: myHelp.seller_airline_name,
+                        seller_alliance: myHelp.seller_alliance, delivered: total, items: listed, at: new Date().toISOString()
+                    }] : previous
+                }, ACTIVE, { version: true });
+                await addEvent(updated, 'RELEASED', account, {
+                    message: `${myHelp.seller_airline_name} stopped delivering${total ? ` (the ${total} they listed stay counted)` : ''}.`
+                });
+                await syncDiscord(updated, `↩️ ${ref}: ${plain(myHelp.seller_airline_name)} stopped delivering`);
+                return res.json({ ok: true, order: updated });
+            }
             mustOwn();
             if (!ACTIVE.includes(order.status)) throw new HttpError(409, 'Only orders in progress can be passed on.');
-            const mine = items.reduce((s, it) => s + (it.filled - it.locked), 0);
+            const shareNow = deliveryShares(order).find((sh) => sh.role === 'seller');
+            const myLines = shareNow ? shareNow.items : items.map(() => 0);
+            const mine = myLines.reduce((a, b) => a + b, 0);
             const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
+            const leaving = mine > 0 ? [...previous, {
+                seller_id: order.seller_id,
+                seller_name: order.seller_name,
+                seller_airline_name: order.seller_airline_name,
+                seller_alliance: order.seller_alliance,
+                delivered: mine,
+                items: myLines,
+                at: new Date().toISOString()
+            }] : previous;
+            // Sellers joined it: the first of them now handles the order, nothing goes back to the queue.
+            if (helpers.length) {
+                const [next, ...rest] = helpers;
+                const updated = await update({
+                    items: items.map((it, i) => ({ ...it, locked: it.locked + myLines[i] })),
+                    previous_sellers: leaving,
+                    seller_id: next.seller_id, seller_name: next.seller_name, seller_airline_id: next.seller_airline_id,
+                    seller_airline_name: next.seller_airline_name, seller_alliance: next.seller_alliance,
+                    claimed_at: next.joined_at || new Date().toISOString(),
+                    helpers: rest
+                }, ACTIVE, { owned: true, version: true });
+                await addEvent(updated, 'HANDOFF', account, {
+                    message: `${order.seller_airline_name} stopped delivering; ${next.seller_airline_name} now handles the rest of the order.`
+                });
+                await syncDiscord(updated, `🔁 ${ref}: ${plain(next.seller_airline_name)} now handles the order`);
+                return res.json({ ok: true, order: updated });
+            }
             const updated = await update({
                 status: 'PENDING',
                 items: items.map((it) => ({ ...it, locked: it.filled })),
-                previous_sellers: mine > 0 ? [...previous, {
-                    seller_id: order.seller_id,
-                    seller_name: order.seller_name,
-                    seller_airline_name: order.seller_airline_name,
-                    seller_alliance: order.seller_alliance,
-                    delivered: mine,
-                    at: new Date().toISOString()
-                }] : previous,
+                previous_sellers: leaving,
+                helpers: [],
                 seller_id: null, seller_name: null, seller_airline_id: null,
                 seller_airline_name: null, seller_alliance: null, claimed_at: null
             }, ACTIVE, { owned: true });
@@ -121,38 +214,56 @@ export default handler(['POST'], async (req, res) => {
         }
 
         case 'progress': {
-            mustOwn();
+            // The order's seller, a seller who joined it (take over), or an admin (acting as the order's seller).
+            const asHelper = Boolean(myHelp) && !isOwner;
+            if (!asHelper) mustOwn();
             if (![...ACTIVE, 'FULFILLED'].includes(order.status)) throw new HttpError(409, 'Take the order before recording deliveries.');
-            let wanted;
-            if (Array.isArray(input.items)) {
-                if (input.items.length !== items.length) throw new HttpError(400, 'Send one delivered count per aircraft type.');
-                wanted = input.items.map((n) => Math.floor(Number(n) || 0));
+            // Everyone records only what THEY listed; everybody else's aircraft stay as they are.
+            const shares = deliveryShares(order);
+            const myNow = (asHelper ? shares.find((sh) => sh.role === 'helper' && sh.sellerId === account.id)
+                : shares.find((sh) => sh.role === 'seller'))?.items || items.map(() => 0);
+            const others = items.map((it, i) => it.filled - myNow[i]);
+            let mineWanted;
+            if (Array.isArray(input.mine)) {
+                if (input.mine.length !== items.length) throw new HttpError(400, 'Send one count per aircraft type.');
+                mineWanted = input.mine.map((n) => Math.floor(Number(n) || 0));
             } else {
-                // Older form: one total, spread over the lines in order.
-                let rest = Math.floor(Number(input.filled) || 0);
-                wanted = items.map((it) => { const n = Math.min(it.qty, Math.max(0, rest)); rest -= n; return n; });
+                // Older forms (delivered in total), only for the order's seller.
+                if (asHelper) throw new HttpError(400, 'Send the aircraft you listed yourself.');
+                let totals;
+                if (Array.isArray(input.items)) {
+                    if (input.items.length !== items.length) throw new HttpError(400, 'Send one delivered count per aircraft type.');
+                    totals = input.items.map((n) => Math.floor(Number(n) || 0));
+                } else {
+                    let rest = Math.floor(Number(input.filled) || 0);
+                    totals = items.map((it) => { const n = Math.min(it.qty, Math.max(0, rest)); rest -= n; return n; });
+                }
+                mineWanted = totals.map((n, i) => n - others[i]);
             }
-            const next = items.map((it, i) => ({ ...it, filled: Math.max(it.locked, Math.min(it.qty, wanted[i])) }));
+            const mineNext = items.map((it, i) => Math.max(0, Math.min(it.qty - others[i], mineWanted[i])));
+            const next = items.map((it, i) => ({ ...it, filled: others[i] + mineNext[i] }));
             const filled = sumFilled(next);
             const status = statusFor(filled, order.total_qty);
-            const updated = await update({ items: next, filled, status }, [...ACTIVE, 'FULFILLED'], { owned: true });
+            const patch = { items: next, filled, status };
+            if (asHelper) patch.helpers = helpers.map((h) => (h.seller_id === account.id ? { ...h, items: mineNext } : h));
+            const updated = await update(patch, [...ACTIVE, 'FULFILLED'], { owned: !asHelper, version: true });
 
-            const changes = next.filter((it, i) => it.filled !== items[i].filled)
-                .map((it, i) => `${it.model}: ${it.filled}/${it.qty}`);
+            const myAirline = asHelper ? myHelp.seller_airline_name : order.seller_airline_name;
+            const listedText = shareText(updated, { items: mineNext });
             const note = cleanText(input.note, 500);
             await addEvent(updated, status === 'FULFILLED' ? 'FULFILLED' : 'PROGRESS', account, {
                 filled,
-                message: [note, changes.length ? changes.join(' · ') : null].filter(Boolean).join(' — ') || `${filled} of ${order.total_qty} aircraft delivered.`
+                message: [note, `${myAirline} has listed ${listedText} (${filled} of ${order.total_qty} delivered in total)`].filter(Boolean).join(' — ')
             });
             const title = status === 'FULFILLED' ? `✅ ${ref} fulfilled` : `🟡 ${ref}: ${filled}/${order.total_qty} delivered`;
             await syncDiscord(updated, title);
             // Notify only when more aircraft were delivered (not for corrections downwards).
             if (filled > order.filled) {
-                await dmBuyer(updated, status === 'FULFILLED' ? 'FULFILLED' : 'PROGRESS', note);
+                await dmBuyer(updated, status === 'FULFILLED' ? 'FULFILLED' : 'PROGRESS', note, myAirline);
                 if (status === 'FULFILLED') {
                     await sendPush(updated.buyer_id, {
                         title: `✅ Order ${ref} delivered`,
-                        body: `All ${order.total_qty} aircraft for ${order.airline_name} have been delivered by ${order.seller_airline_name}.`,
+                        body: `All ${order.total_qty} aircraft for ${order.airline_name} have been delivered by ${orderHelpers(updated).length ? 'your sellers' : order.seller_airline_name}.`,
                         tag: order.id,
                         url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
                     });

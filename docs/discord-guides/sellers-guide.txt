@@ -1,0 +1,29 @@
+# 🧑‍✈️ Echo Market · Sellers' Guide
+For **Verified Sellers**, **Ambassadors** and **Lead Ambassadors**.
+
+## Getting in
+Open **<https://echomarket-seller.vercel.app>** and sign in with Discord. Your seller role lets you in automatically.
+Create an airline first on the market site (**Airlines**): buyers see which airline sells to them.
+-# A short tour shows you around. Replay it any time: profile picture → *Show me around*.
+
+## Taking an order
+New orders land in the **Open queue** and are posted in the request channel. Choose **Selling as** (*same alliance as the buyer = easier delivery*), then **Take order**.
+Not for you? **Decline**: it stays open for the other sellers.
+
+## Delivering
+**1.** Buy the aircraft new in-game. Each order shows its **list value**: *the estimated cost of buying those planes new.*
+**2.** List them on the in-game market for the buyer, at the order's price level.
+**3.** Press **Update delivery** and enter how many **you** listed. The buyer gets a DM.
+
+## Can't finish?
+**Pass on the rest**: everything you delivered stays counted and the remainder goes back to the queue.
+
+## Take over
+If an order is still unfinished **12 hours** after it was taken, any other seller can **Take over** part of it.
+> The first seller **stays on** the order.
+> Each seller records ***only what they listed***.
+> The buyer sees exactly who listed what.
+
+## Messages
+Buyers can write to the seller team after **24 hours**. Reply from the order, and keep it short: *no full conversations in tickets.*
+-# Questions? Ask a Lead Ambassador.

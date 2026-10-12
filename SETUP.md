@@ -523,7 +523,7 @@ What this switches on:
 - **Market Admin role:** gives admin rights on the seller desk (Sellers and **Moderation** tabs, decline for everyone, delete). With no seller role they get the black-and-white Admin look; with a seller role, that role's colour.
 - **Market bans** (1 week, 1 month or permanent) and **messages/warnings** to buyers, from the seller desk: click a buyer's airline name, or use the **Moderation** tab (also works with a Discord user ID for people who never used the market). Each is DMed to the person and posted in the log channel; a ban also gives the **Market Banned** role, which is taken away again when the ban ends.
 - **Market Banned role:** anyone who has it (also when given by hand on Discord) can't use the buyer market.
-- **Order messages:** a buyer can write to the seller team once an order has waited 5 days without being fully delivered. Sellers see it live on the seller desk (badge + notification); the seller handling the order also gets a DM. Any seller can answer; the buyer gets a notification and a DM.
+- **Order messages:** a buyer can write to the seller team once an order has waited 24 hours without being fully delivered. Sellers see it live on the seller desk (badge + notification); the seller handling the order also gets a DM. Any seller can answer; the buyer gets a notification and a DM.
 
 **11.1 🧑 Re-run `supabase/schema.sql`** in the SQL Editor (safe to run again).
 

@@ -214,6 +214,48 @@ export function orderItems(order) {
 }
 export const sumFilled = (items) => items.reduce((s, it) => s + it.filled, 0);
 
+// Take over: once an order has been taken for TAKEOVER_HOURS without being fully delivered, other sellers
+// can join it. The order's seller stays on it; each seller records only the aircraft they listed in-game,
+// so the buyer knows exactly how many to buy from whom.
+export const TAKEOVER_HOURS = 12;
+export const MAX_HELPERS = 3;
+// Sellers who joined an order: [{ seller_id, seller_name, seller_airline_id, seller_airline_name, seller_alliance, joined_at, items: [n per line] }]
+export const orderHelpers = (order) => (Array.isArray(order.helpers) ? order.helpers : []).filter((h) => h && h.seller_id);
+// Who listed how many of each aircraft type: earlier sellers, the order's seller, and sellers who joined.
+//   role 'earlier' | 'seller' | 'helper', items: [n per line] (null for very old hand-offs: total only)
+export function deliveryShares(order) {
+    const items = orderItems(order);
+    const helpers = orderHelpers(order);
+    const counts = (arr) => items.map((it, i) => Math.max(0, Math.min(it.qty, Math.floor(Number(arr?.[i])) || 0)));
+    const helperSum = items.map((_, i) => helpers.reduce((sum, h) => sum + (Math.floor(Number(h.items?.[i])) || 0), 0));
+    const shares = (Array.isArray(order.previous_sellers) ? order.previous_sellers : []).map((p) => ({
+        role: 'earlier', sellerId: p.seller_id, name: p.seller_name, airline: p.seller_airline_name, alliance: p.seller_alliance,
+        items: Array.isArray(p.items) ? counts(p.items) : null, total: Number(p.delivered) || 0
+    }));
+    if (order.seller_id) shares.push({
+        role: 'seller', sellerId: order.seller_id, name: order.seller_name, airline: order.seller_airline_name, alliance: order.seller_alliance,
+        items: items.map((it, i) => Math.max(0, it.filled - it.locked - helperSum[i]))
+    });
+    helpers.forEach((h) => shares.push({
+        role: 'helper', sellerId: h.seller_id, name: h.seller_name, airline: h.seller_airline_name, alliance: h.seller_alliance, items: counts(h.items)
+    }));
+    shares.forEach((sh) => { if (sh.items) sh.total = sh.items.reduce((a, b) => a + b, 0); });
+    return shares;
+}
+// "2× Airbus A320neo, 1× Boeing 777-9" (or "nothing listed yet").
+export function shareText(order, share) {
+    if (!share.items) return `${share.total} aircraft`;
+    const items = orderItems(order);
+    const parts = share.items.map((n, i) => (n > 0 ? `${n}× ${items[i].model}` : null)).filter(Boolean);
+    return parts.length ? parts.join(', ') : 'nothing listed yet';
+}
+// One line per seller for Discord: "**Airline** (Alliance): 2× A320neo". Only when 2+ sellers are involved.
+function sharesLines(order) {
+    const shares = deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0);
+    if (shares.length < 2) return null;
+    return shares.map((sh) => `**${md(sh.airline || sh.name)}**${sh.alliance ? ` (${md(sh.alliance)})` : ''}${sh.role === 'earlier' ? ' _(earlier)_' : sh.role === 'helper' ? ' _(also delivering)_' : ''}: ${shareText(order, sh)}`).join('\n').slice(0, 1000);
+}
+
 const usd = (n) => '$' + Number(n || 0).toLocaleString('en-US');
 // Player-typed text shown on Discord: escape markdown so nobody can post masked links ([text](url)),
 // fake formatting or mentions inside an official Echo Market message.
@@ -283,11 +325,14 @@ function buildEmbed(order, title, flag, declines = []) {
         { name: 'Delivered', value: `${order.filled} / ${order.total_qty}`, inline: true },
         { name: 'Status', value: meta.label, inline: true }
     ];
-    if (order.seller_airline_name) {
+    const listed = sharesLines(order);
+    if (listed) {
+        fields.push({ name: 'Listed by each seller', value: listed, inline: false });
+    } else if (order.seller_airline_name) {
         fields.push({ name: 'Seller', value: `${md(order.seller_airline_name)}${order.seller_alliance ? ` (${md(order.seller_alliance)})` : ''} — ${md(order.seller_name || '')}`, inline: false });
     }
     const prev = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
-    if (prev.length) {
+    if (prev.length && !listed) {
         fields.push({ name: 'Earlier sellers', value: prev.map((p) => `${md(p.seller_airline_name)} — ${p.delivered} delivered`).join('\n').slice(0, 1000), inline: false });
     }
     if (declines.length && order.status === 'PENDING') {
@@ -419,7 +464,7 @@ export async function sendDM(account, { title, description, color = EMBED_COLORS
 }
 
 // DMs the buyer of an order about a status change. Never throws.
-export async function dmBuyer(order, kind, extra = '') {
+export async function dmBuyer(order, kind, extra = '', by = '') {
     if (!BOT_TOKEN || !order.buyer_id) return;
     const { data: buyer } = await admin().from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
     if (!buyer) return;
@@ -428,21 +473,27 @@ export async function dmBuyer(order, kind, extra = '') {
     const buyerAirlines = airlineList(order).join(', ');
     const note = md(extra);
     const ref = orderRef(order);
+    const listed = sharesLines(order);
+    const sellersText = listed ? 'your sellers' : seller;
     const lines = {
         CREATED: { title: `📦 Order ${ref} received`, color: EMBED_COLORS.request,
             description: `Your order for ${order.total_qty} aircraft for ${buyerAirlines} (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
         CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: EMBED_COLORS.progress,
             description: `${seller} will sell you ${order.total_qty} aircraft for ${buyerAirlines}. Watch for the sale in-game.` },
         PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: EMBED_COLORS.progress,
-            description: `${seller} delivered more aircraft to ${buyerAirlines}.${extra ? `\n> ${note}` : ''}` },
+            description: `${by ? `**${md(by)}**` : seller} delivered more aircraft to ${buyerAirlines}.${extra ? `\n> ${note}` : ''}` },
+        JOINED: { title: `🤝 ${ref}: ${plain(by)} will also be delivering`, color: EMBED_COLORS.progress,
+            description: `**${md(by)}** joined your order to help deliver the remaining ${order.total_qty - order.filled} aircraft. Each seller lists their own aircraft in-game: buy exactly what each one listed for you (below, and on Echo Market).` },
         HANDOFF: { title: `🔁 ${ref}: looking for a new seller`, color: EMBED_COLORS.request,
             description: `${extra ? note : 'Your seller'} could not finish your order and passed the remaining ${order.total_qty - order.filled} aircraft to the other sellers. Nothing already delivered is lost.` },
         FULFILLED: { title: `✅ Your order ${ref} is complete`, color: EMBED_COLORS.fulfilled,
-            description: `All ${order.total_qty} aircraft were delivered to ${buyerAirlines} by ${seller}. Enjoy the new fleet!` },
+            description: `All ${order.total_qty} aircraft were delivered to ${buyerAirlines} by ${sellersText}. Enjoy the new fleet!` },
         DECLINED: { title: `⛔ Your order ${ref} was declined`, color: EMBED_COLORS.declined,
             description: `Reason: ${extra ? note : 'not given'}\nYou can place a new order any time.` }
     }[kind];
-    if (lines) await sendDM(buyer, { ...lines, url });
+    if (!lines) return;
+    const fields = listed && ['JOINED', 'PROGRESS', 'FULFILLED'].includes(kind) ? [{ name: 'Listed by each seller', value: listed }] : [];
+    await sendDM(buyer, { ...lines, url, fields });
 }
 
 // =====================================================================

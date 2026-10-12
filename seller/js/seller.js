@@ -7,10 +7,37 @@ import {
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo, fmtDuration, toneClass,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
-    orderRef, OrderCode, greetingFor, orderAirlines, airlineNames, orderAlliances, deliverableTo
+    orderRef, OrderCode, greetingFor, orderAirlines, airlineNames, orderAlliances, deliverableTo,
+    orderListValue, orderHelpers, deliveryShares, SellerShares, takeoverIn, TAKEOVER_HOURS, GuidedTour
 } from './ui.js';
 
+// "Helping": this seller joined the order (take over) without being its main seller.
+const isHelping = (order, userId) => orderHelpers(order).some((h) => h.seller_id === userId);
+const MAX_HELPERS = 3;
+// Other sellers may take over once the order has been taken this long without being fully delivered.
+const canTakeOver = (order, userId, now = Date.now()) => ['CLAIMED', 'PARTIAL'].includes(order.status)
+    && order.seller_id !== userId && !isHelping(order, userId) && orderHelpers(order).length < MAX_HELPERS && takeoverIn(order, now) === 0;
+// List price of what is still to deliver: roughly what the sellers pay to buy those aircraft new in-game.
+const listStillToBuy = (order) => orderLines(order).reduce((sum, it) => sum + (Number(it.listPriceUSD) || 0) * Math.max(0, it.qty - it.filled), 0);
+
 const LS_SELL_AS = 'echo_seller_airline_v2';
+const LS_SELLER_TOUR = 'echo_seller_tour_done_v1:';   // + user id
+
+// First-time walkthrough of the seller desk (same look as the buyer site's). Targets: data-tour="…".
+const SELLER_TOUR = [
+    { target: null, icon: 'store', title: (n) => `Welcome to the seller desk${n ? `, ${n}` : ''}!`,
+      text: 'A 30-second tour of how selling works. You can skip it any time.' },
+    { target: 'tab-open', icon: 'inbox', title: () => '1 · Open queue',
+      text: 'New orders land here (and ping the seller role on Discord). Take one to sell it, or Decline to leave it to the other sellers.' },
+    { target: 'sellas', icon: 'building-2', title: () => '2 · Sell as',
+      text: "Pick the airline you sell from. Sharing an alliance with the buyer's airline makes delivery easier." },
+    { target: 'tab-mine', icon: 'truck', title: () => '3 · Deliver',
+      text: 'List the aircraft in-game, then press Update delivery and record what you listed. Each order shows its list value: roughly what buying those aircraft new costs you.' },
+    { target: 'tab-all', icon: 'users', title: () => '4 · Help out',
+      text: `If an order is still unfinished ${TAKEOVER_HOURS} hours after it was taken, other sellers can Take over part of it. The buyer sees exactly who listed what.` },
+    { target: 'account', icon: 'circle-user', title: () => '5 · Your account',
+      text: 'Replay this tour, open the market or sign out here.' }
+];
 
 // Echo hierarchy (sellers.rank). Lead Ambassadors are admins; anyone else can be made admin by hand.
 const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Admin' };
@@ -88,6 +115,7 @@ function App() {
     const [loading, setLoading] = useState(true);
 
     const [tab, setTab] = useState('open');
+    const [tourOpen, setTourOpen] = useState(false);
     const [pageSize, setPageSize] = useState(() => { const v = store.get(LS_PAGE_SIZE, 5); return PAGE_SIZES.includes(v) ? v : 5; });
     const [now, setNow] = useState(() => Date.now());   // ticks every minute so wait times stay current
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
@@ -207,6 +235,11 @@ function App() {
     }, [seller, loadAll]);
 
     const sellAs = airlines.find((a) => a.id === sellAsId) || airlines[0] || null;
+    // First visit to the seller desk: the short tour (once per seller, per device).
+    useEffect(() => {
+        if (seller && userId && !store.get(LS_SELLER_TOUR + userId, false)) setTourOpen(true);
+    }, [Boolean(seller), userId]);
+    const endTour = () => { setTourOpen(false); if (userId) store.set(LS_SELLER_TOUR + userId, true); };
     const messagesOf = (orderId) => messages.filter((m) => m.order_id === orderId);
     const unreadOf = (orderId) => messagesOf(orderId).filter((m) => m.from_role === 'buyer' && m.id > (msgSeen[orderId] || 0)).length;
     const markSeen = (orderId) => {
@@ -246,9 +279,27 @@ function App() {
             setModal({ kind: 'claim', order });
         },
         progress: (order) => setModal({ kind: 'progress', order }),
+        join: (order) => {
+            if (!airlines.length) return toast('Create an airline profile on the market\'s Airlines page first — buyers see which airline is selling to them.', 'error');
+            setModal({ kind: 'join', order });
+        },
         flag: (order) => setModal({ kind: 'flag', order }),
         release: async (order) => {
             const left = order.total_qty - order.filled;
+            if (order.seller_id !== userId && isHelping(order, userId)) {
+                const mineNow = deliveryShares(order).find((sh) => sh.role === 'helper' && sh.sellerId === userId)?.total || 0;
+                const ok = await ask({ title: `Stop delivering ${orderRef(order)}?`, confirmLabel: 'Stop delivering',
+                    message: `${mineNow ? `The ${mineNow} aircraft you listed stay counted as yours. ` : ''}The order's seller carries on with the rest.` });
+                if (ok) act(order, { action: 'release' }, `You stopped delivering ${orderRef(order)}.`);
+                return;
+            }
+            if (orderHelpers(order).length) {
+                const next = orderHelpers(order)[0];
+                const ok = await ask({ title: `Hand ${orderRef(order)} to ${next.seller_airline_name}?`, confirmLabel: 'Hand over',
+                    message: `What you listed stays counted as yours. ${next.seller_airline_name} (who took over part of it) becomes the order's seller and carries on with the rest.` });
+                if (ok) act(order, { action: 'release' }, `${next.seller_airline_name} now handles ${orderRef(order)}.`);
+                return;
+            }
             const ok = order.filled > 0
                 ? await ask({ title: `Pass on the rest of ${orderRef(order)}?`, confirmLabel: 'Pass on the rest',
                     message: `${order.filled} of ${order.total_qty} aircraft are delivered and stay counted. The remaining ${left} go back to the open queue as "partly delivered" for another seller to finish. The buyer is told.` })
@@ -301,7 +352,7 @@ function App() {
         ...(o.items || []).map((i) => i.model)].join(' ').toLowerCase().includes(q);
     const tabs = {
         open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
-        mine: { label: 'My orders', icon: 'briefcase', fn: (o) => o.seller_id === userId && ['CLAIMED', 'PARTIAL'].includes(o.status) },
+        mine: { label: 'My orders', icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         // Admins only: seller performance (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
@@ -331,7 +382,7 @@ function App() {
                 <div className="flex-1"></div>
                 <${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />
                 <a href=${CONFIG.BUYER_URL || "#"} className="hidden sm:flex p-2.5 rounded-full text-slate-400 hover:bg-slate-800 hover:text-white" title="Open the market"><${Icon} name="shopping-bag" className="w-5 h-5" /></a>
-                <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId} />
+                <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId} onTour=${() => setTourOpen(true)} />
             </div>
         </header>
 
@@ -353,7 +404,7 @@ function App() {
 
             <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
                 <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
-                    ${Object.entries(tabs).map(([k, t]) => html`<button key=${k} onClick=${() => setTab(k)}
+                    ${Object.entries(tabs).map(([k, t]) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
                         <${Icon} name=${t.icon} className="w-3.5 h-3.5" />${t.label}${counts[k] != null && html`<span className="opacity-60">${counts[k]}</span>`}
                     </button>`)}
@@ -398,11 +449,18 @@ function App() {
                 const ok = await act(modal.order, { action: 'claim', airlineId }, `You took ${orderRef(modal.order)}. The buyer has been notified.`);
                 if (ok) { setModal(null); setTab('mine'); }
             }} />`}
-        ${modal?.kind === 'progress' && html`<${ProgressModal} order=${modal.order} onClose=${() => setModal(null)}
+        ${modal?.kind === 'join' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} join=${true}
+            onClose=${() => setModal(null)}
+            onConfirm=${async (airlineId) => {
+                setSellAsId(airlineId);
+                const ok = await act(modal.order, { action: 'join', airlineId }, `You took over part of ${orderRef(modal.order)}. The buyer is told you will also be delivering.`);
+                if (ok) { setModal(null); setTab('mine'); }
+            }} />`}
+        ${modal?.kind === 'progress' && html`<${ProgressModal} order=${modal.order} userId=${userId} onClose=${() => setModal(null)}
             onSave=${async (payload) => {
                 let ok = true;
-                if (payload.changed || payload.note) ok = await act(modal.order, { action: 'progress', items: payload.items, note: payload.note });
-                if (ok && payload.sellerNote !== (modal.order.seller_note || '')) ok = await act(modal.order, { action: 'note', sellerNote: payload.sellerNote });
+                if (payload.changed || payload.note) ok = await act(modal.order, { action: 'progress', mine: payload.mine, note: payload.note });
+                if (ok && payload.sellerNote !== undefined && payload.sellerNote !== (modal.order.seller_note || '')) ok = await act(modal.order, { action: 'note', sellerNote: payload.sellerNote });
                 if (ok) { setModal(null); toast(`${orderRef(modal.order)} updated.`, 'success'); }
             }} />`}
         ${modal?.kind === 'flag' && html`<${FlagModal} order=${modal.order} flag=${flags[modal.order.id]} onClose=${() => setModal(null)}
@@ -410,6 +468,8 @@ function App() {
                 if (await act(modal.order, { action: 'flag', flagStatus, flagReason }, 'Flag saved.')) setModal(null);
             }} />`}
 
+        ${tourOpen && html`<${GuidedTour} steps=${SELLER_TOUR} label="Seller desk tour" name=${account?.display_name || account?.discord_username || ''}
+            finishLabel="Start selling" finishIcon="check" onDone=${() => { endTour(); setTab('open'); }} />`}
         <${Toasts} />
         <${DialogHost} />
     </div>`;
@@ -624,14 +684,14 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0 }) {
 }
 
 // Profile picture → small menu. Signing out needs this extra tap, so it can't happen by accident.
-function AccountMenu({ account, seller, airlines, sellAs, onSellAs }) {
+function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
     const [open, setOpen] = useState(false);
     const signOut = async () => {
         setOpen(false);
         if (await ask({ title: 'Sign out of the seller desk?', confirmLabel: 'Sign out', message: "You'll need to sign in with Discord again to take orders." })) sb.auth.signOut();
     };
     return html`<div className="relative">
-        <button onClick=${() => setOpen(!open)} aria-label="Account menu" aria-expanded=${open}
+        <button onClick=${() => setOpen(!open)} aria-label="Account menu" aria-expanded=${open} data-tour="account"
             className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
             <${Avatar} account=${account} /><${Icon} name="chevron-down" className="w-4 h-4 text-slate-500" />
         </button>
@@ -652,6 +712,7 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs }) {
                 </select>
             </label>`}
             <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> Open the market</a>
+            <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
             <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
         </div>`}
     </div>`;
@@ -758,7 +819,7 @@ function SellerThread({ order, messages, onMessage }) {
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     return html`<div className="space-y-2">
-        ${!messages.length && html`<p className="text-xs text-slate-500">No messages yet. Buyers can write once an order has waited 5 days without being fully delivered; you can write to them any time.</p>`}
+        ${!messages.length && html`<p className="text-xs text-slate-500">No messages yet. Buyers can write once an order has waited 24 hours without being fully delivered; you can write to them any time.</p>`}
         ${messages.map((m) => html`<div key=${m.id} className=${`p-2.5 rounded-xl text-sm ${m.from_role === 'buyer' ? 'mr-8 bg-slate-800/70' : 'ml-8 bg-sky-500/10 border border-sky-500/20'}`}>
             <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? `${m.author_name} · buyer` : `${m.author_name} · seller team`} · ${fmtDate(m.created_at)}</p>
             <p className="text-slate-100 whitespace-pre-line break-words">${m.body}</p>
@@ -985,7 +1046,7 @@ function Stat({ label, value, icon, tone }) {
 
 function SellAsPicker({ airlines, sellAs, onChange }) {
     if (!airlines.length) return null;
-    return html`<label className="hidden sm:flex items-center gap-2 pl-3 pr-1 py-1 rounded-full border border-slate-800 bg-slate-900 text-xs" title="The airline buyers see when you take an order">
+    return html`<label data-tour="sellas" className="hidden sm:flex items-center gap-2 pl-3 pr-1 py-1 rounded-full border border-slate-800 bg-slate-900 text-xs" title="The airline buyers see when you take an order">
         <span className="text-slate-500 font-bold">Selling as</span>
         <select value=${sellAs?.id || ''} onChange=${(e) => onChange(e.target.value)} className="bg-transparent font-bold text-white outline-none py-1 pr-1 max-w-40">
             ${airlines.map((a) => html`<option key=${a.id} value=${a.id} className="bg-slate-900">${a.name}</option>`)}
@@ -1025,13 +1086,16 @@ function PassedBadge({ passed, userId, teamSize }) {
 // Which buttons a seller gets for an order.
 function OrderActions({ order, userId, seller, actions, compact }) {
     const mine = order.seller_id === userId;
+    const helping = !mine && isHelping(order, userId);
     const canManage = mine || seller.is_admin;
+    const canUpdate = canManage || helping;
     const size = compact ? 'sm' : 'md';
     const stop = (fn) => (e) => { e.stopPropagation(); fn(order); };
     return html`<div className="flex flex-wrap gap-1.5" onClick=${(e) => e.stopPropagation()}>
         ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>Take order<//>`}
-        ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canManage && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>Update delivery<//>`}
-        ${['CLAIMED', 'PARTIAL'].includes(order.status) && canManage && !compact && html`<${Button} size=${size} variant="secondary" icon=${order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${order.filled > 0 ? 'Pass on the rest' : 'Release'}<//>`}
+        ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canUpdate && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>Update delivery<//>`}
+        ${canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>Take over<//>`}
+        ${['CLAIMED', 'PARTIAL'].includes(order.status) && (canManage || helping) && !compact && html`<${Button} size=${size} variant="secondary" icon=${helping ? 'log-out' : orderHelpers(order).length ? 'forward' : order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${helping ? 'Stop delivering' : orderHelpers(order).length ? 'Hand over' : order.filled > 0 ? 'Pass on the rest' : 'Release'}<//>`}
         ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>Decline<//>`}
         ${seller.is_admin && ACTIVE_STATUSES.includes(order.status) && !compact && html`<${Button} size=${size} variant="ghost" icon="octagon-x" className="!text-rose-300" onClick=${stop(actions.forceDecline)}>Decline for all<//>`}
         ${!compact && html`<${Button} size=${size} variant="ghost" icon="flag" onClick=${stop(actions.flag)}>Flag<//>`}
@@ -1041,6 +1105,8 @@ function OrderActions({ order, userId, seller, actions, compact }) {
 
 function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0 }) {
     const mine = order.seller_id === userId;
+    const helping = !mine && isHelping(order, userId);
+    const joined = orderHelpers(order);
     return html`<article onClick=${onOpen} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 cursor-pointer hover:border-slate-600 ${flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
         <div className="flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex-1 min-w-0 space-y-1">
@@ -1051,6 +1117,8 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOURS</span>`}
+                    ${helping && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOU'RE HELPING</span>`}
+                    ${canTakeOver(order, userId, now) && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" title=${`Taken over ${TAKEOVER_HOURS} hours ago and not finished: you can take over part of it`}>CAN TAKE OVER</span>`}
                     <${WaitChip} order=${order} now=${now} />
                     ${unread > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-400 text-slate-950">
                         <${Icon} name="message-circle" className="w-3 h-3" />${unread} NEW MESSAGE${unread === 1 ? '' : 'S'}</span>`}
@@ -1058,11 +1126,12 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                 </div>
                 <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${orderAlliances(order).join(', ')} · ${order.buyer_name}</span></p>
                 <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>
-                ${order.seller_airline_name && !mine && html`<p className="text-[11px] text-slate-500">Seller: ${order.seller_airline_name} (${order.seller_name})</p>`}
+                ${order.seller_airline_name && (!mine || joined.length > 0) && html`<p className="text-[11px] text-slate-500">Seller: ${order.seller_airline_name} (${order.seller_name})${joined.length ? ` + also delivering: ${joined.map((h) => h.seller_airline_name).join(', ')}` : ''}</p>`}
             </div>
             <div className="flex md:flex-col items-center md:items-end justify-between gap-2 shrink-0">
                 <div className="md:text-right">
                     <p className="font-black text-white">${fmtUSDShort(order.total_usd)}</p>
+                    <p className="text-[11px] text-amber-200/80" title="List value: what buying these aircraft new in-game costs, roughly">List ${fmtUSDShort(orderListValue(order))} · est. cost new</p>
                     <p className="text-[11px] text-slate-500">${order.filled}/${order.total_qty} delivered</p>
                 </div>
                 <${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${true} />
@@ -1103,8 +1172,18 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                 })}</div>
             </div>`}
             <${OrderStepper} order=${order} />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 p-3 rounded-2xl border border-amber-500/20 bg-amber-500/5">
+                <span className="text-sm text-amber-100"><b className="text-white">List value ${fmtUSD(orderListValue(order))}</b> · est. cost of buying these aircraft new in-game</span>
+                ${order.filled > 0 && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status) && html`<span className="text-xs text-amber-200/70">${fmtUSDShort(listStillToBuy(order))} for the ${order.total_qty - order.filled} still to deliver</span>`}
+                <span className="text-xs text-amber-200/70">Buyer pays ${fmtUSDShort(order.total_usd)}</span>
+            </div>
             ${order.seller_airline_name && html`<p className="text-sm text-slate-300">Seller: <b>${order.seller_airline_name}</b> (${order.seller_alliance}) — ${order.seller_name}${order.seller_id === userId ? ' (you)' : ''}</p>`}
-            ${previous.length > 0 && html`<p className="text-sm text-slate-300">Earlier sellers: ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
+            ${['CLAIMED', 'PARTIAL'].includes(order.status) && order.seller_id !== userId && !isHelping(order, userId) && html`<p className="text-xs text-slate-400 flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />
+                ${canTakeOver(order, userId, now) ? `Taken over ${TAKEOVER_HOURS} hours ago and not finished: you can take over part of it. The current seller stays on it.`
+                    : orderHelpers(order).length >= MAX_HELPERS ? 'Enough sellers are already helping with this order.'
+                    : `Other sellers can take over if it isn't finished ${TAKEOVER_HOURS} hours after it was taken (in about ${Math.ceil(takeoverIn(order, now))} h).`}</p>`}
+            <${SellerShares} order=${order} userId=${userId} />
+            ${previous.length > 0 && deliveryShares(order).length < 2 && html`<p className="text-sm text-slate-300">Earlier sellers: ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
                 <span className="text-slate-400"> · delivered ${previous.map((p) => p.delivered).join(' + ')} before passing it on</span></p>`}
             ${order.status === 'PENDING' && passed?.length > 0 && html`<div className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <p className="font-bold text-slate-200">Passed by ${passed.length} of ${teamSize} sellers</p>
@@ -1117,15 +1196,16 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                 <${ProgressBar} value=${order.filled} max=${order.total_qty} />
             </div>
             <div className="overflow-x-auto"><table className="w-full text-sm">
-                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">Aircraft</th><th className="font-bold pb-2 text-right">Delivered</th><th className="font-bold pb-2 text-right">Level</th><th className="font-bold pb-2 text-right">Total</th></tr></thead>
+                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">Aircraft</th><th className="font-bold pb-2 text-right">Delivered</th><th className="font-bold pb-2 text-right">Level</th><th className="font-bold pb-2 text-right">Buyer pays</th><th className="font-bold pb-2 text-right">List value</th></tr></thead>
                 <tbody className="divide-y divide-slate-800">
                     ${items.map((it, i) => html`<tr key=${i}>
                         <td className="py-2 pr-2"><span className="text-slate-100">${it.model}</span> <span className="text-slate-500 text-xs">${it.code}</span>${it.note && html`<span className="block text-xs text-slate-400">“${it.note}”</span>`}</td>
                         <td className=${`py-2 text-right font-bold tabular-nums ${it.filled >= it.qty ? 'text-emerald-300' : ''}`}>${it.filled}/${it.qty}</td>
                         <td className="py-2 text-right">${it.pricePercent}%</td>
                         <td className="py-2 text-right">${fmtUSDShort(it.totalUSD)}</td>
+                        <td className="py-2 text-right text-amber-200/90">${it.listPriceUSD ? fmtUSDShort(it.listPriceUSD * it.qty) : '–'}</td>
                     </tr>`)}
-                    <tr><td className="pt-2 font-bold">Total</td><td className="pt-2 text-right font-bold tabular-nums">${order.filled}/${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td></tr>
+                    <tr><td className="pt-2 font-bold">Total</td><td className="pt-2 text-right font-bold tabular-nums">${order.filled}/${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td><td className="pt-2 text-right font-black text-amber-200">${fmtUSD(orderListValue(order))}</td></tr>
                 </tbody>
             </table></div>
             ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
@@ -1192,7 +1272,7 @@ function PageSizeBar({ total, shown, pageSize, setPageSize }) {
     </div>`;
 }
 
-function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
+function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false }) {
     const buyerAlliances = orderAlliances(order);
     const same = (a) => buyerAlliances.includes(a.alliance);
     const sorted = [...airlines].sort((a, b) => same(b) - same(a));
@@ -1200,10 +1280,11 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
         (sellAs && same(sellAs) ? sellAs : sorted.find(same) || sellAs || sorted[0])?.id);
     const [busy, setBusy] = useState(false);
     const chosen = airlines.find((a) => a.id === airlineId);
-    return html`<${Modal} open=${true} onClose=${onClose} title=${`Take ${orderRef(order)}`} size="sm"
+    return html`<${Modal} open=${true} onClose=${onClose} title=${join ? `Take over ${orderRef(order)}` : `Take ${orderRef(order)}`} size="sm"
         subtitle=${`${plural(order.total_qty, 'aircraft')} for ${airlineNames(order)} · ${fmtUSDShort(order.total_usd)}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} icon="hand" busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>Take order<//>`}>
+            <${Button} icon=${join ? 'users' : 'hand'} busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>${join ? 'Take over' : 'Take order'}<//>`}>
+        ${join && html`<p className="text-sm text-slate-300 mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800">${order.seller_airline_name} took this order over ${TAKEOVER_HOURS} hours ago and hasn't finished it (${order.filled} of ${order.total_qty} delivered). You join them: <b className="text-white">they stay on the order</b>, the buyer is told you will also be delivering, and you record only the aircraft <b className="text-white">you</b> list.</p>`}
         <p className="field-label">Sell as airline</p>
         <div className="space-y-1.5">
             ${sorted.map((a) => html`<button key=${a.id} onClick=${() => setAirlineId(a.id)}
@@ -1217,51 +1298,60 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm }) {
         ${chosen && !same(chosen) && buyerAlliances.length > 0 && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px" />
             ${sorted.some(same) ? `${chosen.name} (${chosen.alliance}) is not in any of the buyer's alliances (${buyerAlliances.join(', ')}).`
                 : `You share no alliance with this buyer (${buyerAlliances.join(', ')}).`} You can still take the order.</p>`}
-        <p className="text-xs text-slate-400 mt-4">The buyer gets notified that <b className="text-slate-200">${chosen?.name}</b> is selling to them. Sell the aircraft in-game, then record deliveries here.</p>
+        <p className="text-xs text-slate-400 mt-4">The buyer gets notified that <b className="text-slate-200">${chosen?.name}</b> ${join ? 'will also be delivering' : 'is selling to them'}. Sell the aircraft in-game, then record deliveries here.</p>
     <//>`;
 }
 
-function ProgressModal({ order, onClose, onSave }) {
+// Update delivery: every seller records only the aircraft they listed in-game themselves (the order's seller,
+// or a seller who took over part of it). Other sellers' aircraft are shown but can't be changed here.
+function ProgressModal({ order, userId, onClose, onSave }) {
     const lines = orderLines(order);
-    const [counts, setCounts] = useState(() => lines.map((it) => it.filled));
+    const shares = deliveryShares(order);
+    const helping = order.seller_id !== userId && isHelping(order, userId);
+    const me = (helping ? shares.find((sh) => sh.role === 'helper' && sh.sellerId === userId) : shares.find((sh) => sh.role === 'seller'));
+    const start = me?.items || lines.map(() => 0);
+    const others = lines.map((it, i) => it.filled - start[i]);
+    const [counts, setCounts] = useState(start);
     const [note, setNote] = useState('');
     const [sellerNote, setSellerNote] = useState(order.seller_note || '');
     const [busy, setBusy] = useState(false);
-    const setLine = (i, v) => setCounts((c) => c.map((n, j) => (j === i ? Math.max(lines[i].locked, Math.min(lines[i].qty, Math.floor(Number(v) || 0))) : n)));
-    const total = counts.reduce((a, b) => a + b, 0);
+    const maxMine = (i) => Math.max(0, lines[i].qty - others[i]);
+    const setLine = (i, v) => setCounts((c) => c.map((n, j) => (j === i ? Math.max(0, Math.min(maxMine(i), Math.floor(Number(v) || 0))) : n)));
+    const total = counts.reduce((sum, n, i) => sum + n + others[i], 0);
     const max = order.total_qty;
     const next = total === 0 ? 'CLAIMED' : total >= max ? 'FULFILLED' : 'PARTIAL';
-    const changed = counts.some((n, i) => n !== lines[i].filled);
+    const changed = counts.some((n, i) => n !== start[i]);
+    const actingFor = order.seller_id !== userId && !helping;   // an admin updating for the order's seller
     return html`<${Modal} open=${true} onClose=${onClose} title=${`Update delivery · ${orderRef(order)}`} size="md"
-        subtitle=${`${airlineNames(order)} · ${plural(lines.length, 'aircraft type')}`}
+        subtitle=${`${airlineNames(order)} · ${plural(lines.length, 'aircraft type')}${actingFor ? ` · for ${order.seller_airline_name}` : ''}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ items: counts, changed, note: note.trim(), sellerNote: sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
+            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ mine: counts, changed, note: note.trim(), sellerNote: helping ? undefined : sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
         <div className="space-y-5">
             <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                    <p className="field-label !mb-0">Delivered in-game so far, per aircraft type</p>
-                    <button onClick=${() => setCounts(lines.map((it) => it.qty))} className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">Everything delivered</button>
+                <div className="flex items-center justify-between gap-2">
+                    <p className="field-label !mb-0">${actingFor ? `Listed in-game by ${order.seller_airline_name}` : 'Listed in-game by you'}, per aircraft type</p>
+                    <button onClick=${() => setCounts(lines.map((_, i) => maxMine(i)))} className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">All the rest</button>
                 </div>
                 ${lines.map((it, i) => html`<div key=${i} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-bold text-white min-w-0 truncate">${it.model} <span className="text-slate-500 font-medium">@${it.pricePercent}%</span></p>
-                        ${it.locked > 0 && html`<span className="text-[10px] text-slate-400 shrink-0">${it.locked} by earlier seller</span>`}
+                        ${others[i] > 0 && html`<span className="text-[10px] text-slate-400 shrink-0">${others[i]} by other sellers</span>`}
                     </div>
                     <div className="flex items-center gap-2">
-                        <button className="stepper !w-9 !h-9" aria-label=${`One less ${it.model}`} disabled=${counts[i] <= it.locked} onClick=${() => setLine(i, counts[i] - 1)}><${Icon} name="minus" /></button>
-                        <input type="number" value=${counts[i]} min=${it.locked} max=${it.qty} onChange=${(e) => setLine(i, e.target.value)} className="input !w-20 !py-2 text-center font-bold" aria-label=${`${it.model} delivered`} />
+                        <button className="stepper !w-9 !h-9" aria-label=${`One less ${it.model}`} disabled=${counts[i] <= 0} onClick=${() => setLine(i, counts[i] - 1)}><${Icon} name="minus" /></button>
+                        <input type="number" value=${counts[i]} min="0" max=${maxMine(i)} onChange=${(e) => setLine(i, e.target.value)} className="input !w-20 !py-2 text-center font-bold" aria-label=${`${it.model} listed`} />
                         <button className="stepper !w-9 !h-9" aria-label=${`One more ${it.model}`} onClick=${() => setLine(i, counts[i] + 1)}><${Icon} name="plus" /></button>
-                        <span className="text-sm text-slate-400">of ${it.qty}</span>
-                        <button onClick=${() => setLine(i, it.qty)} className="ml-auto px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800">All</button>
+                        <span className="text-sm text-slate-400">${others[i] > 0 ? `+ ${others[i]} = ${counts[i] + others[i]}` : ''} of ${it.qty}</span>
+                        <button onClick=${() => setLine(i, maxMine(i))} className="ml-auto px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800">All</button>
                     </div>
-                    <${ProgressBar} value=${counts[i]} max=${it.qty} />
+                    <${ProgressBar} value=${counts[i] + others[i]} max=${it.qty} />
                 </div>`)}
-                <p className="text-xs text-slate-400">Total ${total} of ${max} · new status: <b className="text-slate-200">${STATUS[next].label}</b></p>
+                <p className="text-xs text-slate-400">Delivered in total ${total} of ${max} · new status: <b className="text-slate-200">${STATUS[next].label}</b></p>
             </div>
             <label className="block"><span className="field-label">Update message (optional, shown in the buyer's timeline)</span>
-                <input value=${note} maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder="e.g. First 5 delivered at WIII" /></label>
-            <label className="block"><span className="field-label">Seller note (pinned on the order, buyer can see)</span>
-                <textarea value=${sellerNote} maxLength="1000" rows="2" onChange=${(e) => setSellerNote(e.target.value)} className="input"></textarea></label>
+                <input value=${note} maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder="e.g. First 5 listed, buy them at WIII" /></label>
+            ${!helping && html`<label className="block"><span className="field-label">Seller note (pinned on the order, buyer can see)</span>
+                <textarea value=${sellerNote} maxLength="1000" rows="2" onChange=${(e) => setSellerNote(e.target.value)} className="input"></textarea></label>`}
         </div>
     <//>`;
 }

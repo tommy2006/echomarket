@@ -8,7 +8,7 @@ import {
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
     pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor,
-    orderAirlines, airlineNames, orderAlliances, deliverableTo
+    orderAirlines, airlineNames, orderAlliances, deliverableTo, orderHelpers, deliveryShares, SellerShares, GuidedTour
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
@@ -21,6 +21,15 @@ const LS_CART = 'echo_cart_v2';
 const LS_DEFAULT_AIRLINE = 'echo_default_airline_v2';
 const LS_PRICE_LEVEL = 'echo_price_level_v2';
 const LS_TOUR = 'echo_tour_done_v1:';   // + user id
+const LS_RULES = 'echo_rules_seen_v1:'; // + user id (backup for accounts.rules_seen_at)
+
+// The alliance's market rules (docs/market-rules.txt), word for word.
+const MARKET_RULES = [
+    'No arguments over the price or amount of aircraft(s).',
+    'Do not re-sell the planes that you have bought through the market to outside. (You can sell them back in our alliance if you do not need the planes anymore, but you must sell them back at the percentage which you purchased it at)',
+    'Do not buy any planes from the market if you did not order them.',
+    'Refrain from having a full-on conversation within the tickets.'
+];
 
 const VIEWS = [
     { id: 'home', label: 'Home', icon: 'house' },
@@ -79,6 +88,8 @@ function App() {
     const [airlineForm, setAirlineForm] = useState(null); // { airline? }
     const [highlightOrder, setHighlightOrder] = useState(null);
     const [tourOpen, setTourOpen] = useState(false);
+    const [rulesOpen, setRulesOpen] = useState(false);
+    const [rulesFirst, setRulesFirst] = useState(false);   // first time: "I understand" marks them as read
 
     const userId = session?.user?.id;
 
@@ -177,14 +188,31 @@ function App() {
         return () => { sb.removeChannel(channel); document.removeEventListener('visibilitychange', onVisible); };
     }, [userId, loadAll]);
 
-    // ---------------- first-time walkthrough
-    // Shown once to new buyers: account under 7 days old, no orders yet, not finished/skipped on this device.
+    // ---------------- market rules: shown once on the first sign-in (remembered on the account), then in the 📜 menu
     useEffect(() => {
-        if (!dataReady || !account || !userId) return;
+        if (!account || !userId) return;
+        if (account.rules_seen_at || store.get(LS_RULES + userId, false)) return;
+        setRulesFirst(true);
+        setRulesOpen(true);
+    }, [account?.id, userId]);
+    const closeRules = async () => {
+        setRulesOpen(false);
+        if (!rulesFirst) return;
+        setRulesFirst(false);
+        store.set(LS_RULES + userId, true);
+        const now = new Date().toISOString();
+        setAccount((a) => a && { ...a, rules_seen_at: now });
+        await sb.from('accounts').update({ rules_seen_at: now }).eq('id', userId);   // older database: the device remembers
+    };
+
+    // ---------------- first-time walkthrough
+    // Shown once to new buyers (after the rules): account under 7 days old, no orders yet, not finished/skipped on this device.
+    useEffect(() => {
+        if (!dataReady || !account || !userId || rulesOpen) return;
         if (store.get(LS_TOUR + userId, false)) return;
         const isNew = Date.now() - new Date(account.created_at).getTime() < 7 * 864e5;
         if (isNew && orders.length === 0) setTourOpen(true);
-    }, [dataReady, account?.id, userId]);
+    }, [dataReady, account?.id, userId, rulesOpen]);
     const endTour = () => { setTourOpen(false); store.set(LS_TOUR + userId, true); };
 
     // ---------------- derived
@@ -238,7 +266,7 @@ function App() {
     return html`<div className="min-h-screen pb-28 md:pb-12">
         <${Header} ...${shared} view=${view} cartCount=${cartCount} unread=${unread} isSeller=${isSeller}
             defaultAirline=${defaultAirline} activeCount=${activeOrders.length}
-            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} onTour=${() => setTourOpen(true)} />
+            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} onTour=${() => setTourOpen(true)} onRules=${() => setRulesOpen(true)} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-8 space-y-6">
             ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
@@ -292,8 +320,11 @@ function App() {
                 if (isNew && airlines.length === 0) go('shop');
             }} />
 
-        ${tourOpen && html`<${Tour} name=${account?.display_name || account?.discord_username || ''} hasAirline=${airlines.length > 0}
-            onDone=${(createAirline) => { endTour(); if (createAirline) { go('airlines'); setAirlineForm({}); } }} />`}
+        ${rulesOpen && html`<${RulesModal} first=${rulesFirst} onClose=${closeRules} />`}
+
+        ${tourOpen && html`<${GuidedTour} steps=${TOUR_STEPS} label="Echo Market tour" name=${account?.display_name || account?.discord_username || ''}
+            finishLabel=${airlines.length ? 'Done' : 'Create my airline'} finishIcon=${airlines.length ? 'check' : 'plus'}
+            onDone=${(finished) => { endTour(); if (finished && !airlines.length) { go('airlines'); setAirlineForm({}); } }} />`}
 
         <${Toasts} />
         <${DialogHost} />
@@ -313,82 +344,24 @@ const TOUR_STEPS = [
     { target: 'cart', icon: 'shopping-cart', title: () => '3 · Review and send',
       text: 'Your picks collect here. Pick which of your airlines can receive them (one or more), then send the order.' },
     { target: 'bell', icon: 'bell', title: () => '4 · Follow your order',
-      text: "A seller takes it and sells you the aircraft in-game. Updates land here; turn on Discord DMs to get them even when you're away." }
+      text: "A seller takes it and sells you the aircraft in-game. Updates land here; turn on Discord DMs to get them even when you're away." },
+    { target: 'rules', icon: 'scroll-text', title: () => '5 · Market rules',
+      text: 'The alliance market rules are always one tap away, right here.' }
 ];
 
-// The visible element for a tour anchor (desktop top bar or phone bottom bar).
-function tourTarget(key) {
-    if (!key) return null;
-    return [...document.querySelectorAll(`[data-tour="${key}"]`)].find((el) => {
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-    }) || null;
-}
-
-function Tour({ name, hasAirline, onDone }) {
-    const [i, setI] = useState(0);
-    const [rect, setRect] = useState(null);
-    const step = TOUR_STEPS[i];
-    const last = i === TOUR_STEPS.length - 1;
-
-    useEffect(() => {
-        const measure = () => {
-            const el = tourTarget(step.target);
-            setRect(el ? el.getBoundingClientRect() : null);
-        };
-        measure();
-        // Re-measure on resize, rotation and layout changes (the target moves between top and bottom bars).
-        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
-        ro?.observe(document.documentElement);
-        window.addEventListener('resize', measure);
-        window.addEventListener('scroll', measure, true);
-        return () => { ro?.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
-    }, [i]);
-    useEffect(() => {
-        const onKey = (e) => {
-            if (e.key === 'Escape') onDone(false);
-            if (e.key === 'ArrowRight' && !last) setI(i + 1);
-            if (e.key === 'ArrowLeft' && i > 0) setI(i - 1);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [i]);
-
-    // Card goes below the target, or above it when the target is near the bottom (phone nav bar).
-    const pad = 8, vw = window.innerWidth, vh = window.innerHeight, cardW = Math.min(340, vw - 32);
-    let cardStyle = { width: cardW + 'px' };
-    if (rect) {
-        const left = Math.max(16, Math.min(vw - cardW - 16, rect.left + rect.width / 2 - cardW / 2));
-        cardStyle = rect.top > vh / 2
-            ? { ...cardStyle, left: left + 'px', bottom: (vh - rect.top + pad + 10) + 'px' }
-            : { ...cardStyle, left: left + 'px', top: (rect.bottom + pad + 10) + 'px' };
-    }
-
-    return html`<div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Echo Market tour">
-        ${rect ? html`<div className="absolute rounded-2xl ring-2 ring-sky-300 transition-all duration-300 pointer-events-none"
-            style=${{ left: rect.left - pad + 'px', top: rect.top - pad + 'px', width: rect.width + pad * 2 + 'px', height: rect.height + pad * 2 + 'px',
-                boxShadow: '0 0 0 9999px rgba(3, 6, 20, 0.72)' }}></div>`
-            : html`<div className="absolute inset-0 bg-[rgba(3,6,20,0.72)]"></div>`}
-        <div className=${`absolute card !bg-slate-900 p-5 shadow-2xl animate-pop ${rect ? '' : 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2'}`} style=${cardStyle}>
-            <div className="flex items-start gap-3">
-                <span className="w-10 h-10 shrink-0 rounded-xl bg-sky-400/15 text-sky-300 flex items-center justify-center"><${Icon} name=${step.icon} className="w-5 h-5" /></span>
-                <div className="min-w-0">
-                    <h2 className="font-extrabold text-white leading-snug">${step.title(name)}</h2>
-                    <p className="text-sm text-slate-300 mt-1 leading-relaxed">${step.text}</p>
-                </div>
-            </div>
-            <div className="flex items-center gap-2 mt-4">
-                <div className="flex gap-1 mr-auto" aria-label=${`Step ${i + 1} of ${TOUR_STEPS.length}`}>
-                    ${TOUR_STEPS.map((_, j) => html`<span key=${j} className=${`h-1.5 rounded-full transition-all ${j === i ? 'w-5 bg-sky-400' : 'w-1.5 bg-slate-700'}`}></span>`)}
-                </div>
-                ${!last && html`<${Button} variant="ghost" size="sm" onClick=${() => onDone(false)}>Skip<//>`}
-                ${i > 0 && html`<${Button} variant="secondary" size="sm" onClick=${() => setI(i - 1)}>Back<//>`}
-                ${last
-                    ? html`<${Button} size="sm" icon=${hasAirline ? 'check' : 'plus'} onClick=${() => onDone(!hasAirline)}>${hasAirline ? 'Done' : 'Create my airline'}<//>`
-                    : html`<${Button} size="sm" onClick=${() => setI(i + 1)}>${i === 0 ? 'Show me' : 'Next'}<//>`}
-            </div>
-        </div>
-    </div>`;
+// The market rules. First sign-in: must be acknowledged; afterwards opened from the 📜 button or the account menu.
+function RulesModal({ first, onClose }) {
+    return html`<${Modal} open=${true} onClose=${onClose} title="Echo Market rules" size="sm"
+        subtitle=${first ? 'Please read these before you order.' : 'The alliance market rules.'}
+        footer=${html`<${Button} icon=${first ? 'check' : null} onClick=${onClose}>${first ? 'I understand' : 'Close'}<//>`}>
+        <ol className="space-y-3">
+            ${MARKET_RULES.map((rule, i) => html`<li key=${i} className="flex gap-3 text-sm text-slate-200 leading-relaxed">
+                <span className="w-6 h-6 shrink-0 rounded-full bg-sky-400/15 text-sky-300 text-xs font-black flex items-center justify-center">${i + 1}</span>
+                <span>${rule}</span>
+            </li>`)}
+        </ol>
+        <p className="text-xs text-slate-500 mt-4">Breaking the rules can lead to a warning or a market ban.</p>
+    <//>`;
 }
 
 function describeEvent(ev) {
@@ -408,7 +381,7 @@ function describe(ev) {
         case 'ADMIN_INFO': return `📣 Message from the Market Admins: ${ev.message}`;
         case 'SELLER_MESSAGE': return `${ev.order_id}: the seller team wrote "${ev.message}"`;
         case 'CLAIMED': return `${ev.order_id}: ${ev.message || 'A seller took your order.'}`;
-        case 'RELEASED': return `${ev.order_id}: the seller released it — waiting for another seller.`;
+        case 'RELEASED': return /stopped delivering/.test(ev.message || '') ? `${ev.order_id}: ${ev.message}` : `${ev.order_id}: the seller released it — waiting for another seller.`;
         case 'HANDOFF': return `${ev.order_id}: ${ev.message || 'the seller passed on the rest — waiting for a new seller.'}`;
         case 'PROGRESS': return `${ev.order_id}: ${ev.filled} delivered. ${ev.message || ''}`.trim();
         case 'FULFILLED': return `${ev.order_id} is fully delivered! ${ev.message || ''}`.trim();
@@ -416,6 +389,7 @@ function describe(ev) {
         case 'NOTE': return `${ev.order_id}: new note from the seller — "${ev.message}"`;
         case 'CANCELLED': return `${ev.order_id} was cancelled.`;
         case 'RENAMED': return `${ev.order_id}: ${ev.message}`;
+        case 'JOINED': return `${ev.order_id}: ${ev.message}`;
         default: return `${ev.order_id}: ${ev.message || 'updated'}`;
     }
 }
@@ -427,7 +401,7 @@ function FullPageSpinner() {
     return html`<div className="min-h-screen flex items-center justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
 }
 
-function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour }) {
+function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour, onRules }) {
     const [menu, setMenu] = useState(false);
     const menuRef = useRef(null);
     // The account menu closes when you click or tap anywhere outside it, or press Escape.
@@ -453,6 +427,9 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                 </a>`)}
             </nav>
             <div className="flex-1"></div>
+            <button onClick=${onRules} className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-400 hover:text-slate-200" aria-label="Market rules" title="Market rules" data-tour="rules">
+                <${Icon} name="scroll-text" className="w-[18px] h-[18px]" />
+            </button>
             ${session ? html`
                 <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open your order" data-tour="cart">
                     <${Icon} name="shopping-cart" className="w-5 h-5" />
@@ -475,6 +452,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                         <a href="#airlines" className="menu-item"><${Icon} name="building-2" /> My airlines</a>
                         <a href="#orders" className="menu-item"><${Icon} name="package" /> My orders</a>
                         <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
+                        <button onClick=${onRules} className="menu-item w-full"><${Icon} name="scroll-text" /> Market rules</button>
                         ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> Seller dashboard</a>`}
                         <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
                     </div>`}
@@ -645,7 +623,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                         <div className="min-w-0">
                             <p className="font-bold text-white truncate">${airlineNames(o)}</p>
                             <${OrderCode} order=${o} className="text-[11px]" />
-                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${o.seller_airline_name}`
+                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${[o.seller_airline_name, ...orderHelpers(o).map((h) => h.seller_airline_name)].join(' + ')}`
                                 : o.filled > 0 ? 'Partly delivered · waiting for a new seller' : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
                         </div>
                         <${StatusBadge} status=${displayStatus(o)} />
@@ -1130,7 +1108,17 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
             </div>
         </div>`}
 
-        ${previous.length > 0 && !closed && html`<p className="text-xs text-slate-400 flex items-start gap-1.5">
+        ${orderHelpers(order).length > 0 && !closed && html`<div className="space-y-1.5">
+            ${orderHelpers(order).map((h) => html`<p key=${h.seller_id} className="flex items-center gap-2 text-sm text-sky-200">
+                <${Icon} name="users" className="w-4 h-4 text-sky-300" /><span><b className="text-white">${h.seller_airline_name}</b>${h.seller_alliance ? ` (${h.seller_alliance})` : ''} will also be delivering.</span></p>`)}
+        </div>`}
+
+        ${deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0).length > 1 && order.status !== 'CANCELLED' && html`<div className="space-y-1.5">
+            <${SellerShares} order=${order} />
+            ${!closed && html`<p className="text-xs text-slate-400">Several sellers are delivering this order. In-game, buy from each seller exactly the aircraft they listed for you (above).</p>`}
+        </div>`}
+
+        ${previous.length > 0 && !closed && deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0).length < 2 && html`<p className="text-xs text-slate-400 flex items-start gap-1.5">
             <${Icon} name="history" className="w-3.5 h-3.5 mt-px" />
             <span>Earlier: ${previous.map((p) => `${p.seller_airline_name} delivered ${p.delivered}`).join(' · ')}</span>
         </p>`}
@@ -1373,18 +1361,18 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
 
 // =========================================================================
 //  Messages with the seller team about one order. Buyers can start once the order has waited
-//  CONTACT_AFTER_DAYS without being fully delivered (the server checks the same rule), and can always
+//  CONTACT_AFTER_HOURS without being fully delivered (the server checks the same rule), and can always
 //  answer when a seller has written.
 // =========================================================================
-const CONTACT_AFTER_DAYS = 5;
+const CONTACT_AFTER_HOURS = 24;
 function OrderThread({ order, messages, onMessage }) {
     const [open, setOpen] = useState(false);
     const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
     const openStatus = ['PENDING', 'CLAIMED', 'PARTIAL'].includes(order.status);
-    const ageDays = (Date.now() - new Date(order.created_at).getTime()) / 864e5;
+    const ageHours = (Date.now() - new Date(order.created_at).getTime()) / 36e5;
     const sellerWrote = messages.some((m) => m.from_role === 'seller');
-    const canWrite = (openStatus && ageDays >= CONTACT_AFTER_DAYS) || sellerWrote;
+    const canWrite = (openStatus && ageHours >= CONTACT_AFTER_HOURS) || sellerWrote;
     if (!messages.length && !canWrite) return null;
     const send = async () => {
         if (!text.trim()) return;
@@ -1398,7 +1386,7 @@ function OrderThread({ order, messages, onMessage }) {
     };
     if (!messages.length && !open) {
         return html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20">
-            <span className="flex-1 text-sm text-amber-100">This order has waited over ${CONTACT_AFTER_DAYS} days without being fully delivered. You can contact the seller team about it.</span>
+            <span className="flex-1 text-sm text-amber-100">This order has waited over ${CONTACT_AFTER_HOURS} hours without being fully delivered. You can contact the seller team about it.</span>
             <${Button} size="sm" variant="secondary" icon="message-circle" onClick=${() => setOpen(true)}>Contact the seller team<//>
         </div>`;
     }
