@@ -15,14 +15,18 @@
 //   decline   { reason, force }        pass on an open order. The order is only DECLINED for the buyer
 //                                      when every active seller has passed; the last one writes the reason.
 //                                      Admins can send force: true to decline it for everyone at once.
+//   missing   { reportId, outcome, note, culpritDiscordId }  close a buyer's missing-plane report: 'confirmed'
+//                                      (theft: posted to the moderation log; a culprit ID gets an automatic warning)
+//                                      or 'not_theft'. Sellers on the order and admins only.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
-    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, HttpError
+    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, logModeration, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
+import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
 const CLOSED = ['FULFILLED', 'CANCELLED', 'DECLINED'];
@@ -342,6 +346,69 @@ Answer on Echo Market (Orders).`,
                 });
             }
             return res.json({ ok: true, order, message: msg });
+        }
+
+        case 'missing': {
+            // Close a buyer's missing-plane report after checking in-game who bought the planes.
+            // { reportId, outcome: 'confirmed' | 'not_theft', note, culpritDiscordId (optional, confirmed only) }
+            const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
+            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can close missing-plane reports.');
+            const { data: report } = await db.from('missing_reports').select('*')
+                .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
+            if (!report) throw new HttpError(404, 'Report not found.');
+            if (report.status !== 'OPEN') throw new HttpError(409, `This report was already closed by ${report.resolved_by_name || 'another seller'}.`);
+            const outcome = { confirmed: 'CONFIRMED', not_theft: 'NOT_THEFT' }[input.outcome];
+            if (!outcome) throw new HttpError(400, 'Choose: theft confirmed, or not a theft.');
+            const note = cleanText(input.note, 1000);
+            if (!note) throw new HttpError(400, 'Write what you found. The buyer sees it.');
+            const culpritId = outcome === 'CONFIRMED' ? String(input.culpritDiscordId || '').trim() : '';
+            if (culpritId) {
+                if (!/^\d{17,20}$/.test(culpritId)) throw new HttpError(400, 'A Discord user ID is 17–20 digits: right-click the user → Copy User ID.');
+                if (culpritId === order.buyer_discord_id) throw new HttpError(400, "That's the buyer's own Discord ID.");
+                if (culpritId === account.discord_id) throw new HttpError(400, "That's your own Discord ID.");
+            }
+            // Close it first (only once, even if two sellers press at the same moment), then warn and log.
+            const { data: closed } = await db.from('missing_reports').update({
+                status: outcome, resolved_by: account.id, resolved_by_name: accountName(account),
+                resolved_at: new Date().toISOString(), resolution_note: note
+            }).eq('id', report.id).eq('status', 'OPEN').select();
+            if (!closed?.length) throw new HttpError(409, 'Another seller closed this report just now.');
+            let result = closed[0];
+            let culprit = null, warning = null;
+            if (culpritId) {
+                culprit = await resolveTarget({ discordId: culpritId });
+                const sentWarning = await sendMarketMessage({
+                    target: culprit, kind: 'warning', source: 'theft',
+                    by: { accountId: account.id, name: accountName(account) },
+                    body: `You bought aircraft on the in-game market that were listed for another Echo Market buyer (order ${ref}). Only buy planes you ordered: that is a market rule. Another case can lead to a market ban.`
+                });
+                warning = sentWarning;
+                const { data: linked } = await db.from('missing_reports').update({ warning_id: sentWarning.message.id }).eq('id', report.id).select();
+                if (linked?.length) result = linked[0];
+            }
+            const logged = outcome === 'CONFIRMED' ? await logModeration({
+                title: `🚨 Plane theft confirmed · ${plain(ref)}`, color: EMBED_COLORS.declined,
+                fields: [
+                    { name: 'Buyer', value: `${/^\d+$/.test(order.buyer_discord_id || '') ? `<@${order.buyer_discord_id}> ` : ''}(${md(order.buyer_name || '-')})`, inline: true },
+                    { name: 'Confirmed by', value: md(accountName(account)), inline: true },
+                    { name: 'Culprit', value: culprit ? `<@${culprit.discordId}> (${md(culprit.name)}) · automatic warning sent` : 'not identified', inline: false },
+                    { name: "Buyer's report", value: md(report.details).slice(0, 1000) },
+                    { name: 'Findings', value: md(note).slice(0, 1000) }
+                ]
+            }) : null;
+            await addEvent(order, 'MISSING', account, {
+                message: outcome === 'CONFIRMED' ? `Missing planes checked: theft confirmed. ${note}` : `Missing planes checked: not a theft. ${note}`
+            });
+            if (order.buyer_id) {
+                const { data: buyer } = await db.from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
+                if (buyer) await sendDM(buyer, {
+                    title: `🔎 Your missing-plane report on ${ref}`,
+                    color: outcome === 'CONFIRMED' ? EMBED_COLORS.declined : EMBED_COLORS.progress,
+                    description: `${outcome === 'CONFIRMED' ? 'The sellers confirmed that someone else bought planes listed for you.' : 'The sellers checked your report: it was not a theft.'}\n> ${md(note).slice(0, 1200)}`,
+                    url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
+                });
+            }
+            return res.json({ ok: true, order, report: result, warned: Boolean(warning), logged });
         }
 
         case 'flag': {

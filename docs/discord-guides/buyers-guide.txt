@@ -23,5 +23,6 @@ If more sellers join (*"… will also be delivering"*), your order shows **how m
 
 ## 5 · Need help?
 Not fully delivered after **24 hours**? Open it under **Orders → Contact the seller team**.
+Planes gone before you could buy them? Press **Report missing planes** on the order and say how many and which type. *The sellers check in-game who took them.*
 
 > ⚠️ Only buy planes **you** ordered, and never re-sell market planes outside the alliance.

@@ -250,9 +250,10 @@ export function shareText(order, share) {
     return parts.length ? parts.join(', ') : 'nothing listed yet';
 }
 // One line per seller for Discord: "**Airline** (Alliance): 2× A320neo". Only when 2+ sellers are involved.
-function sharesLines(order) {
+// minSellers 1: also when a single seller delivered (missing-plane reports).
+export function sharesLines(order, minSellers = 2) {
     const shares = deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0);
-    if (shares.length < 2) return null;
+    if (!shares.length || shares.length < minSellers) return null;
     return shares.map((sh) => `**${md(sh.airline || sh.name)}**${sh.alliance ? ` (${md(sh.alliance)})` : ''}${sh.role === 'earlier' ? ' _(earlier)_' : sh.role === 'helper' ? ' _(also delivering)_' : ''}: ${shareText(order, sh)}`).join('\n').slice(0, 1000);
 }
 
@@ -673,6 +674,17 @@ export async function setSetting(key, value, by) {
 }
 
 export const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
+// Missing-plane reports: who to alert. Every seller who delivered on the order (now or earlier) and every
+// admin (admin flag, Lead Ambassador or Market Admin), each once. Returns their market accounts.
+export async function missingReportRecipients(order) {
+    const ids = new Set(deliveryShares(order).map((sh) => sh.sellerId).filter(Boolean));
+    const { data: team } = await admin().from('sellers').select('user_id, is_admin, rank, market_admin').eq('active', true);
+    (team || []).filter(isAdminSeller).forEach((s) => ids.add(s.user_id));
+    if (!ids.size) return [];
+    const { data } = await admin().from('accounts').select('*').in('id', [...ids]);
+    return data || [];
+}
+
 export async function logModeration(embed) {
     if (!BOT_TOKEN || !LOG_CHANNEL_ID) return false;
     try {

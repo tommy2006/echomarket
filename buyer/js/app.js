@@ -73,6 +73,7 @@ function App() {
     const [events, setEvents] = useState([]);
     const [marketMessages, setMarketMessages] = useState([]);   // from Market Admins (info / warning)
     const [orderMessages, setOrderMessages] = useState([]);     // with the seller team, per order
+    const [missingReports, setMissingReports] = useState([]);   // "report missing planes", per order
     const [standing, setStanding] = useState(null);             // /api/me: Echo server member? market-banned?
     const [dataReady, setDataReady] = useState(false);
     const [pricelist, setPricelist] = useState([]);
@@ -119,7 +120,7 @@ function App() {
     // ---------------- load account data
     const loadAll = useCallback(async () => {
         if (!userId) return;
-        const [acc, sel, air, all, ord, ev, mm, om] = await Promise.all([
+        const [acc, sel, air, all, ord, ev, mm, om, mr] = await Promise.all([
             sb.from('accounts').select('*').eq('id', userId).maybeSingle(),
             sb.from('sellers').select('active').eq('user_id', userId).maybeSingle(),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
@@ -127,7 +128,8 @@ function App() {
             sb.from('orders').select('*').eq('buyer_id', userId).order('created_at', { ascending: false }).limit(300),
             sb.from('order_events').select('*').eq('buyer_id', userId).order('created_at', { ascending: false }).limit(200),
             sb.from('market_messages').select('*').eq('account_id', userId).order('created_at', { ascending: false }).limit(100),
-            sb.from('order_messages').select('*').eq('buyer_id', userId).order('created_at').limit(500)
+            sb.from('order_messages').select('*').eq('buyer_id', userId).order('created_at').limit(500),
+            sb.from('missing_reports').select('*').eq('buyer_id', userId).order('created_at').limit(200)
         ]);
         const failed = [acc, air, all, ord, ev].find((r) => r.error);
         if (failed) toast('Could not load your data: ' + failed.error.message, 'error');
@@ -139,6 +141,7 @@ function App() {
         setEvents(ev.data || []);
         setMarketMessages(mm.data || []);
         setOrderMessages(om.data || []);
+        setMissingReports(mr.data || []);   // (empty until schema.sql has the table)
         setDataReady(true);
     }, [userId]);
 
@@ -172,6 +175,9 @@ function App() {
                 const text = describeEvent(asInboxItem.market(p.new));
                 toast(text, p.new.kind === 'warning' ? 'error' : 'info');
                 notifyBrowser('Echo Market', text, 'mm' + p.new.id);
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_reports', filter: `buyer_id=eq.${userId}` }, (p) => {
+                if (p.new?.id) setMissingReports((list) => [...list.filter((r) => r.id !== p.new.id), p.new]);
             })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `buyer_id=eq.${userId}` }, (p) => {
                 setOrderMessages((list) => [...list.filter((m) => m.id !== p.new.id), p.new]);
@@ -282,6 +288,7 @@ function App() {
                 onPick=${(model) => (requireAirline() ? setSheetModel(model) : null)} />`}
             ${view === 'orders' && html`<${OrdersView} ...${shared} highlight=${highlightOrder}
                 orderMessages=${orderMessages} onMessage=${(m) => setOrderMessages((list) => [...list.filter((x) => x.id !== m.id), m])}
+                missingReports=${missingReports} onReported=${(r) => setMissingReports((list) => [...list.filter((x) => x.id !== r.id), r])}
                 onOrderChanged=${(o) => setOrders((list) => list.map((x) => (x.id === o.id ? o : x)))} />`}
             ${view === 'airlines' && html`<${AirlinesView} ...${shared}
                 defaultAirline=${defaultAirline} setDefaultAirlineId=${setDefaultAirlineId}
@@ -390,6 +397,7 @@ function describe(ev) {
         case 'CANCELLED': return `${ev.order_id} was cancelled.`;
         case 'RENAMED': return `${ev.order_id}: ${ev.message}`;
         case 'JOINED': return `${ev.order_id}: ${ev.message}`;
+        case 'MISSING': return `${ev.order_id}: ${ev.message}`;
         default: return `${ev.order_id}: ${ev.message || 'updated'}`;
     }
 }
@@ -1007,7 +1015,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
 // =========================================================================
 //  Orders
 // =========================================================================
-function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged, orderMessages = [], onMessage }) {
+function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged, orderMessages = [], onMessage, missingReports = [], onReported }) {
     const [tab, setTab] = useState('active');
     const [airlineFilter, setAirlineFilter] = useState('ALL');
     useEffect(() => {
@@ -1052,11 +1060,12 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
             action=${!orders.length && html`<${Button} icon="plane" onClick=${() => go('shop')}>Open catalog<//>`} />`
         : html`<div className="space-y-3">${list.map((o) => html`<${OrderCard} key=${o.id} order=${o} highlight=${o.id === highlight}
             events=${events.filter((e) => e.order_id === o.id)} onChanged=${onOrderChanged}
-            messages=${orderMessages.filter((m) => m.order_id === o.id)} onMessage=${onMessage} />`)}</div>`}
+            messages=${orderMessages.filter((m) => m.order_id === o.id)} onMessage=${onMessage}
+            reports=${missingReports.filter((r) => r.order_id === o.id)} onReported=${onReported} />`)}</div>`}
     </section>`;
 }
 
-function OrderCard({ order, events, highlight, onChanged, messages = [], onMessage }) {
+function OrderCard({ order, events, highlight, onChanged, messages = [], onMessage, reports = [], onReported }) {
     const [open, setOpen] = useState(highlight);
     const [busy, setBusy] = useState(false);
     const items = orderLines(order);
@@ -1141,6 +1150,8 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
         </div>`}
 
         <${OrderThread} order=${order} messages=${messages} onMessage=${onMessage} />
+
+        <${MissingPlanes} order=${order} reports=${reports} onReported=${onReported} />
 
         <button onClick=${() => setOpen(!open)} className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-white">
             <span>${open ? 'Hide details' : `Show details · ${plural(items.length, 'line')}`}</span>
@@ -1357,6 +1368,56 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
             </li>`)}
         </ul>`}
     <//>`;
+}
+
+// =========================================================================
+//  "Report missing planes": aircraft listed for the buyer in-game were bought by someone else before they
+//  could take them. Available once anything was delivered (most visible when the order is complete).
+//  The sellers on the order and the admins are DMed; a seller checks in-game and answers here.
+// =========================================================================
+const REPORT_LABEL = {
+    OPEN: { text: 'Reported · the sellers are checking', cls: 'text-amber-200 border-amber-500/30 bg-amber-500/5', icon: 'search' },
+    CONFIRMED: { text: 'Theft confirmed', cls: 'text-rose-200 border-rose-500/30 bg-rose-500/5', icon: 'shield-alert' },
+    NOT_THEFT: { text: 'Checked · not a theft', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'circle-check' }
+};
+function MissingPlanes({ order, reports, onReported }) {
+    const [open, setOpen] = useState(false);
+    const [details, setDetails] = useState('');
+    const [busy, setBusy] = useState(false);
+    if (!(order.filled > 0) || ['CANCELLED', 'DECLINED'].includes(order.status)) return null;
+    const pending = reports.some((r) => r.status === 'OPEN');
+    const send = async () => {
+        if (details.trim().length < 3) return toast('Say how many planes are missing and of which type.', 'error');
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'report-missing', details: details.trim() });
+            onReported?.(r.report);
+            setOpen(false); setDetails('');
+            toast('Report sent. The sellers on this order and the Market Admins have been alerted.', 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    return html`<div className="space-y-2">
+        ${reports.map((r) => {
+            const l = REPORT_LABEL[r.status] || REPORT_LABEL.OPEN;
+            return html`<div key=${r.id} className=${`p-3 rounded-2xl border text-sm space-y-1 ${l.cls}`}>
+                <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />Missing planes · ${l.text}</p>
+                <p className="text-xs opacity-80">You wrote: “${r.details}” · ${timeAgo(r.created_at)}</p>
+                ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || 'Seller'}: “${r.resolution_note}”</p>`}
+            </div>`;
+        })}
+        ${!pending && html`<div className="flex justify-end">
+            <${Button} size="sm" variant=${order.status === 'FULFILLED' ? 'secondary' : 'ghost'} icon="triangle-alert" onClick=${() => setOpen(true)}>Report missing planes<//>
+        </div>`}
+        ${open && html`<${Modal} open=${true} onClose=${() => setOpen(false)} title="Report missing planes" size="sm"
+            subtitle=${`${orderRef(order)} · ${order.filled} of ${plural(order.total_qty, 'aircraft')} delivered`}
+            footer=${html`<${Button} variant="ghost" onClick=${() => setOpen(false)}>Cancel<//>
+                <${Button} icon="send" busy=${busy} disabled=${details.trim().length < 3} onClick=${send}>Send report<//>`}>
+            <p className="text-sm text-slate-300">Planes listed for you on the in-game market were bought by someone else before you could take them? Tell the sellers <b className="text-white">how many</b> are missing and <b className="text-white">which type</b>. Only they can see in-game who bought them.</p>
+            <textarea autoFocus value=${details} maxLength="1000" rows="4" onChange=${(e) => setDetails(e.target.value)} className="input mt-3"
+                placeholder="e.g. 2× A320neo from Dave Air were gone from the market when I logged in"></textarea>
+            <p className="text-xs text-slate-500 mt-2">The sellers on this order and the Market Admins get a DM right away. You'll be told what they find.</p>
+        <//>`}
+    </div>`;
 }
 
 // =========================================================================

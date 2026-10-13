@@ -24,6 +24,11 @@ If an order is still unfinished **12 hours** after it was taken, any other selle
 > Each seller records ***only what they listed***.
 > The buyer sees exactly who listed what.
 
+## Missing planes
+If a buyer reports that planes listed for them were bought by someone else, you get a **DM**. Check in-game who bought them, then on the order choose:
+> **Theft confirmed**: logged in the moderation channel. Add the culprit's Discord ID to warn them automatically.
+> **Not a theft**: tell the buyer what you found.
+
 ## Messages
 Buyers can write to the seller team after **24 hours**. Reply from the order, and keep it short: *no full conversations in tickets.*
 -# Questions? Ask a Lead Ambassador.

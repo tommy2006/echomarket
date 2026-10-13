@@ -334,7 +334,9 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
     }, [open, onClose]);
     if (!open) return null;
     const width = { sm: 'md:max-w-md', md: 'md:max-w-lg', lg: 'md:max-w-2xl' }[size];
-    return html`<div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center">
+    // Rendered at the end of <body> (a portal), so a pop-up opened from inside a card is never trapped by the
+    // card's blur (which would otherwise make "fixed" mean "fixed to the card").
+    return ReactDOM.createPortal(html`<div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center">
         <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade" onClick=${onClose}></div>
         <div role="dialog" aria-modal="true" className=${`relative w-full ${width} max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-t-3xl md:rounded-3xl shadow-2xl animate-pop`}>
             <div className="flex items-start justify-between gap-4 p-4 md:p-5 border-b border-slate-800">
@@ -349,7 +351,7 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
             <div className="p-4 md:p-5 overflow-y-auto">${children}</div>
             ${footer && html`<div className="p-3 md:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-slate-800 flex flex-wrap justify-end gap-2">${footer}</div>`}
         </div>
-    </div>`;
+    </div>`, document.body);
 }
 
 // Promise-based confirm / text prompt (replaces window.confirm / prompt).

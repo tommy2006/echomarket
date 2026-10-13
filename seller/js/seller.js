@@ -110,6 +110,7 @@ function App() {
     const [declines, setDeclines] = useState([]);      // [{ order_id, seller_id, seller_name, note }]
     const [teamSize, setTeamSize] = useState(1);        // active sellers
     const [messages, setMessages] = useState([]);       // order_messages (buyers ↔ seller team)
+    const [reports, setReports] = useState([]);         // missing_reports (buyers: "my planes were taken")
     const [msgSeen, setMsgSeen] = useState(() => store.get(LS_MSG_SEEN, {}));
     useEffect(() => { store.set(LS_MSG_SEEN, msgSeen); }, [msgSeen]);
     const [loading, setLoading] = useState(true);
@@ -175,15 +176,17 @@ function App() {
         if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
-        const [ord, fl, air, dec, team, msg] = await Promise.all([
+        const [ord, fl, air, dec, team, msg, rep] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
             sb.from('order_declines').select('*'),
             sb.from('sellers').select('user_id').eq('active', true),
-            sb.from('order_messages').select('*').order('created_at').limit(2000)
+            sb.from('order_messages').select('*').order('created_at').limit(2000),
+            sb.from('missing_reports').select('*').order('created_at').limit(1000)
         ]);
         setMessages(msg.data || []);
+        setReports(rep.data || []);   // (empty until schema.sql has the table)
         setDeclines(dec.data || []);
         setTeamSize(Math.max(1, (team.data || []).length));
         if (ord.error) toast('Could not load orders: ' + ord.error.message, 'error');
@@ -214,6 +217,14 @@ function App() {
                     return p.eventType === 'DELETE' ? rest : [...rest, p.new];
                 });
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_reports' }, (p) => {
+                if (!p.new?.id) return;
+                setReports((l) => [...l.filter((r) => r.id !== p.new.id), p.new]);
+                if (p.eventType === 'INSERT') {
+                    toast(`🚨 Missing planes reported on ${p.new.order_id}`, 'error');
+                    notifyBrowser('Missing planes reported', `${p.new.buyer_name || 'A buyer'}: ${p.new.details}`, p.new.order_id);
+                }
+            })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages' }, (p) => {
                 setMessages((l) => [...l.filter((m) => m.id !== p.new.id), p.new]);
                 if (p.new.from_role === 'buyer') {
@@ -241,6 +252,12 @@ function App() {
     }, [Boolean(seller), userId]);
     const endTour = () => { setTourOpen(false); if (userId) store.set(LS_SELLER_TOUR + userId, true); };
     const messagesOf = (orderId) => messages.filter((m) => m.order_id === orderId);
+    const reportsOf = (orderId) => reports.filter((r) => r.order_id === orderId);
+    // Open reports this seller should check: on orders they delivered (now or earlier), or all of them for admins.
+    const onOrder = (o) => deliveryShares(o).some((sh) => sh.sellerId === userId);
+    const reportsToCheck = reports.filter((r) => r.status === 'OPEN')
+        .map((r) => ({ r, o: orders.find((o) => o.id === r.order_id) }))
+        .filter(({ o }) => o && (seller?.is_admin || onOrder(o)));
     const unreadOf = (orderId) => messagesOf(orderId).filter((m) => m.from_role === 'buyer' && m.id > (msgSeen[orderId] || 0)).length;
     const markSeen = (orderId) => {
         const newest = Math.max(0, ...messagesOf(orderId).map((m) => m.id));
@@ -389,6 +406,14 @@ function App() {
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
+            ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
+                <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
+                    ${plural(reportsToCheck.length, 'missing-plane report')} to check in-game</p>
+                <ul className="space-y-1.5">${reportsToCheck.map(({ r, o }) => html`<li key=${r.id}>
+                    <button onClick=${() => openDetail(o.id)} className="w-full text-left text-sm text-rose-100 hover:text-white flex flex-wrap gap-x-2">
+                        <b>${orderRef(o)}</b><span className="opacity-80">${r.buyer_name}: “${r.details}”</span><span className="text-xs opacity-60">${timeAgo(r.created_at)}</span>
+                    </button></li>`)}</ul>
+            </div>`}
             ${!airlines.length && html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5">
                 <${Icon} name="triangle-alert" className="w-5 h-5 text-amber-300" />
                 <p className="flex-1 text-sm text-amber-100"><b>You need an airline profile to take orders.</b> Buyers see which airline is selling to them. Create one on the market site's Airlines page (same Discord login), then come back.</p>
@@ -426,7 +451,7 @@ function App() {
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
-                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)}
+                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
                 ${tab === 'all' && list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
             </div>`}
@@ -434,7 +459,8 @@ function App() {
 
         ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines} now=${now}
             passed=${passedOn(detail)} teamSize=${teamSize} onBuyer=${setBuyerOf}
-            messages=${messagesOf(detail.id)} onSeen=${() => markSeen(detail.id)}
+            messages=${messagesOf(detail.id)} onSeen=${() => markSeen(detail.id)} reports=${reportsOf(detail.id)}
+            onReport=${(r) => setReports((l) => [...l.filter((x) => x.id !== r.id), r])}
             onMessage=${(m) => setMessages((l) => [...l.filter((x) => x.id !== m.id), m])}
             actions=${actions} onClose=${closeDetail} />`}
         ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_admin} onClose=${() => setBuyerOf(null)}
@@ -1103,7 +1129,7 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0 }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0, missing = 0 }) {
     const mine = order.seller_id === userId;
     const helping = !mine && isHelping(order, userId);
     const joined = orderHelpers(order);
@@ -1118,6 +1144,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOURS</span>`}
                     ${helping && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOU'RE HELPING</span>`}
+                    ${missing > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-[#fff]"><${Icon} name="shield-alert" className="w-3 h-3" />MISSING PLANES REPORTED</span>`}
                     ${canTakeOver(order, userId, now) && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" title=${`Taken over ${TAKEOVER_HOURS} hours ago and not finished: you can take over part of it`}>CAN TAKE OVER</span>`}
                     <${WaitChip} order=${order} now=${now} />
                     ${unread > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-400 text-slate-950">
@@ -1140,7 +1167,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport }) {
     useEffect(() => { onSeen?.(); }, [order.id, messages.length]);
     const [events, setEvents] = useState([]);
     useEffect(() => {
@@ -1210,6 +1237,11 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             </table></div>
             ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
             ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">Seller note (buyer can see)</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
+            ${reports.length > 0 && html`<div>
+                <p className="label text-slate-500 mb-2">Missing planes (${reports.length})</p>
+                <div className="space-y-2">${[...reports].reverse().map((r) => html`<${MissingReport} key=${r.id} report=${r} order=${order}
+                    canClose=${seller.is_admin || deliveryShares(order).some((sh) => sh.sellerId === userId)} onDone=${onReport} />`)}</div>
+            </div>`}
             <div>
                 <p className="label text-slate-500 mb-2">Messages with the buyer${messages.length ? ` (${messages.length})` : ''}</p>
                 <${SellerThread} order=${order} messages=${messages} onMessage=${onMessage} />
@@ -1230,6 +1262,59 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             </div>
         </div>
     <//>`;
+}
+
+// One missing-plane report on the seller desk. Open: the sellers on the order (and admins) check in-game who
+// bought the planes, then close it. Theft confirmed → posted to the moderation log; with the culprit's Discord ID
+// they also get an automatic market warning. The buyer is told the outcome either way.
+function MissingReport({ report, order, canClose, onDone }) {
+    const [outcome, setOutcome] = useState('confirmed');
+    const [note, setNote] = useState('');
+    const [culprit, setCulprit] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [warned, setWarned] = useState(null);   // the warning that went to the culprit (sellers can read it)
+    useEffect(() => {
+        if (!report.warning_id) return;
+        sb.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle().then(({ data }) => setWarned(data));
+    }, [report.warning_id]);
+    const idOk = !culprit.trim() || /^\d{17,20}$/.test(culprit.trim());
+    const submit = async () => {
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing', reportId: report.id, outcome, note: note.trim(),
+                culpritDiscordId: outcome === 'confirmed' ? culprit.trim() : '' });
+            onDone?.(r.report);
+            toast(outcome === 'confirmed'
+                ? `Theft logged${r.logged ? ' in the moderation channel' : ''}${r.warned ? ' and the culprit was warned' : ''}. The buyer has been told.`
+                : 'Report closed. The buyer has been told.', 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    const head = {
+        OPEN: ['text-rose-200 border-rose-500/40 bg-rose-500/[0.07]', 'shield-alert', 'Reported, needs checking'],
+        CONFIRMED: ['text-rose-200 border-rose-500/30 bg-slate-950', 'shield-x', 'Theft confirmed'],
+        NOT_THEFT: ['text-slate-200 border-slate-800 bg-slate-950', 'circle-check', 'Not a theft']
+    }[report.status] || [];
+    return html`<div className=${`p-3 rounded-2xl border space-y-2 ${head[0]}`}>
+        <p className="text-sm font-bold flex items-center gap-1.5"><${Icon} name=${head[1]} className="w-4 h-4" />${head[2]}
+            <span className="text-xs font-normal opacity-60">· ${timeAgo(report.created_at)}</span></p>
+        <p className="text-sm text-slate-100">${report.buyer_name || 'Buyer'}: “${report.details}”</p>
+        ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”${warned ? html` · warned <span className="font-mono">${warned.discord_id}</span>` : ''}</p>`}
+        ${report.status === 'OPEN' && !canClose && html`<p className="text-xs text-slate-400">The sellers on this order and the admins check this one.</p>`}
+        ${report.status === 'OPEN' && canClose && html`<div className="pt-2 border-t border-slate-800 space-y-2">
+            <p className="text-xs text-slate-300">Check in-game who bought the planes you listed for this buyer, then:</p>
+            <div className="grid grid-cols-2 gap-1.5">${[['confirmed', 'Theft confirmed'], ['not_theft', 'Not a theft']].map(([k, label]) => html`<button key=${k} type="button" onClick=${() => setOutcome(k)}
+                className=${`py-2 rounded-xl border text-xs font-bold ${outcome === k ? (k === 'confirmed' ? 'bg-rose-500 text-[#fff] border-rose-500' : 'bg-white text-slate-950 border-white') : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
+            <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input"
+                placeholder=${outcome === 'confirmed' ? 'What happened, e.g. 2× A320neo bought by another player; relisted for the buyer' : 'What you found, e.g. the planes are still listed, buy them at WIII'}></textarea>
+            ${outcome === 'confirmed' && html`<label className="block">
+                <span className="text-xs font-bold text-slate-400">Culprit's Discord user ID (optional: sends them an automatic warning)</span>
+                <input value=${culprit} onChange=${(e) => setCulprit(e.target.value)} inputMode="numeric" className=${`input font-mono mt-1 ${idOk ? '' : '!border-rose-500'}`} placeholder="e.g. 123456789012345678" />
+            </label>`}
+            <p className="text-[11px] text-slate-500">${outcome === 'confirmed' ? 'Posted in the moderation log channel. The buyer sees your note, never the culprit.' : 'The buyer sees your note.'}</p>
+            <div className="flex justify-end"><${Button} size="sm" variant=${outcome === 'confirmed' ? 'danger' : 'primary'} busy=${busy} disabled=${!note.trim() || !idOk}
+                icon=${outcome === 'confirmed' ? 'shield-x' : 'check'} onClick=${submit}>${outcome === 'confirmed' ? 'Log theft' : 'Close report'}<//></div>
+        </div>`}
+    </div>`;
 }
 
 function StatusHistory({ order, now }) {

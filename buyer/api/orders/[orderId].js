@@ -3,9 +3,10 @@
 //                                  a partly delivered order waiting for a new seller can't be cancelled)
 //   { action: 'message', body }    write to the seller team. Allowed once the order has waited
 //                                  CONTACT_AFTER_HOURS without being fully delivered, or to answer a seller.
+//   { action: 'report-missing', details }  planes listed in-game were bought by someone else (free text)
 import {
     admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, orderRef, accountName,
-    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, HttpError
+    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, EMBED_COLORS, sharesLines, missingReportRecipients, HttpError
 } from '../../lib/server.js';
 
 export const CONTACT_AFTER_HOURS = 24;
@@ -49,6 +50,36 @@ export default handler(['POST'], async (req, res) => {
             }
         }
         return res.json({ ok: true, message: msg });
+    }
+
+    if (input.action === 'report-missing') {
+        // Planes listed for this buyer in-game were bought by someone else first. Every seller on the order
+        // and every admin is DMed; one of them checks in-game who bought them and closes the report.
+        await requireMarketAccess(account);
+        if (!(order.filled > 0) || ['CANCELLED', 'DECLINED'].includes(order.status)) {
+            throw new HttpError(409, 'You can report missing planes once at least part of the order has been delivered.');
+        }
+        const details = cleanText(input.details, 1000);
+        if (!details || details.length < 3) throw new HttpError(400, 'Say how many planes are missing and of which type.');
+        const { data: open } = await db.from('missing_reports').select('id').eq('order_id', order.id).eq('status', 'OPEN').limit(1);
+        if (open?.length) throw new HttpError(409, 'You already reported missing planes on this order. The sellers are checking it.');
+        await rateLimit('missing-report:' + account.id, 5, 86400, 'You can send 5 missing-plane reports per day.');
+        const { data: report, error } = await db.from('missing_reports').insert({
+            order_id: order.id, buyer_id: order.buyer_id, buyer_name: accountName(account), details
+        }).select().single();
+        if (error) throw error;
+        const ref = orderRef(order);
+        await addEvent(order, 'MISSING', account, { message: `Missing planes reported: ${details}` });
+        const listed = sharesLines(order, 1);
+        const recipients = await missingReportRecipients(order);
+        const sent = await Promise.all(recipients.map((r) => sendDM({ ...r, dm_enabled: true }, {
+            title: `🚨 Missing planes reported · ${ref}`,
+            color: EMBED_COLORS.declined,
+            description: `**${md(accountName(account))}** (${md(order.airline_name)}) says aircraft listed for them in-game were bought by someone else before they could take them:\n> ${md(details).slice(0, 1200)}\n\nCheck in-game who bought them, then mark the report on the seller desk: **Theft confirmed** (logged, and the culprit can get an automatic warning) or **Not a theft**.`,
+            url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined,
+            fields: listed ? [{ name: 'Listed by each seller', value: listed }] : []
+        })));
+        return res.json({ ok: true, report, alerted: sent.filter((x) => x === 'sent').length });
     }
 
     if (input.action !== 'cancel') throw new HttpError(400, 'Unknown action.');
