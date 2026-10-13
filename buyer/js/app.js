@@ -1378,7 +1378,8 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
 const REPORT_LABEL = {
     OPEN: { text: 'Reported · the sellers are checking', cls: 'text-amber-200 border-amber-500/30 bg-amber-500/5', icon: 'search' },
     CONFIRMED: { text: 'Theft confirmed', cls: 'text-rose-200 border-rose-500/30 bg-rose-500/5', icon: 'shield-alert' },
-    NOT_THEFT: { text: 'Checked · not a theft', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'circle-check' }
+    NOT_THEFT: { text: 'Checked · not a theft', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'circle-check' },
+    CLEARED: { text: 'Re-listed for you · buy them in-game', cls: 'text-emerald-200 border-emerald-500/30 bg-emerald-500/5', icon: 'shield-check' }
 };
 function MissingPlanes({ order, reports, onReported }) {
     const [open, setOpen] = useState(false);
@@ -1403,6 +1404,7 @@ function MissingPlanes({ order, reports, onReported }) {
                 <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />Missing planes · ${l.text}</p>
                 <p className="text-xs opacity-80">You wrote: “${r.details}” · ${timeAgo(r.created_at)}</p>
                 ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || 'Seller'}: “${r.resolution_note}”</p>`}
+                ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || 'Seller'}: “${r.cleared_note}”</p>`}
             </div>`;
         })}
         ${!pending && html`<div className="flex justify-end">

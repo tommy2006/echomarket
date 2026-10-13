@@ -28,6 +28,7 @@ If an order is still unfinished **12 hours** after it was taken, any other selle
 If a buyer reports that planes listed for them were bought by someone else, you get a **DM**. Check in-game who bought them, then on the order choose:
 > **Theft confirmed**: logged in the moderation channel. Add the culprit's Discord ID to warn them automatically.
 > **Not a theft**: tell the buyer what you found.
+Warned culprit re-listed the planes? Check in-game, then **Clear theft**.
 
 ## Messages
 Buyers can write to the seller team after **24 hours**. Reply from the order, and keep it short: *no full conversations in tickets.*

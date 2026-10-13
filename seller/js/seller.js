@@ -1289,16 +1289,48 @@ function MissingReport({ report, order, canClose, onDone }) {
                 : 'Report closed. The buyer has been told.', 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
+    // Clear a confirmed theft once the warned culprit re-listed the planes (checked in-game).
+    const [clearing, setClearing] = useState(false);
+    const [clearNote, setClearNote] = useState('');
+    const [verified, setVerified] = useState(false);
+    const clear = async () => {
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing-clear', reportId: report.id, note: clearNote.trim(), verified });
+            onDone?.(r.report);
+            setClearing(false);
+            toast(`Theft cleared${r.logged ? ' and logged' : ''}. The buyer was told to buy the re-listed planes${r.culpritTold ? ', and the culprit was told the case is closed' : ''}.`, 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
     const head = {
         OPEN: ['text-rose-200 border-rose-500/40 bg-rose-500/[0.07]', 'shield-alert', 'Reported, needs checking'],
         CONFIRMED: ['text-rose-200 border-rose-500/30 bg-slate-950', 'shield-x', 'Theft confirmed'],
-        NOT_THEFT: ['text-slate-200 border-slate-800 bg-slate-950', 'circle-check', 'Not a theft']
+        NOT_THEFT: ['text-slate-200 border-slate-800 bg-slate-950', 'circle-check', 'Not a theft'],
+        CLEARED: ['text-emerald-200 border-emerald-500/30 bg-slate-950', 'shield-check', 'Theft cleared · planes re-listed']
     }[report.status] || [];
     return html`<div className=${`p-3 rounded-2xl border space-y-2 ${head[0]}`}>
         <p className="text-sm font-bold flex items-center gap-1.5"><${Icon} name=${head[1]} className="w-4 h-4" />${head[2]}
             <span className="text-xs font-normal opacity-60">· ${timeAgo(report.created_at)}</span></p>
         <p className="text-sm text-slate-100">${report.buyer_name || 'Buyer'}: “${report.details}”</p>
         ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”${warned ? html` · warned <span className="font-mono">${warned.discord_id}</span>` : ''}</p>`}
+        ${report.status === 'CLEARED' && html`<p className="text-xs text-emerald-200/90">${report.cleared_by_name}: “${report.cleared_note}” · ${timeAgo(report.cleared_at)}</p>`}
+        ${report.status === 'CONFIRMED' && report.warning_id && canClose && !clearing && html`<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
+            <p className="text-xs text-slate-400">Did the warned culprit re-list the planes for the buyer?</p>
+            <${Button} size="sm" variant="secondary" icon="shield-check" onClick=${() => setClearing(true)}>Clear theft<//>
+        </div>`}
+        ${report.status === 'CONFIRMED' && report.warning_id && canClose && clearing && html`<div className="pt-2 border-t border-slate-800 space-y-2">
+            <textarea value=${clearNote} maxLength="1000" rows="2" onChange=${(e) => setClearNote(e.target.value)} className="input"
+                placeholder="What was re-listed and where, e.g. 2× A320neo listed again at WIII"></textarea>
+            <label className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer">
+                <input type="checkbox" checked=${verified} onChange=${(e) => setVerified(e.target.checked)} className="mt-0.5 accent-emerald-400" />
+                <span>I checked in-game: the planes are listed for the buyer again.</span>
+            </label>
+            <p className="text-[11px] text-slate-500">Logged in the moderation channel. The buyer is told to buy them; the culprit is told the case is closed (the warning stays on their record).</p>
+            <div className="flex justify-end gap-2">
+                <${Button} size="sm" variant="ghost" onClick=${() => setClearing(false)}>Cancel<//>
+                <${Button} size="sm" icon="shield-check" busy=${busy} disabled=${!verified || !clearNote.trim()} onClick=${clear}>Clear theft<//>
+            </div>
+        </div>`}
         ${report.status === 'OPEN' && !canClose && html`<p className="text-xs text-slate-400">The sellers on this order and the admins check this one.</p>`}
         ${report.status === 'OPEN' && canClose && html`<div className="pt-2 border-t border-slate-800 space-y-2">
             <p className="text-xs text-slate-300">Check in-game who bought the planes you listed for this buyer, then:</p>

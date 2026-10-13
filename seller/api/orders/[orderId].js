@@ -18,13 +18,15 @@
 //   missing   { reportId, outcome, note, culpritDiscordId }  close a buyer's missing-plane report: 'confirmed'
 //                                      (theft: posted to the moderation log; a culprit ID gets an automatic warning)
 //                                      or 'not_theft'. Sellers on the order and admins only.
+//   missing-clear { reportId, note, verified }  clear a confirmed theft: the warned culprit re-listed the
+//                                      planes for the buyer (checked in-game). Logged; buyer and culprit are DMed.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
-    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, logModeration, EMBED_COLORS, HttpError
+    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 
@@ -409,6 +411,58 @@ Answer on Echo Market (Orders).`,
                 });
             }
             return res.json({ ok: true, order, report: result, warned: Boolean(warning), logged });
+        }
+
+        case 'missing-clear': {
+            // Clear a confirmed theft: the warned culprit re-listed the planes for the buyer, checked in-game.
+            // { reportId, note, verified: true }. The warning stays on the culprit's record.
+            const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
+            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can clear a theft.');
+            const { data: report } = await db.from('missing_reports').select('*')
+                .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
+            if (!report) throw new HttpError(404, 'Report not found.');
+            if (!('cleared_at' in report)) throw new HttpError(503, 'Clearing a theft needs a database update: an admin must re-run supabase/schema.sql.');
+            if (report.status === 'CLEARED') throw new HttpError(409, `${report.cleared_by_name || 'Another seller'} already cleared this theft.`);
+            if (report.status !== 'CONFIRMED' || !report.warning_id) {
+                throw new HttpError(409, 'Only a confirmed theft whose culprit was warned can be cleared.');
+            }
+            if (input.verified !== true) throw new HttpError(400, 'Check in-game first that the planes are listed for the buyer again.');
+            const note = cleanText(input.note, 1000);
+            if (!note) throw new HttpError(400, 'Say what was re-listed and where. The buyer sees it.');
+            const { data: cleared } = await db.from('missing_reports').update({
+                status: 'CLEARED', cleared_at: new Date().toISOString(), cleared_by: account.id,
+                cleared_by_name: accountName(account), cleared_note: note
+            }).eq('id', report.id).eq('status', 'CONFIRMED').select();
+            if (!cleared?.length) throw new HttpError(409, 'Another seller changed this report just now.');
+            const { data: warning } = await db.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle();
+            const culpritId = warning?.discord_id || null;
+            const logged = await logModeration({
+                title: `✅ Theft cleared · ${plain(ref)}`, color: EMBED_COLORS.fulfilled,
+                fields: [
+                    { name: 'Culprit', value: culpritId ? `<@${culpritId}>` : 'unknown', inline: true },
+                    { name: 'Cleared by', value: md(accountName(account)), inline: true },
+                    { name: 'Re-listed', value: md(note).slice(0, 1000) },
+                    { name: 'Note', value: 'Planes re-listed for the buyer, checked in-game. The warning stays on record.' }
+                ]
+            });
+            await addEvent(order, 'MISSING', account, { message: `The missing planes were re-listed for you: ${note}` });
+            const dmed = [];
+            if (culpritId) {
+                dmed.push(await dmDiscordUser(culpritId, {
+                    title: `✅ Echo Market: case cleared (${ref})`, color: EMBED_COLORS.progress,
+                    description: 'Thanks for re-listing the planes for their buyer. The case is closed; the warning stays on your record. Only buy planes you ordered.'
+                }));
+            }
+            if (order.buyer_id) {
+                const { data: buyer } = await db.from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
+                if (buyer) await sendDM(buyer, {
+                    title: `✈️ Your missing planes are back on the market (${ref})`,
+                    color: EMBED_COLORS.progress,
+                    description: `The planes taken from your order were listed for you again. Buy them on the in-game market now:\n> ${md(note).slice(0, 1200)}`,
+                    url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
+                });
+            }
+            return res.json({ ok: true, order, report: cleared[0], logged, culpritTold: dmed[0] === 'sent' });
         }
 
         case 'flag': {

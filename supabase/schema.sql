@@ -506,7 +506,8 @@ create index if not exists order_messages_buyer_idx on public.order_messages (bu
 -- "Report missing planes": aircraft listed for the buyer in-game were bought by someone else first.
 -- The buyer describes what is missing (free text); every seller on the order and every admin is DMed.
 -- A seller on the order (or an admin) checks in-game and closes it: CONFIRMED (theft, posted to the
--- moderation log; the culprit's Discord ID gets an automatic market warning) or NOT_THEFT.
+-- moderation log; the culprit's Discord ID gets an automatic market warning) or NOT_THEFT. A confirmed theft
+-- becomes CLEARED when the warned culprit re-lists the planes for the buyer (a seller checks it in-game).
 create table if not exists public.missing_reports (
     id                 bigint generated always as identity primary key,
     order_id           text not null references public.orders(id) on delete cascade,
@@ -525,6 +526,14 @@ create table if not exists public.missing_reports (
 );
 create index if not exists missing_reports_order_idx on public.missing_reports (order_id, created_at);
 create index if not exists missing_reports_open_idx on public.missing_reports (status, created_at);
+-- CLEARED: a confirmed theft where the warned culprit re-listed the planes for the buyer (checked in-game by a seller).
+alter table public.missing_reports add column if not exists cleared_at      timestamptz;
+alter table public.missing_reports add column if not exists cleared_by      uuid references public.accounts(id) on delete set null;
+alter table public.missing_reports add column if not exists cleared_by_name text;
+alter table public.missing_reports add column if not exists cleared_note    text;
+alter table public.missing_reports drop constraint if exists missing_reports_status_check;
+alter table public.missing_reports add constraint missing_reports_status_check
+    check (status in ('OPEN', 'CONFIRMED', 'NOT_THEFT', 'CLEARED'));
 
 -- Market-wide settings that admins change on the seller desk (no redeploy needed), e.g.
 --   order_channel_ids: Discord channels where buyers may use /order and /airline (empty = anywhere).
