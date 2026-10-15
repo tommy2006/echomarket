@@ -3,7 +3,8 @@
 //   list                                   everything below, for the seller desk's Community tab
 //   reward-grant  { discordId, tier: 1|2, reason, expiresAt (ISO date or null = never) }
 //                 Raises a market user's daily budget (Tier 1 $25B, Tier 2 $40B). The reason is for admins only;
-//                 the buyer gets a "thank you" pop-up (and a DM). Tier 3 ($50B) is automatic for server boosters.
+//                 the buyer gets a "thank you" pop-up (and a DM). Tier 3 ($50B) is automatic for server boosters,
+//                 and Tier 1 / Tier 2 also come automatically from DISCORD_TIER1_ROLE_ID / DISCORD_TIER2_ROLE_ID.
 //   reward-revoke { id }
 //   announce      { title, body }          a pop-up shown to every buyer (until deleted)
 //   announce-delete { id }
@@ -42,9 +43,10 @@ export default handler(['POST'], async (req, res) => {
     switch (input.action) {
         case 'list': {
             const now = new Date().toISOString();
-            const [rw, bo, an, wl] = await Promise.all([
+            const [rw, bo, rt, an, wl] = await Promise.all([
                 db.from('budget_rewards').select('*').is('revoked_at', null).or(`expires_at.is.null,expires_at.gt.${now}`).order('created_at', { ascending: false }),
                 db.from('accounts').select('id, discord_id, display_name, discord_username').eq('booster', true),
+                db.from('accounts').select('discord_id, display_name, discord_username, role_tier').gt('role_tier', 0),
                 db.from('announcements').select('*').order('created_at', { ascending: false }),
                 db.from('watchlist').select('*').order('created_at', { ascending: false })
             ]);
@@ -58,6 +60,8 @@ export default handler(['POST'], async (req, res) => {
                 tiers: BUDGET_TIERS,
                 rewards: (rw.data || []).map((r) => ({ ...r, name: nameOf[r.discord_id] || null })),
                 boosters: (bo.data || []).map((a) => ({ discord_id: a.discord_id, name: accountName(a) })),
+                // Tier 1 / Tier 2 from Discord roles (empty until the roles are set up and people open the market).
+                roleTiers: (rt.data || []).map((a) => ({ discord_id: a.discord_id, name: accountName(a), tier: a.role_tier })),
                 announcements: an.data || [],
                 watchlist: (wl.data || []).map((w) => ({ ...w, name: nameOf[w.discord_id] || null }))
             });

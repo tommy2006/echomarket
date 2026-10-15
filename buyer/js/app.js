@@ -405,12 +405,12 @@ function BudgetCelebration({ budget, name, onClose }) {
         <${Modal} open=${true} onClose=${onClose} size="sm" title=${booster ? '💜 Thank you for boosting!' : '🎉 Thank you!'}
             footer=${html`<${Button} icon="heart" onClick=${onClose}>You're welcome<//>`}>
             <div className="text-center space-y-3">
-                <p className="label text-sky-300">${booster ? 'Server booster' : `Reward · Tier ${budget.tier}`}</p>
+                <p className="label text-sky-300">${booster ? 'Server booster' : budget.source === 'role' ? `Role reward · Tier ${budget.tier}` : `Reward · Tier ${budget.tier}`}</p>
                 <p className="text-4xl font-black text-white tracking-tight">${usdB(budget.limit)}<span className="text-base font-bold text-slate-400"> daily budget</span></p>
                 <p className="text-sm text-slate-200 leading-relaxed">${booster
                     ? `${name ? name + ', thank' : 'Thank'} you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is ${usdB(budget.limit)} instead of ${usdB(10e9)} for as long as you boost.`
                     : `${name ? name + ', thank' : 'Thank'} you for your active dedication to our Echo Alliances community! As a thank-you, your daily market budget has been raised to ${usdB(budget.limit)} (normally ${usdB(10e9)}).`}</p>
-                ${!booster && html`<p className="text-xs text-slate-400">${until ? `Valid until ${until}.` : 'No end date.'}</p>`}
+                ${!booster && html`<p className="text-xs text-slate-400">${budget.source === 'role' ? 'Comes with your Discord role: it applies for as long as you have it.' : until ? `Valid until ${until}.` : 'No end date.'}</p>`}
             </div>
         <//>`;
 }

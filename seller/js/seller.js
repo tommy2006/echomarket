@@ -1179,7 +1179,7 @@ function RewardsCard({ data, run }) {
             <p className="text-xs text-slate-400 mt-0.5">Raise a market user's 24-hour limit as a thank-you for their activity. Tier 0 is ${usdB(tiers[0]?.limit || 10e9)} for everyone; server boosters get Tier 3 automatically. They get a celebration pop-up; the reason stays with the admins.</p></div>
         <div className="grid sm:grid-cols-4 gap-1.5">${[0, 1, 2, 3].map((t) => html`<div key=${t} className=${`p-2.5 rounded-xl border text-center ${t === 1 || t === 2 ? 'border-slate-700' : 'border-slate-800 opacity-70'}`}>
             <p className="text-xs font-black text-white">Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</p>
-            <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members' : t === 2 ? 'big contribution / even more active' : 'server boosters (automatic)'}</p>
+            <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members · Tier 1 role or granted' : t === 2 ? 'big contribution / even more active · Tier 2 role or granted' : 'server boosters (automatic)'}</p>
         </div>`)}</div>
         <div className="grid sm:grid-cols-2 gap-2">
             <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID (must be on the market)" />
@@ -1207,6 +1207,8 @@ function RewardsCard({ data, run }) {
                 </li>`)}</ul>`}
             </div>
             <div>
+                ${(data.roleTiers || []).length > 0 && html`<p className="label text-slate-500 mb-1.5">From Discord roles (${data.roleTiers.length})</p>
+                <ul className="space-y-1 mb-3">${data.roleTiers.map((m) => html`<li key=${m.discord_id} className="text-sm text-white">${m.name} <span className="text-xs text-slate-400">· Tier ${m.tier} (${usdB(tiers[m.tier]?.limit || 0)})</span> <span className="font-mono text-xs text-slate-500">${m.discord_id}</span></li>`)}</ul>`}
                 <p className="label text-slate-500 mb-1.5">Server boosters · Tier 3 (${data.boosters.length})</p>
                 ${!data.boosters.length ? html`<p className="text-xs text-slate-500">Nobody yet. Boosters are picked up automatically when they open the market.</p>`
                 : html`<ul className="space-y-1">${data.boosters.map((b) => html`<li key=${b.discord_id} className="text-sm text-white">💜 ${b.name} <span className="font-mono text-xs text-slate-500">${b.discord_id}</span></li>`)}</ul>`}

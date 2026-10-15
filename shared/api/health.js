@@ -152,6 +152,14 @@ export default async function handler(req, res) {
                         !bid ? "automatic (Discord's boost status)" : roleNames.get(bid) ? `role: ${roleNames.get(bid)}` : 'DISCORD_BOOSTER_ROLE_ID not found in the server',
                         'Remove DISCORD_BOOSTER_ROLE_ID (boosters are detected automatically) or set it to the Server Booster role\'s ID.',
                         { private: true });
+                    // Budget Tier 1 ($25B) / Tier 2 ($40B) from two Discord roles (optional: admins can also grant them).
+                    for (const [key, env, label] of [['tier1', 'DISCORD_TIER1_ROLE_ID', 'budget Tier 1 · $25B'], ['tier2', 'DISCORD_TIER2_ROLE_ID', 'budget Tier 2 · $40B']]) {
+                        const rid = ROLE_IDS[key];
+                        add('Discord roles', `${env} (${label})`, Boolean(rid) && roleNames.has(rid),
+                            !rid ? 'not set (optional)' : roleNames.get(rid) ? `role: ${roleNames.get(rid)}` : 'role not found in the server',
+                            `Discord → Server Settings → Roles → right-click the role → Copy Role ID. Add it as ${env} in the BUYER Vercel project, then redeploy.`,
+                            { private: Boolean(rid) && roleNames.has(rid) });
+                    }
                 }
                 // Can the bot give and take the Market Banned role? Needs "Manage Roles" and a higher position.
                 if (APP === 'seller' && ROLE_IDS.marketBanned && pinned.length) {

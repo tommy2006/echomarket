@@ -525,7 +525,10 @@ export const ROLE_IDS = {
     marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID'),
     // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
     // (the member's premium_since), which is exactly when Discord gives that role.
-    booster: env('DISCORD_BOOSTER_ROLE_ID')
+    booster: env('DISCORD_BOOSTER_ROLE_ID'),
+    // Optional: Discord roles that give budget Tier 1 ($25B) and Tier 2 ($40B) automatically.
+    tier1: env('DISCORD_TIER1_ROLE_ID'),
+    tier2: env('DISCORD_TIER2_ROLE_ID')
 };
 if (!ROLE_IDS.lead && !ROLE_IDS.ambassador && !ROLE_IDS.verified) ROLE_IDS.verified = SELLER_ROLE_ID;
 export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && (ROLE_IDS.lead || ROLE_IDS.ambassador || ROLE_IDS.verified || ROLE_IDS.marketAdmin));
@@ -545,7 +548,7 @@ export async function discordStanding(discordId) {
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
-        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false };
+        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false, roleTier: 0 };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -558,6 +561,8 @@ export async function discordStanding(discordId) {
                 if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;
                 if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
                 if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
+                const roleTier = ROLE_IDS.tier2 && roles.includes(ROLE_IDS.tier2) ? 2 : ROLE_IDS.tier1 && roles.includes(ROLE_IDS.tier1) ? 1 : 0;
+                st.roleTier = Math.max(st.roleTier, roleTier);
             } else if (m.status === 404) {
                 known = true;   // not in this server
             }
@@ -598,6 +603,7 @@ export async function marketStanding(account, { fresh = false } = {}) {
     let inGuild = account.in_guild;
     let bannedRole = Boolean(account.market_banned_role);
     let booster = account.booster === true;
+    let roleTier = Number(account.role_tier) || 0;
     if (MEMBERSHIP_CHECK) {
         const age = account.guild_checked_at ? Date.now() - new Date(account.guild_checked_at).getTime() : Infinity;
         if (fresh || inGuild == null || age > MEMBERSHIP_RECHECK_MINUTES * 60e3) {
@@ -612,6 +618,11 @@ export async function marketStanding(account, { fresh = false } = {}) {
                 if (error) console.warn('membership not saved (re-run schema.sql?):', error.message);
                 // Server booster → budget Tier 3 (saved separately: an older database has no "booster" column).
                 if (account.booster !== booster) await admin().from('accounts').update({ booster }).eq('id', account.id);
+                // Tier 1 / Tier 2 Discord roles → budget tier (also saved on its own, for the same reason).
+                roleTier = st.roleTier;
+                if ((Number(account.role_tier) || 0) !== roleTier && 'role_tier' in account) {
+                    await admin().from('accounts').update({ role_tier: roleTier }).eq('id', account.id);
+                }
             } else if (inGuild == null) {
                 inGuild = true;   // Discord unreachable and never checked: don't lock people out
             }
@@ -627,7 +638,7 @@ export async function marketStanding(account, { fresh = false } = {}) {
         bannedRole = false;
         await admin().from('accounts').update({ market_banned_role: false }).eq('id', account.id);
     }
-    return { inGuild: inGuild !== false, bannedRole, ban, booster };
+    return { inGuild: inGuild !== false, bannedRole, ban, booster, roleTier };
 }
 
 // =====================================================================
@@ -641,9 +652,10 @@ export const BUDGET_TIERS = {
     2: { limit: 40_000_000_000, label: 'Tier 2 · big contribution' },
     3: { limit: 50_000_000_000, label: 'Tier 3 · server booster' }
 };
-// { tier, limit, source: 'standard' | 'reward' | 'booster', expiresAt, key } — key changes whenever a new
-// reward starts, so the buyer site knows when to celebrate.
-export async function budgetFor(account, { booster } = {}) {
+// Tier 1 / Tier 2 also come automatically from Discord roles (DISCORD_TIER1_ROLE_ID / DISCORD_TIER2_ROLE_ID).
+// { tier, limit, source: 'standard' | 'reward' | 'role' | 'booster', expiresAt, key } — key changes whenever a
+// new reward starts, so the buyer site knows when to celebrate.
+export async function budgetFor(account, { booster, roleTier } = {}) {
     let best = null;
     if (account?.discord_id) {
         const { data, error } = await admin().from('budget_rewards').select('id, tier, expires_at')
@@ -653,6 +665,9 @@ export async function budgetFor(account, { booster } = {}) {
     }
     const isBooster = booster ?? account?.booster === true;
     if (isBooster && (!best || best.tier < 3)) return { tier: 3, limit: BUDGET_TIERS[3].limit, source: 'booster', expiresAt: null, key: 'booster' };
+    // A role tier wins over a granted reward of the same tier (it has no end date).
+    const fromRole = Math.min(2, Math.max(0, Number(roleTier ?? account?.role_tier) || 0));
+    if (fromRole && (!best || best.tier <= fromRole)) return { tier: fromRole, limit: BUDGET_TIERS[fromRole].limit, source: 'role', expiresAt: null, key: `role:${fromRole}` };
     if (best) return { tier: best.tier, limit: BUDGET_TIERS[best.tier].limit, source: 'reward', expiresAt: best.expires_at, key: `reward:${best.id}` };
     return { tier: 0, limit: BUDGET_TIERS[0].limit, source: 'standard', expiresAt: null, key: null };
 }

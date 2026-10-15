@@ -797,6 +797,9 @@ revoke all on public.budget_rewards from anon, authenticated;
 -- buyer was thanked for (the celebration pop-up shows once per new reward).
 alter table public.accounts add column if not exists booster boolean not null default false;
 alter table public.accounts add column if not exists budget_seen_key text;
+-- Budget tier from the Tier 1 / Tier 2 Discord roles (DISCORD_TIER1_ROLE_ID / DISCORD_TIER2_ROLE_ID), kept up to date
+-- by the membership check like booster. 0 = neither role.
+alter table public.accounts add column if not exists role_tier int not null default 0;
 
 -- Pop-up messages from the admins to every buyer ("fewer sellers than usual this week", …), until deleted.
 create table if not exists public.announcements (

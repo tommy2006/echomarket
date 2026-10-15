@@ -1,6 +1,6 @@
 // POST /api/me — may the signed-in person use the market right now?
 // Called by the buyer site when it opens. Re-checks Echo server membership with Discord (and the
-// Market Banned role and server boosting), and looks up market bans and the daily budget. Returns:
+// Market Banned role, server boosting and the Tier 1 / Tier 2 roles), and looks up market bans and the daily budget. Returns:
 //   { ok, inGuild, membershipCheck, ban: { reason, duration, ends_at } | null, bannedRole,
 //     budget: { tier, limit, source, expiresAt, key, celebrate } }
 // { action: 'budget-seen', key }: the buyer saw the "thank you" for this reward (shown once per reward).
@@ -16,7 +16,7 @@ export default handler(['POST'], async (req, res) => {
         return res.json({ ok: true });
     }
     const st = await marketStanding(account, { fresh: true });
-    const budget = await budgetFor(account, { booster: st.booster });
+    const budget = await budgetFor(account, { booster: st.booster, roleTier: st.roleTier });
     res.json({
         ok: true,
         inGuild: st.inGuild,
