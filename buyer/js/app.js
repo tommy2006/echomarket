@@ -15,7 +15,14 @@ import {
 const PRICE_LEVELS = [50, 60, 70, 80, 90];   // shown left to right, lowest first
 const MAX_AIRLINES = 20;
 const MAX_QTY = 500;
-const DAILY_LIMIT_USD = 10_000_000_000;
+// The buyer's own daily budget (24-hour limit at list price). Tier 0 = $10B; rewards and server boosting raise
+// it. Set from /api/me when the site opens (the server checks the same limit on every order).
+let DAILY_LIMIT_USD = 10_000_000_000;
+let BUDGET_TIER = 0;
+const LS_ANNOUNCEMENTS = 'echo_announcements_seen_v1';
+// Most sellers are in Southeast Asia (same text and hours as the server's): 21:00–06:00 UTC+8.
+const SEA_NIGHT_TEXT = "Heads-up: most of our sellers live in Southeast Asia, where it's night right now (21:00–06:00, UTC+8). Your order is safe in the queue, but it will probably be taken and delivered later than usual, once our sellers are back online. Thanks for your patience!";
+const isSeaNight = (when = new Date()) => { const h = (new Date(when).getUTCHours() + 8) % 24; return h >= 21 || h < 6; };
 
 const LS_CART = 'echo_cart_v2';
 const LS_DEFAULT_AIRLINE = 'echo_default_airline_v2';
@@ -90,6 +97,10 @@ function App() {
     const [highlightOrder, setHighlightOrder] = useState(null);
     const [tourOpen, setTourOpen] = useState(false);
     const [rulesOpen, setRulesOpen] = useState(false);
+    const [announcements, setAnnouncements] = useState([]);              // pop-ups from the admins, for everyone
+    const [seenAnnouncements, setSeenAnnouncements] = useState(() => store.get(LS_ANNOUNCEMENTS, []));
+    const [celebrated, setCelebrated] = useState(false);                 // the budget "thank you" was closed
+    const [nightNotice, setNightNotice] = useState(false);               // order sent during the SEA night
     const [rulesFirst, setRulesFirst] = useState(false);   // first time: "I understand" marks them as read
 
     const userId = session?.user?.id;
@@ -176,6 +187,10 @@ function App() {
                 toast(text, p.new.kind === 'warning' ? 'error' : 'info');
                 notifyBrowser('Echo Market', text, 'mm' + p.new.id);
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, (p) => {
+                if (p.eventType === 'DELETE') setAnnouncements((list) => list.filter((a) => a.id !== p.old.id));
+                else if (p.new?.id) setAnnouncements((list) => [p.new, ...list.filter((a) => a.id !== p.new.id)]);
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_reports', filter: `buyer_id=eq.${userId}` }, (p) => {
                 if (p.new?.id) setMissingReports((list) => [...list.filter((r) => r.id !== p.new.id), p.new]);
             })
@@ -193,6 +208,13 @@ function App() {
         document.addEventListener('visibilitychange', onVisible);
         return () => { sb.removeChannel(channel); document.removeEventListener('visibilitychange', onVisible); };
     }, [userId, loadAll]);
+
+    // ---------------- announcements from the admins (everyone, signed in or not)
+    useEffect(() => {
+        sb?.from('announcements').select('*').order('created_at', { ascending: false }).limit(20)
+            .then(({ data }) => setAnnouncements(data || []));
+    }, []);
+    const seeAnnouncement = (id) => setSeenAnnouncements((list) => { const next = [...new Set([...list, id])].slice(-100); store.set(LS_ANNOUNCEMENTS, next); return next; });
 
     // ---------------- market rules: shown once on the first sign-in (remembered on the account), then in the 📜 menu
     useEffect(() => {
@@ -267,7 +289,11 @@ function App() {
         return html`<${MarketGate} standing=${standing} account=${account} onSignOut=${signOut} />`;
     }
 
+    if (standing?.budget?.limit) { DAILY_LIMIT_USD = standing.budget.limit; BUDGET_TIER = standing.budget.tier || 0; }
     const shared = { session, account, airlines, alliances, orders, events, pricelist, cart, priceLevel, dataReady };
+    // One pop-up at a time: rules first, then the budget "thank you", then announcements (the tour waits for rules).
+    const celebrate = session && standing?.budget?.celebrate && !celebrated && !rulesOpen && !tourOpen;
+    const nextAnnouncement = !rulesOpen && !celebrate && !tourOpen && !nightNotice ? announcements.find((a) => !seenAnnouncements.includes(a.id)) : null;
 
     return html`<div className="min-h-screen pb-28 md:pb-12">
         <${Header} ...${shared} view=${view} cartCount=${cartCount} unread=${unread} isSeller=${isSeller}
@@ -278,7 +304,7 @@ function App() {
             ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
                 onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`}
 
-            ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox}
+            ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox} announcements=${announcements}
                 spent24h=${spent24h} cartCount=${cartCount} onOpenCart=${() => setCartOpen(true)} adminNotices=${adminNotices}
                 onOpenOrder=${(id) => { if (!id) return; setHighlightOrder(id); go('orders'); }}
                 guide=${html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
@@ -311,6 +337,7 @@ function App() {
                 setOrders((list) => [order, ...list.filter((o) => o.id !== order.id)]);
                 setHighlightOrder(order.id); go('orders'); loadAll();
                 toast(`Order ${orderRef(order)} sent! Sellers have been notified — you'll see here when one takes it.`, 'success');
+                if (isSeaNight(order.created_at)) setNightNotice(true);
             }} />
 
         <${NotificationsPanel} open=${notifOpen} inbox=${inbox} lastSeen=${lastSeen} account=${account} setAccount=${setAccount}
@@ -328,6 +355,17 @@ function App() {
             }} />
 
         ${rulesOpen && html`<${RulesModal} first=${rulesFirst} onClose=${closeRules} />`}
+        ${celebrate && html`<${BudgetCelebration} budget=${standing.budget} name=${account?.display_name || account?.discord_username || ''}
+            onClose=${() => { setCelebrated(true); api('/api/me', { action: 'budget-seen', key: standing.budget.key }).catch(() => {}); }} />`}
+        ${nightNotice && html`<${Modal} open=${true} onClose=${() => setNightNotice(false)} title="🌙 Your order is in, expect a wait" size="sm"
+            footer=${html`<${Button} onClick=${() => setNightNotice(false)}>Got it<//>`}>
+            <p className="text-sm text-slate-200 leading-relaxed">${SEA_NIGHT_TEXT}</p>
+        <//>`}
+        ${nextAnnouncement && html`<${Modal} open=${true} onClose=${() => seeAnnouncement(nextAnnouncement.id)} size="sm"
+            title=${nextAnnouncement.title || '📣 Notice from the Market Admins'} subtitle=${`${nextAnnouncement.created_by_name || 'Market Admins'} · ${timeAgo(nextAnnouncement.created_at)}`}
+            footer=${html`<${Button} onClick=${() => seeAnnouncement(nextAnnouncement.id)}>Got it<//>`}>
+            <p className="text-sm text-slate-200 whitespace-pre-line break-words leading-relaxed">${nextAnnouncement.body}</p>
+        <//>`}
 
         ${tourOpen && html`<${GuidedTour} steps=${TOUR_STEPS} label="Echo Market tour" name=${account?.display_name || account?.discord_username || ''}
             finishLabel=${airlines.length ? 'Done' : 'Create my airline'} finishIcon=${airlines.length ? 'check' : 'plus'}
@@ -355,6 +393,66 @@ const TOUR_STEPS = [
     { target: 'rules', icon: 'scroll-text', title: () => '5 · Market rules',
       text: 'The alliance market rules are always one tap away, right here.' }
 ];
+
+// =========================================================================
+//  Budget rewards: a "thank you" with fireworks, once per new reward (or when someone starts boosting).
+// =========================================================================
+const usdB = (n) => `$${Math.round(n / 1e9)}B`;
+function BudgetCelebration({ budget, name, onClose }) {
+    const booster = budget.source === 'booster';
+    const until = budget.expiresAt ? new Date(budget.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : null;
+    return html`<${Fireworks} />
+        <${Modal} open=${true} onClose=${onClose} size="sm" title=${booster ? '💜 Thank you for boosting!' : '🎉 Thank you!'}
+            footer=${html`<${Button} icon="heart" onClick=${onClose}>You're welcome<//>`}>
+            <div className="text-center space-y-3">
+                <p className="label text-sky-300">${booster ? 'Server booster' : `Reward · Tier ${budget.tier}`}</p>
+                <p className="text-4xl font-black text-white tracking-tight">${usdB(budget.limit)}<span className="text-base font-bold text-slate-400"> daily budget</span></p>
+                <p className="text-sm text-slate-200 leading-relaxed">${booster
+                    ? `${name ? name + ', thank' : 'Thank'} you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is ${usdB(budget.limit)} instead of ${usdB(10e9)} for as long as you boost.`
+                    : `${name ? name + ', thank' : 'Thank'} you for your active dedication to our Echo Alliances community! As a thank-you, your daily market budget has been raised to ${usdB(budget.limit)} (normally ${usdB(10e9)}).`}</p>
+                ${!booster && html`<p className="text-xs text-slate-400">${until ? `Valid until ${until}.` : 'No end date.'}</p>`}
+            </div>
+        <//>`;
+}
+// A short burst of fireworks over the page (skipped for people who prefer reduced motion).
+function Fireworks() {
+    const ref = useRef(null);
+    useEffect(() => {
+        const canvas = ref.current;
+        if (!canvas || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const size = () => { canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+        size(); window.addEventListener('resize', size);
+        const colors = ['#c4b5fd', '#a78bfa', '#f9a8d4', '#ffffff', '#fde68a', '#93c5fd'];
+        const parts = [];
+        const burst = () => {
+            const x = innerWidth * (0.15 + Math.random() * 0.7), y = innerHeight * (0.12 + Math.random() * 0.4);
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            for (let i = 0; i < 70; i++) {
+                const a = (Math.PI * 2 * i) / 70, v = 1.5 + Math.random() * 3.5;
+                parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, color });
+            }
+        };
+        const start = performance.now();
+        let last = 0, frame;
+        const tick = (t) => {
+            if (t - start < 3200 && t - last > 380) { burst(); last = t; }
+            ctx.clearRect(0, 0, innerWidth, innerHeight);
+            for (let i = parts.length - 1; i >= 0; i--) {
+                const p = parts[i];
+                p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.vx *= 0.985; p.life -= 0.012;
+                if (p.life <= 0) { parts.splice(i, 1); continue; }
+                ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill();
+            }
+            if (parts.length || t - start < 3200) frame = requestAnimationFrame(tick);
+        };
+        frame = requestAnimationFrame(tick);
+        return () => { cancelAnimationFrame(frame); window.removeEventListener('resize', size); };
+    }, []);
+    return ReactDOM.createPortal(html`<canvas ref=${ref} className="fixed inset-0 w-full h-full pointer-events-none z-[70]" aria-hidden="true"></canvas>`, document.body);
+}
 
 // The market rules. First sign-in: must be acknowledged; afterwards opened from the 📜 button or the account menu.
 function RulesModal({ first, onClose }) {
@@ -543,7 +641,7 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 // =========================================================================
 //  Home
 // =========================================================================
-function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [] }) {
+function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [], announcements = [] }) {
     const [now, setNow] = useState(() => new Date());
     useEffect(() => {
         const t = setInterval(() => setNow(new Date()), 30000);
@@ -597,6 +695,14 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
             </div>
         </header>
 
+        ${announcements.map((a) => html`<div key=${'an' + a.id} className="flex gap-3 p-4 rounded-3xl border border-sky-500/30 bg-sky-500/[0.06]">
+            <${Icon} name="megaphone" className="w-5 h-5 mt-0.5 text-sky-300" />
+            <div className="min-w-0">
+                <p className="font-extrabold text-white">${a.title || 'Notice from the Market Admins'}</p>
+                <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${a.body}</p>
+                <p className="text-[11px] text-slate-500 mt-1">${a.created_by_name || 'Market Admins'} · ${timeAgo(a.created_at)}</p>
+            </div>
+        </div>`)}
         ${adminNotices.map((m) => html`<div key=${m.id} className=${`flex gap-3 p-4 rounded-3xl border ${m.kind === 'warning' ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-sky-500/30 bg-sky-500/[0.06]'}`}>
             <${Icon} name=${m.kind === 'warning' ? 'triangle-alert' : 'megaphone'} className=${`w-5 h-5 mt-0.5 ${m.kind === 'warning' ? 'text-rose-300' : 'text-sky-300'}`} />
             <div className="min-w-0">
@@ -614,7 +720,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
             ${tile('plane-landing', 'Active progress', activeQty ? `${activePct}%` : '–',
                 activeQty ? `${activeFilled} of ${plural(activeQty, 'aircraft')} delivered` : 'nothing in delivery',
                 activeQty > 0 && html`<div className="mt-2"><${ProgressBar} value=${activeFilled} max=${activeQty} /></div>`)}
-            ${tile('wallet', '24-hour limit', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used, at list price`,
+            ${tile('wallet', BUDGET_TIER ? `24-hour limit · Tier ${BUDGET_TIER}` : '24-hour limit', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used, at list price`,
                 html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} usage=${true} /></div>`)}
         </div>`}
 
@@ -1005,6 +1111,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                     <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} usage=${true} />
                 </div>`}
                 ${problems.length > 0 && cart.length > 0 && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="info" className="w-3.5 h-3.5 mt-px" />${problems[0]}</p>`}
+                ${session && cart.length > 0 && isSeaNight() && html`<p className="text-xs text-indigo-200 flex gap-1.5 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-400/20"><${Icon} name="moon" className="w-3.5 h-3.5 mt-px shrink-0" />${SEA_NIGHT_TEXT}</p>`}
                 ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in to send<//>`
                 : html`<${Button} size="lg" className="w-full" icon="send" busy=${busy} disabled=${problems.length > 0} onClick=${submit}>Send order to sellers<//>`}
             </div>

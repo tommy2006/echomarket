@@ -771,6 +771,88 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+--  8b. Community (October 2026, safe to re-run): budget rewards, announcements, the alert list.
+--      Managed by admins on the seller desk (seller/api/admin/community.js).
+-- ---------------------------------------------------------------------
+-- Daily budget tiers: Tier 0 $10B (everyone), Tier 1 $25B and Tier 2 $40B (granted by admins as a reward,
+-- optional end date), Tier 3 $50B (server boosters, automatic). The reason is for admins only, so the
+-- browser can't read this table at all.
+create table if not exists public.budget_rewards (
+    id              bigint generated always as identity primary key,
+    discord_id      text not null,
+    tier            int not null check (tier in (1, 2)),
+    reason          text not null,
+    expires_at      timestamptz,                -- null = never
+    granted_by      uuid references public.accounts(id) on delete set null,
+    granted_by_name text,
+    revoked_at      timestamptz,
+    revoked_by_name text,
+    created_at      timestamptz not null default now()
+);
+create index if not exists budget_rewards_discord_idx on public.budget_rewards (discord_id);
+alter table public.budget_rewards enable row level security;   -- no policies: API only
+revoke all on public.budget_rewards from anon, authenticated;
+
+-- Server booster (Tier 3): kept up to date by the membership check. budget_seen_key: the last reward the
+-- buyer was thanked for (the celebration pop-up shows once per new reward).
+alter table public.accounts add column if not exists booster boolean not null default false;
+alter table public.accounts add column if not exists budget_seen_key text;
+
+-- Pop-up messages from the admins to every buyer ("fewer sellers than usual this week", …), until deleted.
+create table if not exists public.announcements (
+    id              bigint generated always as identity primary key,
+    title           text,
+    body            text not null,
+    created_by      uuid references public.accounts(id) on delete set null,
+    created_by_name text,
+    created_at      timestamptz not null default now()
+);
+alter table public.announcements enable row level security;
+drop policy if exists "announcements: everyone reads" on public.announcements;
+create policy "announcements: everyone reads" on public.announcements for select to anon, authenticated using (true);
+grant select on public.announcements to anon, authenticated;
+revoke insert, update, delete, truncate, references, trigger on public.announcements from anon, authenticated;
+
+-- Alert list (admins and Lead Ambassadors): Discord accounts to be careful with, with a reason only they
+-- see. Orders from them get a row in order_alerts, which sellers can read: "be cautious, check with admins".
+create table if not exists public.watchlist (
+    id            bigint generated always as identity primary key,
+    discord_id    text not null unique,
+    reason        text not null,
+    added_by      uuid references public.accounts(id) on delete set null,
+    added_by_name text,
+    created_at    timestamptz not null default now()
+);
+alter table public.watchlist enable row level security;   -- no policies: API only
+revoke all on public.watchlist from anon, authenticated;
+
+create table if not exists public.order_alerts (
+    order_id   text primary key references public.orders(id) on delete cascade,
+    discord_id text,
+    created_at timestamptz not null default now()
+);
+alter table public.order_alerts enable row level security;
+drop policy if exists "order alerts: sellers read" on public.order_alerts;
+create policy "order alerts: sellers read" on public.order_alerts for select to authenticated using (public.is_seller());
+grant select on public.order_alerts to authenticated;
+revoke insert, update, delete, truncate, references, trigger on public.order_alerts from anon, authenticated;
+revoke all on public.order_alerts from anon;
+
+do $$
+declare t text;
+begin
+    foreach t in array array['announcements', 'order_alerts'] loop
+        if not exists (
+            select 1 from pg_publication_tables
+            where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+        ) then
+            execute format('alter publication supabase_realtime add table public.%I', t);
+        end if;
+    end loop;
+end $$;
+grant all on public.budget_rewards, public.announcements, public.watchlist, public.order_alerts to service_role;
+
+-- ---------------------------------------------------------------------
 --  9. Make the API notice new tables/columns right away (otherwise it can
 --     briefly report "could not find the ... column in the schema cache").
 -- ---------------------------------------------------------------------

@@ -14,7 +14,7 @@
 import { createPublicKey, verify } from 'crypto';
 import { waitUntil } from '@vercel/functions';
 import {
-    admin, accountName, cleanText, requireMarketAccess, rateLimit, activeBan, banText, orderRef, getSetting, ROLE_IDS, GUILD_IDS,
+    admin, accountName, cleanText, requireMarketAccess, rateLimit, activeBan, banText, orderRef, getSetting, ROLE_IDS, GUILD_IDS, isSeaNight, SEA_NIGHT_TEXT,
     DISCORD_API, BUYER_URL, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, issueBan, liftBan, sendMarketMessage, moderationSummary } from '../../lib/moderation.js';
@@ -241,7 +241,8 @@ function summary(p, pendingId, notice = '') {
                 { name: 'Total', value: short(p.totalUSD), inline: true },
                 { name: p.airlines.length > 1 ? 'Deliver to any of' : 'Deliver to', value: p.airlines.map((a) => `${a.name} (${a.alliance})`).join('\n') },
                 { name: '24-hour limit (at list price)', value: `${short(p.used + p.listTotalUSD)} of ${short(p.limit)} after this order` },
-                ...(p.buyerNote ? [{ name: 'Note for the seller', value: p.buyerNote }] : [])
+                ...(p.buyerNote ? [{ name: 'Note for the seller', value: p.buyerNote }] : []),
+                ...(isSeaNight() ? [{ name: '🌙 Expect a wait', value: SEA_NIGHT_TEXT }] : [])
             ],
             footer: { text: `Expires ${PENDING_MINUTES} minutes after /order · only you can see this` }
         }],
@@ -373,7 +374,7 @@ async function orderComponent(i) {
         if (!account) throw new HttpError(403, signInText());
         const placed = await placeOrder(account, claimed[0].payload);
         return {
-            content: `✅ **Order ${orderRef(placed)} sent to the sellers** (${placed.total_qty} aircraft). You'll get a DM when a seller takes it. Follow it on ${BUYER_URL ? `${BUYER_URL}/#orders` : 'the website'}.`,
+            content: `✅ **Order ${orderRef(placed)} sent to the sellers** (${placed.total_qty} aircraft). You'll get a DM when a seller takes it. Follow it on ${BUYER_URL ? `${BUYER_URL}/#orders` : 'the website'}.${isSeaNight() ? `\n🌙 ${SEA_NIGHT_TEXT}` : ''}`,
             embeds: [], components: []
         };
     }, { update: true });

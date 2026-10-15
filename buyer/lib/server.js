@@ -372,6 +372,8 @@ async function webhookCall(url, method, payload) {
 
 // Posts / edits / moves the order's Discord message to match its current status.
 // Never throws: Discord being down must not break the order itself.
+// Shown to sellers (Discord post and seller desk) on orders from buyers on the alert list.
+export const CAUTION_TEXT = 'This buyer is on the alert list. Be cautious and check with the admins if necessary when taking this order.';
 export async function syncDiscord(order, title, { pingSellers = false } = {}) {
     try {
         const meta = STATUS_META[order.status] || STATUS_META.PENDING;
@@ -381,10 +383,17 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
 
         const { data: flag } = await admin().from('order_flags').select('*').eq('order_id', order.id).maybeSingle();
         const { data: declines } = await admin().from('order_declines').select('seller_name').eq('order_id', order.id);
+        // Buyer on the alert list (admins / Lead Ambassadors): the post says to be careful. Reason not shown.
+        const { data: alert } = await admin().from('order_alerts').select('order_id').eq('order_id', order.id).maybeSingle();
         const ping = pingSellers && SELLER_ROLE_ID;
+        const embed = buildEmbed(order, title, flag, declines || []);
+        if (alert && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status)) {
+            embed.fields.unshift({ name: '⚠️ Caution', value: CAUTION_TEXT, inline: false });
+            embed.color = EMBED_COLORS.declined;
+        }
         const payload = {
-            content: ping ? `<@&${SELLER_ROLE_ID}> ${title}` : undefined,
-            embeds: [buildEmbed(order, title, flag, declines || [])],
+            content: ping ? `<@&${SELLER_ROLE_ID}> ${alert ? '⚠️ ' : ''}${title}` : undefined,
+            embeds: [embed],
             allowed_mentions: { parse: [], roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
         };
 
@@ -478,7 +487,7 @@ export async function dmBuyer(order, kind, extra = '', by = '') {
     const sellersText = listed ? 'your sellers' : seller;
     const lines = {
         CREATED: { title: `📦 Order ${ref} received`, color: EMBED_COLORS.request,
-            description: `Your order for ${order.total_qty} aircraft for ${buyerAirlines} (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.` },
+            description: `Your order for ${order.total_qty} aircraft for ${buyerAirlines} (${usd(order.total_usd)}) was sent to the seller team. You'll get a DM when a seller takes it and when it's delivered.${isSeaNight(order.created_at) ? `\n\n🌙 ${SEA_NIGHT_TEXT}` : ''}` },
         CLAIMED: { title: `🤝 Your order ${ref} was taken`, color: EMBED_COLORS.progress,
             description: `${seller} will sell you ${order.total_qty} aircraft for ${buyerAirlines}. Watch for the sale in-game.` },
         PROGRESS: { title: `🟡 ${ref}: ${order.filled} of ${order.total_qty} delivered`, color: EMBED_COLORS.progress,
@@ -513,7 +522,10 @@ export const ROLE_IDS = {
     ambassador: env('DISCORD_AMBASSADOR_ROLE_ID'),
     verified: env('DISCORD_VERIFIED_SELLER_ROLE_ID'),
     marketAdmin: env('DISCORD_MARKET_ADMIN_ROLE_ID'),
-    marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID')
+    marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID'),
+    // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
+    // (the member's premium_since), which is exactly when Discord gives that role.
+    booster: env('DISCORD_BOOSTER_ROLE_ID')
 };
 if (!ROLE_IDS.lead && !ROLE_IDS.ambassador && !ROLE_IDS.verified) ROLE_IDS.verified = SELLER_ROLE_ID;
 export const SELLER_ROLE_SYNC = Boolean(BOT_TOKEN && (ROLE_IDS.lead || ROLE_IDS.ambassador || ROLE_IDS.verified || ROLE_IDS.marketAdmin));
@@ -533,7 +545,7 @@ export async function discordStanding(discordId) {
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
-        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false };
+        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -545,6 +557,7 @@ export async function discordStanding(discordId) {
                 if (rank && (!st.rank || RANKS.indexOf(rank) < RANKS.indexOf(st.rank))) st.rank = rank;
                 if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;
                 if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
+                if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
             } else if (m.status === 404) {
                 known = true;   // not in this server
             }
@@ -584,6 +597,7 @@ export async function activeBan(discordId) {
 export async function marketStanding(account, { fresh = false } = {}) {
     let inGuild = account.in_guild;
     let bannedRole = Boolean(account.market_banned_role);
+    let booster = account.booster === true;
     if (MEMBERSHIP_CHECK) {
         const age = account.guild_checked_at ? Date.now() - new Date(account.guild_checked_at).getTime() : Infinity;
         if (fresh || inGuild == null || age > MEMBERSHIP_RECHECK_MINUTES * 60e3) {
@@ -591,10 +605,13 @@ export async function marketStanding(account, { fresh = false } = {}) {
             if (st) {
                 inGuild = st.inGuild;
                 bannedRole = st.marketBanned;
+                booster = st.booster;
                 const { error } = await admin().from('accounts').update({
                     in_guild: inGuild, market_banned_role: bannedRole, guild_checked_at: new Date().toISOString()
                 }).eq('id', account.id);
                 if (error) console.warn('membership not saved (re-run schema.sql?):', error.message);
+                // Server booster → budget Tier 3 (saved separately: an older database has no "booster" column).
+                if (account.booster !== booster) await admin().from('accounts').update({ booster }).eq('id', account.id);
             } else if (inGuild == null) {
                 inGuild = true;   // Discord unreachable and never checked: don't lock people out
             }
@@ -610,8 +627,42 @@ export async function marketStanding(account, { fresh = false } = {}) {
         bannedRole = false;
         await admin().from('accounts').update({ market_banned_role: false }).eq('id', account.id);
     }
-    return { inGuild: inGuild !== false, bannedRole, ban };
+    return { inGuild: inGuild !== false, bannedRole, ban, booster };
 }
+
+// =====================================================================
+//  Daily budget (24-hour limit, counted at list price). Everyone starts at Tier 0. Admins can grant
+//  Tier 1 / Tier 2 as a reward (budget_rewards, optional end date); server boosters get Tier 3 automatically.
+//  The highest one that applies wins.
+// =====================================================================
+export const BUDGET_TIERS = {
+    0: { limit: 10_000_000_000, label: 'Standard' },
+    1: { limit: 25_000_000_000, label: 'Tier 1 · active member' },
+    2: { limit: 40_000_000_000, label: 'Tier 2 · big contribution' },
+    3: { limit: 50_000_000_000, label: 'Tier 3 · server booster' }
+};
+// { tier, limit, source: 'standard' | 'reward' | 'booster', expiresAt, key } — key changes whenever a new
+// reward starts, so the buyer site knows when to celebrate.
+export async function budgetFor(account, { booster } = {}) {
+    let best = null;
+    if (account?.discord_id) {
+        const { data, error } = await admin().from('budget_rewards').select('id, tier, expires_at')
+            .eq('discord_id', account.discord_id).is('revoked_at', null)
+            .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+        if (!error) best = (data || []).sort((a, b) => b.tier - a.tier || (a.expires_at ? 1 : 0) - (b.expires_at ? 1 : 0))[0] || null;
+    }
+    const isBooster = booster ?? account?.booster === true;
+    if (isBooster && (!best || best.tier < 3)) return { tier: 3, limit: BUDGET_TIERS[3].limit, source: 'booster', expiresAt: null, key: 'booster' };
+    if (best) return { tier: best.tier, limit: BUDGET_TIERS[best.tier].limit, source: 'reward', expiresAt: best.expires_at, key: `reward:${best.id}` };
+    return { tier: 0, limit: BUDGET_TIERS[0].limit, source: 'standard', expiresAt: null, key: null };
+}
+
+// Most sellers are in Southeast Asia: orders placed between 21:00 and 06:00 UTC+8 are told to expect a wait.
+export const SEA_NIGHT_TEXT = "Heads-up: most of our sellers live in Southeast Asia, where it's night right now (21:00–06:00, UTC+8). Your order is safe in the queue, but it will probably be taken and delivered later than usual, once our sellers are back online. Thanks for your patience!";
+export const isSeaNight = (when = new Date()) => {
+    const h = (new Date(when).getUTCHours() + 8) % 24;
+    return h >= 21 || h < 6;
+};
 // If this person's last market ban has ended (not lifted early, no other ban active), removes the Market
 // Banned role. Returns true when the role was removed. Used on visits and by the daily /api/cron/bans.
 export async function endLapsedBanRole(discordId) {

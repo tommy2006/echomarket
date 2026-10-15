@@ -11,7 +11,7 @@ Open **<https://echomarket-buyer.vercel.app>** and press **Sign in with Discord*
 ## 3 · Place an order
 **Shop** → pick a model, the quantity and a **price level** (50–90 % of the list price).
 Open your order (🛒), tick the airline(s) that may receive the planes, then **Send order**.
--# Limits: $10B per 24 hours (counted at list price) · 5 orders per 10 minutes.
+-# Limits: $10B per 24 hours (counted at list price; more for very active members and server boosters 💜) · 5 orders per 10 minutes.
 
 **On Discord instead?** In the ordering channel:
 > `/airline create` → make a profile

@@ -52,8 +52,8 @@ export default async function handler(req, res) {
             const { count: sellers } = await db.from('sellers').select('user_id', { count: 'exact', head: true }).eq('active', true);
             const { count: airlines } = await db.from('airlines').select('id', { count: 'exact', head: true });
             add('Database', 'schema.sql installed', true, `${alliances} alliances, ${accounts} accounts, ${airlines} airlines`, null, { private: true });
-            // The newest part of schema.sql (clearing a theft, October 2026): tells whether it has been re-run since.
-            const { error: newest } = await db.from('missing_reports').select('cleared_at').limit(1);
+            // The newest part of schema.sql (budget rewards, announcements, alert list, October 2026): tells whether it has been re-run since.
+            const { error: newest } = await db.from('budget_rewards').select('id').limit(1);
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,
@@ -144,6 +144,14 @@ export default async function handler(req, res) {
                         !id ? 'not set (optional, recommended)' : roleNames.get(id) ? `${roleNames.get(id)}: ${effect}` : 'role not found in the server',
                         `Discord → Server Settings → Roles → right-click "${label}" → Copy Role ID. Add it as ${env} in ${where === 'BOTH' ? 'BOTH Vercel projects' : 'the SELLER Vercel project'}, then redeploy.`,
                         { private: Boolean(id) && roleNames.has(id) });
+                }
+                // Server boosters get budget Tier 3. Works without setup (Discord's own boost status); the role is optional.
+                if (APP === 'buyer') {
+                    const bid = ROLE_IDS.booster;
+                    add('Discord roles', 'Server boosters → budget Tier 3', !bid || roleNames.has(bid),
+                        !bid ? "automatic (Discord's boost status)" : roleNames.get(bid) ? `role: ${roleNames.get(bid)}` : 'DISCORD_BOOSTER_ROLE_ID not found in the server',
+                        'Remove DISCORD_BOOSTER_ROLE_ID (boosters are detected automatically) or set it to the Server Booster role\'s ID.',
+                        { private: true });
                 }
                 // Can the bot give and take the Market Banned role? Needs "Manage Roles" and a higher position.
                 if (APP === 'seller' && ROLE_IDS.marketBanned && pinned.length) {

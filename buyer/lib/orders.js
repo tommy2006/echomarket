@@ -1,7 +1,7 @@
 // Placing an order: every check and side effect in one place, used by the website (api/orders.js) and the
 // Discord bot (api/discord/interactions.js), so an order from either is identical.
-import { admin, accountName, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, HttpError } from './server.js';
-import { priceItems, orderListValue, DAILY_LIMIT_USD } from './pricing.js';
+import { admin, accountName, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, budgetFor, HttpError } from './server.js';
+import { priceItems, orderListValue } from './pricing.js';
 
 // Every new order pings the seller role on Discord, so placing orders is rate limited per account.
 export const MAX_ORDERS_PER_10_MIN = 5;
@@ -25,8 +25,8 @@ export async function usedLast24h(accountId) {
     return (data || []).reduce((s, o) => s + orderListValue(o), 0);
 }
 
-const overLimit = (used, listTotalUSD) => {
-    const left = Math.max(0, DAILY_LIMIT_USD - used);
+const overLimit = (used, listTotalUSD, limit) => {
+    const left = Math.max(0, limit - used);
     return new HttpError(400, `This order goes over the 24-hour limit, which counts aircraft at full list price. This order is $${listTotalUSD.toLocaleString('en-US')} at list price; you have $${left.toLocaleString('en-US')} of list-price quota left today.`);
 };
 
@@ -37,8 +37,10 @@ export async function previewOrder(account, { airlineIds, items: rawItems }) {
     const airlines = await ownAirlines(account, airlineIds);
     const priced = priceItems(rawItems);
     const used = await usedLast24h(account.id);
-    if (used + priced.listTotalUSD > DAILY_LIMIT_USD) throw overLimit(used, priced.listTotalUSD);
-    return { airlines, ...priced, used, limit: DAILY_LIMIT_USD };
+    // Each buyer's own daily budget (Tier 0 = $10B; rewards and server boosting raise it).
+    const { limit, tier } = await budgetFor(account);
+    if (used + priced.listTotalUSD > limit) throw overLimit(used, priced.listTotalUSD, limit);
+    return { airlines, ...priced, used, limit, tier };
 }
 
 // Places the order. Returns the saved order row.
@@ -63,7 +65,8 @@ export async function placeOrder(account, { airlineIds, items: rawItems, buyerNo
     // Rolling 24h limit, counted across ALL of this account's airlines, at 100% LIST price:
     // a 50% order uses up the same quota as the same aircraft at 90%.
     const used = await usedLast24h(account.id);
-    if (used + listTotalUSD > DAILY_LIMIT_USD) throw overLimit(used, listTotalUSD);
+    const { limit } = await budgetFor(account);
+    if (used + listTotalUSD > limit) throw overLimit(used, listTotalUSD, limit);
 
     // Atomic counter in the database, so orders sent at the same moment can't all slip under the cap.
     // Counted here, after every other check, so refused orders don't use up the allowance.
@@ -95,10 +98,14 @@ export async function placeOrder(account, { airlineIds, items: rawItems, buyerNo
     // Two orders sent at the same moment could both pass the check above. Re-check with this order
     // included; if the total is now over the limit, take this one back.
     const total = await usedLast24h(account.id);
-    if (total > DAILY_LIMIT_USD) {
+    if (total > limit) {
         await db.from('orders').delete().eq('id', order.id);
-        throw overLimit(total - listTotalUSD, listTotalUSD);
+        throw overLimit(total - listTotalUSD, listTotalUSD, limit);
     }
+
+    // Buyer on the alert list (admins / Lead Ambassadors): mark the order so sellers are told to be careful.
+    const { data: watched } = await db.from('watchlist').select('id').eq('discord_id', account.discord_id).maybeSingle();
+    if (watched) await db.from('order_alerts').upsert({ order_id: order.id, discord_id: account.discord_id });
 
     await addEvent(order, 'CREATED', account, { message: `Order sent for ${airlines.map((a) => a.name).join(', ')}.` });
     await syncDiscord(order, `📦 New order ${orderRef(order)}`, { pingSellers: true });

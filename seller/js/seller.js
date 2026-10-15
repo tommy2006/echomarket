@@ -21,6 +21,7 @@ const canTakeOver = (order, userId, now = Date.now()) => ['CLAIMED', 'PARTIAL'].
 const listStillToBuy = (order) => orderLines(order).reduce((sum, it) => sum + (Number(it.listPriceUSD) || 0) * Math.max(0, it.qty - it.filled), 0);
 
 const LS_SELL_AS = 'echo_seller_airline_v2';
+const CAUTION_TEXT = 'This buyer is on the alert list. Be cautious and check with the admins if necessary when taking this order.';
 const LS_SELLER_TOUR = 'echo_seller_tour_done_v1:';   // + user id
 
 // First-time walkthrough of the seller desk (same look as the buyer site's). Targets: data-tour="…".
@@ -111,6 +112,8 @@ function App() {
     const [teamSize, setTeamSize] = useState(1);        // active sellers
     const [messages, setMessages] = useState([]);       // order_messages (buyers ↔ seller team)
     const [reports, setReports] = useState([]);         // missing_reports (buyers: "my planes were taken")
+    const [alerts, setAlerts] = useState({});           // order id → true: buyer is on the alert list (order_alerts)
+    const [alertReasons, setAlertReasons] = useState({}); // admins only: discord id → reason
     const [msgSeen, setMsgSeen] = useState(() => store.get(LS_MSG_SEEN, {}));
     useEffect(() => { store.set(LS_MSG_SEEN, msgSeen); }, [msgSeen]);
     const [loading, setLoading] = useState(true);
@@ -176,15 +179,20 @@ function App() {
         if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
-        const [ord, fl, air, dec, team, msg, rep] = await Promise.all([
+        const [ord, fl, air, dec, team, msg, rep, oal] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
             sb.from('order_declines').select('*'),
             sb.from('sellers').select('user_id').eq('active', true),
             sb.from('order_messages').select('*').order('created_at').limit(2000),
-            sb.from('missing_reports').select('*').order('created_at').limit(1000)
+            sb.from('missing_reports').select('*').order('created_at').limit(1000),
+            sb.from('order_alerts').select('order_id').limit(2000)
         ]);
+        setAlerts(Object.fromEntries((oal.data || []).map((a) => [a.order_id, true])));
+        // Admins and Lead Ambassadors also see why someone is on the alert list.
+        if (me.is_admin) api('/api/admin/community', { action: 'list' })
+            .then((r) => setAlertReasons(Object.fromEntries((r.watchlist || []).map((w) => [w.discord_id, w.reason])))).catch(() => {});
         setMessages(msg.data || []);
         setReports(rep.data || []);   // (empty until schema.sql has the table)
         setDeclines(dec.data || []);
@@ -216,6 +224,10 @@ function App() {
                     const rest = l.filter((d) => key(d) !== key(p.eventType === 'DELETE' ? p.old : p.new));
                     return p.eventType === 'DELETE' ? rest : [...rest, p.new];
                 });
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_alerts' }, (p) => {
+                if (p.eventType === 'DELETE') setAlerts((a) => { const n = { ...a }; delete n[p.old.order_id]; return n; });
+                else if (p.new?.order_id) setAlerts((a) => ({ ...a, [p.new.order_id]: true }));
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_reports' }, (p) => {
                 if (!p.new?.id) return;
@@ -373,7 +385,8 @@ function App() {
         all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         // Admins only: seller performance (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
-                                mod: { label: 'Moderation', icon: 'shield', fn: () => false } } : {})
+                                mod: { label: 'Moderation', icon: 'shield', fn: () => false },
+                                community: { label: 'Community', icon: 'sparkles', fn: () => false } } : {})
     };
     if (!tabs[tab]) setTimeout(() => setTab('open'));
     const counts = {
@@ -444,14 +457,15 @@ function App() {
                 </label>`}
             </div>
 
-            ${tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
+            ${tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
+            : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
             : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
-                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
+                passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} caution=${alerts[o.id]} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
                 ${tab === 'all' && list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
             </div>`}
@@ -460,6 +474,7 @@ function App() {
         ${detail && html`<${OrderDetail} order=${detail} flag=${flags[detail.id]} userId=${userId} seller=${seller} airlines=${airlines} now=${now}
             passed=${passedOn(detail)} teamSize=${teamSize} onBuyer=${setBuyerOf}
             messages=${messagesOf(detail.id)} onSeen=${() => markSeen(detail.id)} reports=${reportsOf(detail.id)}
+            caution=${alerts[detail.id]} cautionReason=${alertReasons[detail.buyer_discord_id]}
             onReport=${(r) => setReports((l) => [...l.filter((x) => x.id !== r.id), r])}
             onMessage=${(m) => setMessages((l) => [...l.filter((x) => x.id !== m.id), m])}
             actions=${actions} onClose=${closeDetail} />`}
@@ -468,14 +483,14 @@ function App() {
         ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title="Order not found" size="sm">
             <p className="text-sm text-slate-400">${detailId} doesn't exist or was deleted.</p><//>`}
 
-        ${modal?.kind === 'claim' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs}
+        ${modal?.kind === 'claim' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} caution=${alerts[modal.order.id]}
             onClose=${() => setModal(null)}
             onConfirm=${async (airlineId) => {
                 setSellAsId(airlineId);
                 const ok = await act(modal.order, { action: 'claim', airlineId }, `You took ${orderRef(modal.order)}. The buyer has been notified.`);
                 if (ok) { setModal(null); setTab('mine'); }
             }} />`}
-        ${modal?.kind === 'join' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} join=${true}
+        ${modal?.kind === 'join' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} join=${true} caution=${alerts[modal.order.id]}
             onClose=${() => setModal(null)}
             onConfirm=${async (airlineId) => {
                 setSellAsId(airlineId);
@@ -1063,6 +1078,143 @@ function ModerationView({ userId }) {
     </section>`;
 }
 
+// =========================================================================
+//  Community (admins and Lead Ambassadors): pop-up announcements for buyers, daily budget rewards, alert list.
+// =========================================================================
+const usdB = (n) => `$${Math.round(n / 1e9)}B`;
+function CommunityView({ onAlertsChanged }) {
+    const [data, setData] = useState(null);
+    const [error, setError] = useState('');
+    const load = useCallback(async () => {
+        try { const r = await api('/api/admin/community', { action: 'list' }); setData(r); setError(''); onAlertsChanged?.(r.watchlist || []); }
+        catch (err) { setError(err.message); }
+    }, []);
+    useEffect(() => { load(); }, [load]);
+    const run = async (payload, success) => {
+        try { const r = await api('/api/admin/community', payload); toast(typeof success === 'function' ? success(r) : success, 'success'); await load(); return true; }
+        catch (err) { toast(err.message, 'error'); return false; }
+    };
+    if (error) return html`<div className="card p-5 text-sm text-rose-200">${error}</div>`;
+    if (!data) return html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    return html`<div className="grid lg:grid-cols-2 gap-4 items-start">
+        <${AnnouncementsCard} items=${data.announcements} run=${run} />
+        <${AlertListCard} items=${data.watchlist} run=${run} />
+        <div className="lg:col-span-2"><${RewardsCard} data=${data} run=${run} /></div>
+    </div>`;
+}
+
+function AnnouncementsCard({ items, run }) {
+    const [title, setTitle] = useState('');
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const post = async () => {
+        setBusy(true);
+        if (await run({ action: 'announce', title: title.trim(), body: text.trim() }, 'Posted. Buyers see it as a pop-up the next time they open the market (live for those online).')) { setTitle(''); setText(''); }
+        setBusy(false);
+    };
+    return html`<section className="card p-4 space-y-3">
+        <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="megaphone" className="w-4 h-4" /> Announcements</p>
+            <p className="text-xs text-slate-400 mt-0.5">A pop-up for every buyer (once each), and a banner on their home page until you delete it.</p></div>
+        <input value=${title} maxLength="100" onChange=${(e) => setTitle(e.target.value)} className="input" placeholder="Title (optional), e.g. Fewer sellers this week" />
+        <textarea value=${text} maxLength="1500" rows="3" onChange=${(e) => setText(e.target.value)} className="input"
+            placeholder="e.g. Due to special circumstances, there are fewer active sellers than normal. Orders may take longer this week."></textarea>
+        <div className="flex justify-end"><${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${post}>Post to all buyers<//></div>
+        ${items.length > 0 && html`<ul className="space-y-2 pt-2 border-t border-slate-800">${items.map((a) => html`<li key=${a.id} className="flex gap-2 items-start">
+            <div className="flex-1 min-w-0"><p className="text-sm font-bold text-white">${a.title || 'Notice from the Market Admins'}</p>
+                <p className="text-xs text-slate-300 whitespace-pre-line break-words">${a.body}</p>
+                <p className="text-[11px] text-slate-500">${a.created_by_name} · ${timeAgo(a.created_at)}</p></div>
+            <${Button} size="sm" variant="ghost" icon="trash-2" className="!text-rose-300" onClick=${async () => {
+                if (await ask({ title: 'Delete this announcement?', message: 'Buyers will no longer see it.', confirmLabel: 'Delete', danger: true })) run({ action: 'announce-delete', id: a.id }, 'Announcement deleted.');
+            }}>Delete<//>
+        </li>`)}</ul>`}
+    </section>`;
+}
+
+function AlertListCard({ items, run }) {
+    const [id, setId] = useState('');
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const idOk = /^\d{17,20}$/.test(id.trim());
+    const add = async () => {
+        setBusy(true);
+        if (await run({ action: 'watch-add', discordId: id.trim(), reason: reason.trim() }, (r) => `Added to the alert list${r.openOrders ? `; ${r.openOrders} open order${r.openOrders === 1 ? '' : 's'} now carry the warning` : ''}.`)) { setId(''); setReason(''); }
+        setBusy(false);
+    };
+    return html`<section className="card p-4 space-y-3">
+        <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="eye" className="w-4 h-4" /> Alert list</p>
+            <p className="text-xs text-slate-400 mt-0.5">Orders from these Discord accounts warn the sellers (seller desk and Discord): "be cautious and check with the admins". The reason is for admins and Lead Ambassadors only; the buyer is never told.</p></div>
+        <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID, e.g. 123456789012345678" />
+        <input value=${reason} maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Reason, e.g. possible spy from a rival alliance" />
+        <div className="flex justify-end"><${Button} size="sm" icon="eye" busy=${busy} disabled=${!idOk || !reason.trim()} onClick=${add}>Add to alert list<//></div>
+        ${items.length > 0 && html`<ul className="space-y-2 pt-2 border-t border-slate-800">${items.map((w) => html`<li key=${w.id} className="flex gap-2 items-start">
+            <div className="flex-1 min-w-0"><p className="text-sm text-white"><b>${w.name || 'Not on the market yet'}</b> <span className="font-mono text-xs text-slate-500">${w.discord_id}</span></p>
+                <p className="text-xs text-amber-200/90">${w.reason}</p>
+                <p className="text-[11px] text-slate-500">${w.added_by_name} · ${timeAgo(w.created_at)}</p></div>
+            <${Button} size="sm" variant="ghost" icon="x" onClick=${async () => {
+                if (await ask({ title: 'Remove from the alert list?', message: 'Their open orders lose the caution warning.', confirmLabel: 'Remove' })) run({ action: 'watch-remove', id: w.id }, 'Removed from the alert list.');
+            }}>Remove<//>
+        </li>`)}</ul>`}
+    </section>`;
+}
+
+function RewardsCard({ data, run }) {
+    const [id, setId] = useState('');
+    const [tier, setTier] = useState(1);
+    const [reason, setReason] = useState('');
+    const [never, setNever] = useState(true);
+    const [until, setUntil] = useState('');
+    const [busy, setBusy] = useState(false);
+    const tiers = data.tiers || {};
+    const idOk = /^\d{17,20}$/.test(id.trim());
+    const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+    const grant = async () => {
+        setBusy(true);
+        const ok = await run({ action: 'reward-grant', discordId: id.trim(), tier, reason: reason.trim(), expiresAt: never ? null : new Date(until + 'T23:59:59Z').toISOString() },
+            (r) => `Reward granted. The buyer sees a "thank you" pop-up${r.dm === 'sent' ? ' and got a DM' : ''}.`);
+        if (ok) { setId(''); setReason(''); setUntil(''); setNever(true); }
+        setBusy(false);
+    };
+    return html`<section className="card p-4 space-y-3">
+        <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="gift" className="w-4 h-4" /> Daily budget rewards</p>
+            <p className="text-xs text-slate-400 mt-0.5">Raise a market user's 24-hour limit as a thank-you for their activity. Tier 0 is ${usdB(tiers[0]?.limit || 10e9)} for everyone; server boosters get Tier 3 automatically. They get a celebration pop-up; the reason stays with the admins.</p></div>
+        <div className="grid sm:grid-cols-4 gap-1.5">${[0, 1, 2, 3].map((t) => html`<div key=${t} className=${`p-2.5 rounded-xl border text-center ${t === 1 || t === 2 ? 'border-slate-700' : 'border-slate-800 opacity-70'}`}>
+            <p className="text-xs font-black text-white">Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</p>
+            <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members' : t === 2 ? 'big contribution / even more active' : 'server boosters (automatic)'}</p>
+        </div>`)}</div>
+        <div className="grid sm:grid-cols-2 gap-2">
+            <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID (must be on the market)" />
+            <div className="grid grid-cols-2 gap-1.5">${[1, 2].map((t) => html`<button key=${t} type="button" onClick=${() => setTier(t)}
+                className=${`py-2 rounded-xl border text-xs font-bold ${tier === t ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</button>`)}</div>
+        </div>
+        <input value=${reason} maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Reason (admins only), e.g. very active in events this month" />
+        <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-200"><input type="checkbox" checked=${never} onChange=${(e) => setNever(e.target.checked)} /> Never ends</label>
+            ${!never && html`<label className="flex items-center gap-2 text-xs text-slate-300">Ends on <input type="date" min=${tomorrow} value=${until} onChange=${(e) => setUntil(e.target.value)} className="input !py-1.5 !w-auto" /></label>`}
+            <span className="flex-1"></span>
+            <${Button} size="sm" icon="gift" busy=${busy} disabled=${!idOk || !reason.trim() || (!never && !until)} onClick=${grant}>Grant reward<//>
+        </div>
+        <div className="grid md:grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+            <div>
+                <p className="label text-slate-500 mb-1.5">Active rewards (${data.rewards.length})</p>
+                ${!data.rewards.length ? html`<p className="text-xs text-slate-500">None yet.</p>`
+                : html`<ul className="space-y-2">${data.rewards.map((r) => html`<li key=${r.id} className="flex gap-2 items-start">
+                    <div className="flex-1 min-w-0"><p className="text-sm text-white"><b>${r.name || r.discord_id}</b> · Tier ${r.tier} (${usdB(tiers[r.tier]?.limit || 0)})</p>
+                        <p className="text-xs text-slate-300">${r.reason}</p>
+                        <p className="text-[11px] text-slate-500">${r.granted_by_name} · ${r.expires_at ? `until ${fmtDate(r.expires_at)}` : 'no end date'}</p></div>
+                    <${Button} size="sm" variant="ghost" icon="x" onClick=${async () => {
+                        if (await ask({ title: 'End this reward now?', message: 'Their daily budget goes back to their normal tier.', confirmLabel: 'End reward' })) run({ action: 'reward-revoke', id: r.id }, 'Reward ended.');
+                    }}>End<//>
+                </li>`)}</ul>`}
+            </div>
+            <div>
+                <p className="label text-slate-500 mb-1.5">Server boosters · Tier 3 (${data.boosters.length})</p>
+                ${!data.boosters.length ? html`<p className="text-xs text-slate-500">Nobody yet. Boosters are picked up automatically when they open the market.</p>`
+                : html`<ul className="space-y-1">${data.boosters.map((b) => html`<li key=${b.discord_id} className="text-sm text-white">💜 ${b.name} <span className="font-mono text-xs text-slate-500">${b.discord_id}</span></li>`)}</ul>`}
+            </div>
+        </div>
+    </section>`;
+}
+
 function Stat({ label, value, icon, tone }) {
     return html`<div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
         <div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-slate-500 leading-tight">${label}</p><span className=${tone}><${Icon} name=${icon} /></span></div>
@@ -1129,7 +1281,7 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0, missing = 0 }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0, missing = 0, caution = false }) {
     const mine = order.seller_id === userId;
     const helping = !mine && isHelping(order, userId);
     const joined = orderHelpers(order);
@@ -1140,6 +1292,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     <${OrderCode} order=${order} />
                     <${StatusBadge} status=${displayStatus(order)} />
                     <${FlagBadge} flag=${flag} />
+                    ${caution && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950" title=${CAUTION_TEXT}><${Icon} name="eye" className="w-3 h-3" />CAUTION</span>`}
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOURS</span>`}
@@ -1167,7 +1320,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport, caution = false, cautionReason = '' }) {
     useEffect(() => { onSeen?.(); }, [order.id, messages.length]);
     const [events, setEvents] = useState([]);
     useEffect(() => {
@@ -1182,6 +1335,11 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${displayStatus(order)} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
                 ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
             </div>
+            ${caution && html`<div className="flex gap-3 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 text-sm text-amber-100">
+                <${Icon} name="eye" className="w-5 h-5 text-amber-300 shrink-0" />
+                <div><p className="font-bold text-amber-200">Caution: buyer on the alert list</p><p>${CAUTION_TEXT}</p>
+                    ${cautionReason && html`<p className="text-xs mt-1 text-amber-200/80">Reason (admins only): ${cautionReason}</p>`}</div>
+            </div>`}
             <button onClick=${() => onBuyer(order)} className="w-full flex items-center gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-800 hover:border-slate-600 text-left">
                 <span className="w-9 h-9 rounded-xl bg-[#5865F2]/15 text-[#8b93ff] flex items-center justify-center shrink-0"><${DiscordLogo} className="w-4 h-4" /></span>
                 <span className="flex-1 min-w-0">
@@ -1389,7 +1547,7 @@ function PageSizeBar({ total, shown, pageSize, setPageSize }) {
     </div>`;
 }
 
-function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false }) {
+function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false, caution = false }) {
     const buyerAlliances = orderAlliances(order);
     const same = (a) => buyerAlliances.includes(a.alliance);
     const sorted = [...airlines].sort((a, b) => same(b) - same(a));
@@ -1401,6 +1559,7 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false 
         subtitle=${`${plural(order.total_qty, 'aircraft')} for ${airlineNames(order)} · ${fmtUSDShort(order.total_usd)}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
             <${Button} icon=${join ? 'users' : 'hand'} busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>${join ? 'Take over' : 'Take order'}<//>`}>
+        ${caution && html`<p className="text-sm text-amber-100 mb-4 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-amber-300 shrink-0" />${CAUTION_TEXT}</p>`}
         ${join && html`<p className="text-sm text-slate-300 mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800">${order.seller_airline_name} took this order over ${TAKEOVER_HOURS} hours ago and hasn't finished it (${order.filled} of ${order.total_qty} delivered). You join them: <b className="text-white">they stay on the order</b>, the buyer is told you will also be delivering, and you record only the aircraft <b className="text-white">you</b> list.</p>`}
         <p className="field-label">Sell as airline</p>
         <div className="space-y-1.5">
