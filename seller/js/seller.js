@@ -60,13 +60,12 @@ function RankBadge({ rank, admin }) {
         style=${{ color: c.text, backgroundColor: (c.soft || '#888') + '26', border: `1px solid ${(c.soft || '#888')}55` }}>
         ${RANK_LABEL[rank] || 'Seller'}${admin && !['lead', 'admin'].includes(rank) ? ' · admin' : ''}</span>`;
 }
-const LS_PAGE_SIZE = 'echo_seller_page_size_v1';
 const PAGE_SIZES = [5, 10, 25, 50, 'all'];
 
 // ---- sorting and filtering the order lists (remembered per device)
 const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
 const ORDER_TABS = ['open', 'mine', 'all'];
-const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '' };
+const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false };
 const typeCount = (o) => orderLines(o).length;
 const SORTS = {
     default: { label: 'Default order' },   // open queue: longest waiting first; other tabs: newest first
@@ -83,7 +82,9 @@ const SORTS = {
 };
 const num = (v) => (String(v).trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 // Does an order pass the filters? List value is entered in $ millions.
-function passesFilters(o, f) {
+// mineOnly: orders this seller listed at least one aircraft on (as seller, after taking over, or before passing it on).
+function passesFilters(o, f, userId) {
+    if (f.mineOnly && !deliveryShares(o).some((sh) => sh.sellerId === userId && sh.total > 0)) return false;
     if (f.alliance && !orderAlliances(o).includes(f.alliance)) return false;
     const types = typeCount(o);
     if (f.types === '3' ? types < 3 : f.types && types !== Number(f.types)) return false;
@@ -95,7 +96,7 @@ function passesFilters(o, f) {
     if (lMax != null && listM > lMax) return false;
     return true;
 }
-const activeFilterCount = (f) => Object.keys(NO_FILTERS).filter((k) => String(f[k] ?? '').trim() !== '').length;
+const activeFilterCount = (f) => Object.keys(NO_FILTERS).filter((k) => (typeof NO_FILTERS[k] === 'boolean' ? f[k] === true : String(f[k] ?? '').trim() !== '')).length;
 
 // ---- order timing (status_changed_at / status_history are kept by the database)
 const ms = (iso) => (iso ? new Date(iso).getTime() : null);
@@ -154,10 +155,10 @@ function App() {
 
     const [tab, setTab] = useState('open');
     const [tourOpen, setTourOpen] = useState(false);
-    const [pageSize, setPageSize] = useState(() => { const v = store.get(LS_PAGE_SIZE, 5); return PAGE_SIZES.includes(v) ? v : 5; });
+    const [pageSize, setPageSize] = useState(5);   // every list starts at 5 (also after switching tabs)
     const [now, setNow] = useState(() => Date.now());   // ticks every minute so wait times stay current
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
-    useEffect(() => { store.set(LS_PAGE_SIZE, pageSize); }, [pageSize]);
+    useEffect(() => { setPageSize(5); }, [tab]);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [query, setQuery] = useState('');
     const [view, setView] = useState(() => {
@@ -435,15 +436,15 @@ function App() {
         all: orders.length
     };
     const inTab = orders.filter((o) => (tabs[tab] || tabs.open).fn(o) && matches(o));
-    const list = inTab.filter((o) => passesFilters(o, view.filters));
+    const list = inTab.filter((o) => passesFilters(o, view.filters, userId));
     // Default: open queue longest-waiting first, other tabs newest first. Or the seller's chosen sort.
     if (SORTS[view.sort]?.fn) list.sort(SORTS[view.sort].fn);
     else if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
     const orderTab = ORDER_TABS.includes(tab);
     const filterCount = activeFilterCount(view.filters);
     const allianceOptions = [...new Set(orders.flatMap((o) => orderAlliances(o)))].filter(Boolean).sort();
-    // All orders: show the first N, the rest behind "Show more".
-    const paged = tab === 'all' && pageSize !== 'all' ? list.slice(0, pageSize) : list;
+    // Every order list: the first 5, the rest behind "Show more" / 10 / 25 / 50 / All.
+    const paged = pageSize !== 'all' ? list.slice(0, pageSize) : list;
     const detail = orders.find((o) => o.id === detailId);
 
     return html`<div className="min-h-screen pb-12">
@@ -529,7 +530,7 @@ function App() {
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
                 passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} caution=${alerts[o.id]} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
-                ${tab === 'all' && list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
+                ${list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
             </div>`}
         </main>
 
@@ -715,6 +716,9 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
     }, [days, seller.id]);
     const x = data?.seller || seller;
     const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
+    // Orders they took, latest first, 5 at a time.
+    const taken = useMemo(() => [...(data?.orders || [])].sort((a, b) => ms(b.takenAt) - ms(a.takenAt)), [data]);
+    const [takenShown, takenBar] = usePaged(taken);
 
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${x.name + (x.id === userId ? ' (you)' : '')}
         subtitle=${[x.onList ? RANK_LABEL[rankOf(x)] + adminSuffix(x) : null, ...sellerTags(x)].filter(Boolean).join(' · ')}>
@@ -752,7 +756,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
                     <p className="label text-slate-500 mb-2">Orders taken (${data.orders.length})</p>
                     ${!data.orders.length ? html`<p className="text-sm text-slate-400">No orders taken ${periodText(days)}.</p>`
                     : html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
-                        ${data.orders.map((o) => html`<li key=${o.id}>
+                        ${takenShown.map((o) => html`<li key=${o.id}>
                             <button onClick=${() => onOpenOrder(o.id)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-800/40">
                                 <span className="flex-1 min-w-0">
                                     <${OrderCode} order=${o} />
@@ -762,7 +766,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
                                 <${StatusBadge} status=${displayStatus(o)} />
                             </button>
                         </li>`)}
-                    </ul>`}
+                    </ul>${takenBar}`}
                 </div>
             `}
         </div>
@@ -837,7 +841,9 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder, isAdmin }) {
     }, [order.buyer_id]);
     const discordId = buyer?.discord_id || order.buyer_discord_id;
     const name = buyer?.display_name || buyer?.discord_username || order.buyer_name || 'Unknown buyer';
-    const theirs = orders.filter((o) => (order.buyer_id ? o.buyer_id === order.buyer_id : o.buyer_discord_id === discordId));
+    const theirs = orders.filter((o) => (order.buyer_id ? o.buyer_id === order.buyer_id : o.buyer_discord_id === discordId))
+        .sort((a, b) => ms(b.created_at) - ms(a.created_at));
+    const [theirsShown, theirsBar] = usePaged(theirs);
     const count = (fn) => theirs.filter(fn).length;
     const airlines = [...new Map(theirs.flatMap(orderAirlines).map((a) => [a.name + '|' + a.alliance, a])).values()];
     const flagged = theirs.filter((o) => flags[o.id] && flags[o.id].status !== 'NORMAL');
@@ -893,15 +899,15 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder, isAdmin }) {
             </div>`}
 
             ${theirs.length > 0 && html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
-                ${theirs.slice(0, 8).map((o) => html`<li key=${o.id}>
+                ${theirsShown.map((o) => html`<li key=${o.id}>
                     <button onClick=${() => onOpenOrder(o.id)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-800/40">
                         <span className="flex-1 min-w-0"><${OrderCode} order=${o} />
                             <span className="block text-xs text-slate-400 truncate">${airlineNames(o)} · ${plural(o.total_qty, 'aircraft')} · ${timeAgo(o.created_at)}</span></span>
                         <${StatusBadge} status=${displayStatus(o)} />
                     </button>
                 </li>`)}
-                ${theirs.length > 8 && html`<li className="px-3 py-2 text-xs text-slate-500">+ ${theirs.length - 8} older (search their name under All orders)</li>`}
             </ul>`}
+            ${theirsBar}
 
             ${isAdmin && discordId && html`<${ModerationPanel} target=${{ accountId: buyer?.id || order.buyer_id || null, discordId, name }} />`}
         </div>
@@ -1387,6 +1393,10 @@ function OrderFilters({ filters, alliances, tab, statusFilter, setStatusFilter, 
             <div><span className="field-label">Number of aircraft</span>${range('qtyMin', 'qtyMax', 'aircraft', 1)}</div>
             <div><span className="field-label">List value ($ millions)</span>${range('listMin', 'listMax', 'list value in millions', 50)}</div>
         </div>
+        <label className="flex items-center gap-2.5 text-sm text-slate-200 cursor-pointer w-fit">
+            <input type="checkbox" checked=${filters.mineOnly === true} onChange=${(e) => set({ mineOnly: e.target.checked })} className="w-4 h-4 accent-sky-400" />
+            Only orders I delivered on <span className="text-xs text-slate-500">(partly or fully, also after taking over or passing on)</span>
+        </label>
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
             ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">Status
                 <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
@@ -1715,11 +1725,19 @@ function StatusHistory({ order, now }) {
 const CLOSED = ['FULFILLED', 'CANCELLED', 'DECLINED'];
 
 // "Showing 5 of 23" + Show 5 / 10 / 25 / 50 / All, and a "Show N more" button.
-function PageSizeBar({ total, shown, pageSize, setPageSize }) {
+// Paging for short lists inside pop-ups (seller stats, buyer info): newest 5 first, same steps as the order tabs.
+function usePaged(items) {
+    const [size, setSize] = useState(5);
+    const shown = size === 'all' ? items : items.slice(0, size);
+    const bar = items.length > 5 ? html`<${PageSizeBar} total=${items.length} shown=${shown.length} pageSize=${size} setPageSize=${setSize} compact=${true} />` : null;
+    return [shown, bar];
+}
+
+function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false }) {
     const hidden = total - shown;
     const options = PAGE_SIZES.filter((p) => p === 'all' || p < total);
     const nextSize = PAGE_SIZES.find((p) => p !== 'all' && p > shown && p < total) || 'all';
-    return html`<div className="card p-3 flex flex-wrap items-center gap-3">
+    return html`<div className=${compact ? 'pt-2 flex flex-wrap items-center gap-2' : 'card p-3 flex flex-wrap items-center gap-3'}>
         <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total} orders${hidden > 0 ? ` · ${hidden} hidden` : ''}</span>
         ${hidden > 0 && html`<${Button} size="sm" variant="secondary" icon="chevron-down" onClick=${() => setPageSize(nextSize)}>
             Show ${nextSize === 'all' ? `all ${total}` : `${Math.min(nextSize, total) - shown} more`}<//>`}
