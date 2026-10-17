@@ -52,7 +52,7 @@ export default async function handler(req, res) {
             const { count: sellers } = await db.from('sellers').select('user_id', { count: 'exact', head: true }).eq('active', true);
             const { count: airlines } = await db.from('airlines').select('id', { count: 'exact', head: true });
             add('Database', 'schema.sql installed', true, `${alliances} alliances, ${accounts} accounts, ${airlines} airlines`, null, { private: true });
-            // The newest part of schema.sql (budget rewards, announcements, alert list, October 2026): tells whether it has been re-run since.
+            // The newest part of schema.sql (accounts.welcome_done_at, October 2026): tells whether it has been re-run since.
             const { error: newest } = await db.from('accounts').select('welcome_done_at').limit(1);
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
