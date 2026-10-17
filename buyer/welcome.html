@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Cleared for takeoff · Echo Market</title>
+    <meta name="description" content="Welcome to Echo Market: the market rules, how delivery works, and how to only buy the planes meant for you.">
+    <link rel="icon" type="image/png" href="echo_logo.png">
+    <meta name="theme-color" content="#05060c">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/welcome.css">
+    <!-- Same sign-in as the market (served from this site; the CSP only allows scripts from here). -->
+    <script src="vendor/supabase-js-2.117.2.js"></script>
+    <script src="/api/config"></script>
+    <script type="module" src="js/welcome.js"></script>
+</head>
+<body>
+    <!-- Loader -->
+    <div id="loader" role="status" aria-live="polite">
+        <img src="echo_logo.png" alt="" class="loader-logo">
+        <p class="loader-text">Lighting the runway</p>
+        <p class="loader-pct"><span id="loader-pct">0</span>%</p>
+    </div>
+
+    <!-- Top navigation -->
+    <header class="nav">
+        <a class="brand" href="#c0"><img src="echo_logo.png" alt=""><span><b>ECHO MARKET</b><small>Cleared for takeoff</small></span></a>
+        <nav class="nav-links" aria-label="Chapters">
+            <a href="#c1">Rules</a><a href="#c2">Delivery</a><a href="#c3">Stealing</a><a href="#c4">FFA</a>
+            <a href="#c5">Checklist</a><a href="#c6">Mayday</a><a href="#c7">Takeoff</a>
+        </nav>
+        <span class="nav-step" id="nav-step">00 / 07</span>
+        <a class="nav-exit" id="nav-exit" href="/" hidden>Back to the market</a>
+        <div class="nav-progress"><div id="nav-progress-bar"></div></div>
+    </header>
+
+    <!-- Shown after a wrong quiz answer -->
+    <div class="reread" id="reread" hidden>
+        <p id="reread-text">Not quite: reread this chapter, then go back to the quiz.</p>
+        <button type="button" id="reread-back">Back to the quiz</button>
+    </div>
+
+    <main>
+        <!-- 00 -->
+        <section class="chapter hero" id="c0" data-chapter="0">
+            <div class="panel">
+                <p class="callout">GATE 00 · BOARDING</p>
+                <h1>Welcome to Echo Market</h1>
+                <p>The aircraft market of Echo Alliances: sellers in the alliance sell you brand-new aircraft below the in-game list price.</p>
+                <p>Before your first order, take a 3-minute walk through how delivery works, and the one thing that keeps this market alive:</p>
+                <p class="big-rule">Only buy the planes meant for you.</p>
+                <a class="cta" href="#c1">Start taxiing <span aria-hidden="true">↓</span></a>
+            </div>
+        </section>
+
+        <!-- 01 -->
+        <section class="chapter" id="c1" data-chapter="1">
+            <div class="panel">
+                <p class="callout">TWR · CLEARANCE</p>
+                <h2>The market rules</h2>
+                <ol class="rules">
+                    <li>No arguments over the price or amount of aircraft(s).</li>
+                    <li>Do not re-sell the planes that you have bought through the market to outside. (You can sell them back in our alliance if you do not need the planes anymore, but you must sell them back at the percentage which you purchased it at)</li>
+                    <li class="key">Do not buy any planes from the market if you did not order them.<span class="why">This is why you are here. The rest of this walk is about rule 3.</span></li>
+                    <li>Refrain from having a full-on conversation within the tickets.</li>
+                </ol>
+            </div>
+        </section>
+
+        <!-- 02 -->
+        <section class="chapter" id="c2" data-chapter="2">
+            <div class="panel wide">
+                <p class="callout">TWY A · HOW DELIVERY WORKS</p>
+                <h2>Your planes are listed in public</h2>
+                <div class="steps">
+                    <article class="step"><p class="counter">01 / 03</p><h3>Taken</h3>
+                        <p>A seller takes your order and buys your aircraft new in-game.</p></article>
+                    <article class="step"><p class="counter">02 / 03</p><h3>Listed</h3>
+                        <p>They list them on the <b>public</b> in-game market under their <b>airline</b> (not their Discord username), at your price level. You get a DM / order update saying what was listed and by which airline.</p></article>
+                    <article class="step"><p class="counter">03 / 03</p><h3>Bought</h3>
+                        <p>You search for that <b>airline</b>, then buy exactly your model and quantity, straight away.</p></article>
+                </div>
+                <p class="note">Because the market is public, anyone browsing can see these listings. That's why everyone must only buy their own.</p>
+            </div>
+        </section>
+
+        <!-- 03 -->
+        <section class="chapter" id="c3" data-chapter="3">
+            <div class="panel">
+                <p class="callout">HOLD SHORT · WHAT COUNTS AS STEALING</p>
+                <h2>Four ways to take someone's planes</h2>
+                <ol class="numbered">
+                    <li><h3>A cheap listing that isn't yours</h3><p>A discounted A350 from an airline that isn't your seller, and not in #ffa-listings, belongs to another buyer, however tempting.</p></li>
+                    <li><h3>More than you ordered</h3><p>Your order is 4× A320neo, and your seller lists 6. The extra 2 are someone else's.</p></li>
+                    <li><h3>The wrong model</h3><p>Sellers often list several models for several buyers at once. Buy only the models in <i>your</i> order.</p></li>
+                    <li><h3>Buying for someone else</h3><p>Grabbing listings "for a friend" or for another account of yours still takes someone's order.</p></li>
+                </ol>
+            </div>
+        </section>
+
+        <!-- 04 -->
+        <section class="chapter" id="c4" data-chapter="4">
+            <div class="panel">
+                <p class="callout">FFA · OPEN STAND</p>
+                <h2>Free-for-all listings</h2>
+                <p class="lead">Read existing FFA sales carefully. Only that channel, <b>#ffa-listings</b>: all planes listed there are free for all.</p>
+                <p class="lead">If an airplane is not under FFA, it is ordered by someone other than you.</p>
+                <p class="lead">If unsure whether an airplane is FFA, feel free to ask on <b>#market-chat</b>.</p>
+            </div>
+        </section>
+
+        <!-- 05 -->
+        <section class="chapter" id="c5" data-chapter="5">
+            <div class="panel">
+                <p class="callout">PRE-FLIGHT CHECK · BEFORE YOU BUY</p>
+                <h2>Your 5-point checklist</h2>
+                <ol class="checklist" id="checklist">
+                    <li><button type="button" aria-pressed="false"><span class="box" aria-hidden="true"></span><span>Wait for your seller's "listed" update (DM or your order page) before searching.</span></button></li>
+                    <li><button type="button" aria-pressed="false"><span class="box" aria-hidden="true"></span><span>Search the seller's <b>airline</b> name shown on your order, not their username.</span></button></li>
+                    <li><button type="button" aria-pressed="false"><span class="box" aria-hidden="true"></span><span>Match the <b>model</b> to your order.</span></button></li>
+                    <li><button type="button" aria-pressed="false"><span class="box" aria-hidden="true"></span><span>Match the <b>quantity</b>. With more than one seller, your order shows how many each airline listed: buy that many from each.</span></button></li>
+                    <li><button type="button" aria-pressed="false"><span class="box" aria-hidden="true"></span><span>Buy right away (anyone can see public listings). Anything doesn't match? Don't buy: ask on <b>#market-chat</b>.</span></button></li>
+                </ol>
+            </div>
+        </section>
+
+        <!-- 06 -->
+        <section class="chapter" id="c6" data-chapter="6">
+            <div class="panel">
+                <p class="callout">MAYDAY · IF SOMETHING GOES WRONG</p>
+                <h2>Mistakes, missing planes, consequences</h2>
+                <dl class="mayday">
+                    <dt>Bought planes that weren't yours by mistake?</dt>
+                    <dd>Tell <b>#market-chat</b> or an admin right away, and follow the seller team's instruction (for example: re-list the same planes at the same price for the real buyer). Owning up quickly counts in your favour.</dd>
+                    <dt>Your planes were gone before you could buy them?</dt>
+                    <dd>Press <b>Report missing planes</b> on your order and say how many and which type. The sellers check in-game who bought them.</dd>
+                    <dt>Order not fully delivered after 24 hours?</dt>
+                    <dd>Use <b>Contact the seller team</b> on the order.</dd>
+                </dl>
+                <p class="consequences"><b>Consequences:</b> a confirmed theft gives a warning, and repeat cases lead to market bans, fully at the admins' discretion. Every incident is recorded on your disciplinary record. You must follow the seller team's follow-up instruction (it could be a re-list).</p>
+            </div>
+        </section>
+
+        <!-- 07 -->
+        <section class="chapter" id="c7" data-chapter="7">
+            <div class="panel">
+                <p class="callout">RWY 09 · CLEARED FOR TAKEOFF</p>
+                <h2>Quick check, then you're in</h2>
+                <p class="replay-note" id="replay-note" hidden>You've already done this check. Try it again if you like, or go straight back to the market.</p>
+                <form id="quiz" novalidate>
+                    <fieldset data-q="q1" data-chapter="3">
+                        <legend><span>1</span>Your order: 4× A320neo from Dave Air. Dave Air lists 6 A320neo at your price. How many do you buy?</legend>
+                        <label><input type="radio" name="q1" value="2"> 2</label>
+                        <label><input type="radio" name="q1" value="4"> 4</label>
+                        <label><input type="radio" name="q1" value="6"> 6</label>
+                    </fieldset>
+                    <fieldset data-q="q2" data-chapter="4">
+                        <legend><span>2</span>A cheap A350 is listed by an airline that isn't your seller and isn't in #ffa-listings. What is the first thing you should do?</legend>
+                        <label><input type="radio" name="q2" value="buy"> Buy it quickly before someone else does</label>
+                        <label><input type="radio" name="q2" value="relist"> Buy it and re-list it later</label>
+                        <label><input type="radio" name="q2" value="ask"> Ask on #market-chat</label>
+                    </fieldset>
+                    <fieldset data-q="q3" data-chapter="6">
+                        <legend><span>3</span>You bought planes that weren't yours by mistake. What now?</legend>
+                        <label><input type="radio" name="q3" value="tell"> Tell #market-chat or an admin and follow the seller team's instruction (e.g. re-list at the same price)</label>
+                        <label><input type="radio" name="q3" value="keep"> Keep them, it was an accident</label>
+                        <label><input type="radio" name="q3" value="sell"> Sell them to someone outside the alliance</label>
+                    </fieldset>
+                    <button type="submit" class="cta" id="quiz-check">Check my answers</button>
+                    <p class="quiz-msg" id="quiz-msg" role="status"></p>
+                </form>
+                <div class="final" id="final" hidden>
+                    <label class="understand"><input type="checkbox" id="understand"> <span>I understand: I only buy the planes in my own order, or listings in #ffa-listings.</span></label>
+                    <button type="button" class="cta" id="enter" disabled>Enter the market</button>
+                    <p class="quiz-msg" id="enter-msg" role="status"></p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="foot">
+        <p><b>Echo Market</b> · Echo Alliances</p>
+        <p>Questions? Ask on #market-chat. Replay this walk any time from the menu (Welcome walkthrough).</p>
+    </footer>
+    <div id="fade" aria-hidden="true"></div>
+</body>
+</html>

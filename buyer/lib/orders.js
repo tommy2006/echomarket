@@ -1,10 +1,18 @@
 // Placing an order: every check and side effect in one place, used by the website (api/orders.js) and the
 // Discord bot (api/discord/interactions.js), so an order from either is identical.
-import { admin, accountName, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, budgetFor, HttpError } from './server.js';
+import { admin, accountName, cleanText, addEvent, syncDiscord, dmBuyer, orderRef, rateLimit, requireMarketAccess, budgetFor, BUYER_URL, HttpError } from './server.js';
 import { priceItems, orderListValue } from './pricing.js';
 
 // Every new order pings the seller role on Discord, so placing orders is rate limited per account.
 export const MAX_ORDERS_PER_10_MIN = 5;
+
+// Every buyer finishes the welcome (rules + how not to take someone else's planes) before ordering.
+// Older databases without the column: no check.
+function requireWelcome(account) {
+    if ('welcome_done_at' in account && !account.welcome_done_at) {
+        throw new HttpError(403, `Before your first order, finish the Echo Market welcome (the market rules and how delivery works, about 3 minutes): ${BUYER_URL ? BUYER_URL + '/welcome.html' : 'open the market website'}`);
+    }
+}
 
 // The buyer's own airlines, in the order given. Throws when any isn't theirs.
 export async function ownAirlines(account, airlineIds) {
@@ -33,6 +41,7 @@ const overLimit = (used, listTotalUSD, limit) => {
 // Checks without placing anything (the bot's summary before "Send order").
 export async function previewOrder(account, { airlineIds, items: rawItems }) {
     if (!account.discord_id) throw new HttpError(403, 'Your market account is not linked to a Discord login.');
+    requireWelcome(account);
     await requireMarketAccess(account);
     const airlines = await ownAirlines(account, airlineIds);
     const priced = priceItems(rawItems);
@@ -46,6 +55,7 @@ export async function previewOrder(account, { airlineIds, items: rawItems }) {
 // Places the order. Returns the saved order row.
 export async function placeOrder(account, { airlineIds, items: rawItems, buyerNote }) {
     if (!account.discord_id) throw new HttpError(403, 'Your market account is not linked to a Discord login. Sign out and sign in with Discord again.');
+    requireWelcome(account);
     // Echo server members only, and not market-banned.
     await requireMarketAccess(account);
     const db = admin();

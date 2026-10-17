@@ -36,6 +36,9 @@ alter table public.accounts add column if not exists guild_checked_at timestampt
 alter table public.accounts add column if not exists market_banned_role boolean not null default false;
 -- When the buyer first read the market rules (shown once on their first sign-in; always in the rules menu).
 alter table public.accounts add column if not exists rules_seen_at timestamptz;
+-- When the buyer finished the "Cleared for takeoff" welcome (rules + how not to take someone else's planes, with a
+-- quiz). Set only by the API (/api/me, after checking the quiz answers). Orders are refused until it is set.
+alter table public.accounts add column if not exists welcome_done_at timestamptz;
 
 -- SECURITY: the Discord ID, name and avatar come ONLY from auth.identities, which Supabase writes
 -- during the Discord login itself. Never read auth.users.raw_user_meta_data here: any signed-in user

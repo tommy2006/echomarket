@@ -288,6 +288,11 @@ function App() {
     if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole)) {
         return html`<${MarketGate} standing=${standing} account=${account} onSignOut=${signOut} />`;
     }
+    // Everyone goes through the "Cleared for takeoff" welcome once (rules + how not to take others' planes).
+    if (session && standing?.welcomeDone === false) {
+        window.location.replace('/welcome.html');
+        return html`<${FullPageSpinner} />`;
+    }
 
     if (standing?.budget?.limit) { DAILY_LIMIT_USD = standing.budget.limit; BUDGET_TIER = standing.budget.tier || 0; }
     const shared = { session, account, airlines, alliances, orders, events, pricelist, cart, priceLevel, dataReady };
@@ -559,6 +564,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                         <a href="#orders" className="menu-item"><${Icon} name="package" /> My orders</a>
                         <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
                         <button onClick=${onRules} className="menu-item w-full"><${Icon} name="scroll-text" /> Market rules</button>
+                        <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> Welcome walkthrough</a>
                         ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> Seller dashboard</a>`}
                         <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
                     </div>`}
