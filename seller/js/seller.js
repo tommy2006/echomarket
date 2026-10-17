@@ -29,7 +29,7 @@ const SELLER_TOUR = [
     { target: null, icon: 'store', title: (n) => `Welcome to the seller desk${n ? `, ${n}` : ''}!`,
       text: 'A 30-second tour of how selling works. You can skip it any time.' },
     { target: 'tab-open', icon: 'inbox', title: () => '1 · Open queue',
-      text: 'New orders land here (and ping the seller role on Discord). Take one to sell it, or Decline to leave it to the other sellers.' },
+      text: 'New orders land here (and ping the seller role on Discord). Use Sort and Filters to find the ones you want, then Take one, or Decline to leave it to the other sellers.' },
     { target: 'sellas', icon: 'building-2', title: () => '2 · Sell as',
       text: "Pick the airline you sell from. Sharing an alliance with the buyer's airline makes delivery easier." },
     { target: 'tab-mine', icon: 'truck', title: () => '3 · Deliver',
@@ -62,6 +62,40 @@ function RankBadge({ rank, admin }) {
 }
 const LS_PAGE_SIZE = 'echo_seller_page_size_v1';
 const PAGE_SIZES = [5, 10, 25, 50, 'all'];
+
+// ---- sorting and filtering the order lists (remembered per device)
+const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
+const ORDER_TABS = ['open', 'mine', 'all'];
+const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '' };
+const typeCount = (o) => orderLines(o).length;
+const SORTS = {
+    default: { label: 'Default order' },   // open queue: longest waiting first; other tabs: newest first
+    'price-desc': { label: 'Price: high to low', fn: (a, b) => b.total_usd - a.total_usd },
+    'price-asc': { label: 'Price: low to high', fn: (a, b) => a.total_usd - b.total_usd },
+    'list-desc': { label: 'List value: high to low', fn: (a, b) => orderListValue(b) - orderListValue(a) },
+    'list-asc': { label: 'List value: low to high', fn: (a, b) => orderListValue(a) - orderListValue(b) },
+    'qty-desc': { label: 'Most aircraft', fn: (a, b) => b.total_qty - a.total_qty },
+    'qty-asc': { label: 'Fewest aircraft', fn: (a, b) => a.total_qty - b.total_qty },
+    'types-desc': { label: 'Most aircraft types', fn: (a, b) => typeCount(b) - typeCount(a) },
+    'types-asc': { label: 'Fewest aircraft types', fn: (a, b) => typeCount(a) - typeCount(b) },
+    newest: { label: 'Newest first', fn: (a, b) => ms(b.created_at) - ms(a.created_at) },
+    oldest: { label: 'Oldest first', fn: (a, b) => ms(a.created_at) - ms(b.created_at) }
+};
+const num = (v) => (String(v).trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+// Does an order pass the filters? List value is entered in $ millions.
+function passesFilters(o, f) {
+    if (f.alliance && !orderAlliances(o).includes(f.alliance)) return false;
+    const types = typeCount(o);
+    if (f.types === '3' ? types < 3 : f.types && types !== Number(f.types)) return false;
+    const qMin = num(f.qtyMin), qMax = num(f.qtyMax), lMin = num(f.listMin), lMax = num(f.listMax);
+    if (qMin != null && o.total_qty < qMin) return false;
+    if (qMax != null && o.total_qty > qMax) return false;
+    const listM = orderListValue(o) / 1e6;
+    if (lMin != null && listM < lMin) return false;
+    if (lMax != null && listM > lMax) return false;
+    return true;
+}
+const activeFilterCount = (f) => Object.keys(NO_FILTERS).filter((k) => String(f[k] ?? '').trim() !== '').length;
 
 // ---- order timing (status_changed_at / status_history are kept by the database)
 const ms = (iso) => (iso ? new Date(iso).getTime() : null);
@@ -126,6 +160,12 @@ function App() {
     useEffect(() => { store.set(LS_PAGE_SIZE, pageSize); }, [pageSize]);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [query, setQuery] = useState('');
+    const [view, setView] = useState(() => {
+        const v = store.get(LS_ORDER_VIEW, {});
+        return { sort: SORTS[v.sort] ? v.sort : 'default', filters: { ...NO_FILTERS, ...(v.filters || {}) } };
+    });
+    useEffect(() => { store.set(LS_ORDER_VIEW, view); }, [view]);
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [sellAsId, setSellAsId] = useState(() => store.get(LS_SELL_AS, null));
     const [detailId, setDetailId] = useState(() => window.location.hash.replace('#', '') || null);
     const [modal, setModal] = useState(null); // { kind: 'claim'|'progress'|'flag', order }
@@ -394,9 +434,14 @@ function App() {
         mine: orders.filter(tabs.mine.fn).length,
         all: orders.length
     };
-    const list = orders.filter((o) => (tabs[tab] || tabs.open).fn(o) && matches(o));
-    // Open queue: longest-waiting first. Other tabs stay newest first.
-    if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
+    const inTab = orders.filter((o) => (tabs[tab] || tabs.open).fn(o) && matches(o));
+    const list = inTab.filter((o) => passesFilters(o, view.filters));
+    // Default: open queue longest-waiting first, other tabs newest first. Or the seller's chosen sort.
+    if (SORTS[view.sort]?.fn) list.sort(SORTS[view.sort].fn);
+    else if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
+    const orderTab = ORDER_TABS.includes(tab);
+    const filterCount = activeFilterCount(view.filters);
+    const allianceOptions = [...new Set(orders.flatMap((o) => orderAlliances(o)))].filter(Boolean).sort();
     // All orders: show the first N, the rest behind "Show more".
     const paged = tab === 'all' && pageSize !== 'all' ? list.slice(0, pageSize) : list;
     const detail = orders.find((o) => o.id === detailId);
@@ -419,6 +464,7 @@ function App() {
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
+            ${seller.is_admin && html`<${AdminShortcuts} tab=${tab} setTab=${setTab} />`}
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
                     ${plural(reportsToCheck.length, 'missing-plane report')} to check in-game</p>
@@ -442,28 +488,43 @@ function App() {
 
             <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
                 <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
-                    ${Object.entries(tabs).map(([k, t]) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
+                    ${ORDER_TABS.map((k) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
-                        <${Icon} name=${t.icon} className="w-3.5 h-3.5" />${t.label}${counts[k] != null && html`<span className="opacity-60">${counts[k]}</span>`}
+                        <${Icon} name=${tabs[k].icon} className="w-3.5 h-3.5" />${tabs[k].label}<span className="opacity-60">${counts[k]}</span>
                     </button>`)}
                 </div>
-                ${tab === 'all' && html`<select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input lg:!w-48">
+                ${orderTab && html`<div className="flex flex-1 flex-wrap sm:flex-nowrap gap-2">
+                    <label className="relative flex-1 min-w-[12rem]">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
+                        <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search order, airline, buyer, aircraft…" className="input pl-10" />
+                    </label>
+                    <select value=${view.sort} onChange=${(e) => setView((v) => ({ ...v, sort: e.target.value }))} className="input !w-auto" aria-label="Sort orders">
+                        ${Object.entries(SORTS).map(([k, s]) => html`<option key=${k} value=${k}>${k === 'default' ? (tab === 'open' ? 'Longest waiting first' : 'Newest first') : s.label}</option>`)}
+                    </select>
+                    <${Button} size="md" variant=${filterCount ? 'primary' : 'secondary'} icon="sliders-horizontal" onClick=${() => setFiltersOpen(!filtersOpen)}
+                        aria-expanded=${filtersOpen}>Filters${filterCount ? ` · ${filterCount}` : ''}<//>
+                </div>`}
+            </div>
+            ${orderTab && (filtersOpen || filterCount > 0) && html`<${OrderFilters} filters=${view.filters} alliances=${allianceOptions} tab=${tab}
+                statusFilter=${statusFilter} setStatusFilter=${setStatusFilter} open=${filtersOpen}
+                onChange=${(filters) => setView((v) => ({ ...v, filters }))} onToggle=${() => setFiltersOpen(!filtersOpen)}
+                shown=${list.length} total=${inTab.length} />`}
+            ${orderTab && tab === 'all' && !filtersOpen && html`<div className="flex items-center gap-2 -mt-1">
+                <span className="text-xs text-slate-500">Status</span>
+                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
                     <option value="ALL">Any status</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
-                </select>`}
-                ${!['team', 'mod'].includes(tab) && html`<label className="relative flex-1">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
-                    <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search order, airline, buyer, aircraft…" className="input pl-10" />
-                </label>`}
-            </div>
+                </select>
+            </div>`}
 
             ${tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
             : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
-                title=${tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
-                text=${tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
+                title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
+                text=${inTab.length && filterCount ? `${plural(inTab.length, 'order')} hidden by your filters. Change or clear them to see more.`
+                    : tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
                 passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} caution=${alerts[o.id]} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
@@ -1213,6 +1274,71 @@ function RewardsCard({ data, run }) {
                 ${!data.boosters.length ? html`<p className="text-xs text-slate-500">Nobody yet. Boosters are picked up automatically when they open the market.</p>`
                 : html`<ul className="space-y-1">${data.boosters.map((b) => html`<li key=${b.discord_id} className="text-sm text-white">💜 ${b.name} <span className="font-mono text-xs text-slate-500">${b.discord_id}</span></li>`)}</ul>`}
             </div>
+        </div>
+    </section>`;
+}
+
+// Admin tools, one tap away on the desk's front page (instead of at the end of a scrolling tab bar).
+const ADMIN_TOOLS = [
+    { tab: 'team', icon: 'trophy', label: 'Sellers', hint: 'Leaderboard and stats' },
+    { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
+    { tab: 'community', icon: 'sparkles', label: 'Community', hint: 'Rewards, notices, alert list' }
+];
+function AdminShortcuts({ tab, setTab }) {
+    return html`<nav aria-label="Admin tools" className="grid grid-cols-3 gap-2">
+        ${ADMIN_TOOLS.map((t) => {
+            const on = tab === t.tab;
+            return html`<button key=${t.tab} onClick=${() => setTab(on ? 'open' : t.tab)} aria-pressed=${on}
+                className=${`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 p-2.5 md:p-3 rounded-2xl border text-center sm:text-left transition-colors ${on ? 'bg-white text-slate-950 border-white' : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-600'}`}>
+                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${t.icon} className="w-4 h-4" /></span>
+                <span className="min-w-0">
+                    <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${t.label}</span>
+                    <span className=${`hidden sm:block text-[11px] truncate ${on ? 'text-slate-600' : 'text-slate-500'}`}>${on ? 'Open · tap to go back to orders' : t.hint}</span>
+                </span>
+            </button>`;
+        })}
+    </nav>`;
+}
+
+// Sort / filter panel for the order lists: alliance, number of aircraft types, number of aircraft, list value.
+function OrderFilters({ filters, alliances, tab, statusFilter, setStatusFilter, open, onChange, onToggle, shown, total }) {
+    const set = (patch) => onChange({ ...filters, ...patch });
+    const count = activeFilterCount(filters);
+    if (!open) {
+        return html`<div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 -mt-1">
+            <${Icon} name="sliders-horizontal" className="w-3.5 h-3.5" />
+            <span>${plural(count, 'filter')} on · showing ${shown} of ${total}</span>
+            <button onClick=${onToggle} className="font-bold text-slate-200 hover:text-white">Edit</button>
+            <button onClick=${() => onChange({ ...NO_FILTERS })} className="font-bold text-rose-300 hover:text-rose-200">Clear</button>
+        </div>`;
+    }
+    const range = (minKey, maxKey, unit, step) => html`<div className="flex items-center gap-1.5">
+        <input type="number" min="0" step=${step} value=${filters[minKey]} onChange=${(e) => set({ [minKey]: e.target.value })} placeholder="min" className="input !py-2 text-sm" aria-label=${`Minimum ${unit}`} />
+        <span className="text-slate-500 text-xs">to</span>
+        <input type="number" min="0" step=${step} value=${filters[maxKey]} onChange=${(e) => set({ [maxKey]: e.target.value })} placeholder="max" className="input !py-2 text-sm" aria-label=${`Maximum ${unit}`} />
+    </div>`;
+    return html`<section className="card p-3 md:p-4 space-y-3">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <label className="block"><span className="field-label">Alliance (buyer can receive in)</span>
+                <select value=${filters.alliance} onChange=${(e) => set({ alliance: e.target.value })} className="input !py-2 text-sm">
+                    <option value="">Any alliance</option>
+                    ${alliances.map((a) => html`<option key=${a} value=${a}>${a}</option>`)}
+                </select></label>
+            <div><span className="field-label">Aircraft types in the order</span>
+                <div className="grid grid-cols-4 gap-1">${[['', 'Any'], ['1', '1'], ['2', '2'], ['3', '3+']].map(([v, l]) => html`<button key=${l} type="button" onClick=${() => set({ types: v })}
+                    className=${`py-2 rounded-xl border text-xs font-bold ${filters.types === v ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${l}</button>`)}</div></div>
+            <div><span className="field-label">Number of aircraft</span>${range('qtyMin', 'qtyMax', 'aircraft', 1)}</div>
+            <div><span className="field-label">List value ($ millions)</span>${range('listMin', 'listMax', 'list value in millions', 50)}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
+            ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">Status
+                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
+                    <option value="ALL">Any status</option>
+                    ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
+                </select></label>`}
+            <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total}${count ? ` · ${plural(count, 'filter')} on` : ''}</span>
+            ${count > 0 && html`<${Button} size="sm" variant="ghost" icon="x" onClick=${() => onChange({ ...NO_FILTERS })}>Clear filters<//>`}
+            <${Button} size="sm" variant="secondary" icon="chevron-up" onClick=${onToggle}>Done<//>
         </div>
     </section>`;
 }
