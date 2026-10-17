@@ -464,6 +464,7 @@ function App() {
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
+            <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
             ${seller.is_admin && html`<${AdminShortcuts} tab=${tab} setTab=${setTab} />`}
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
@@ -487,7 +488,7 @@ function App() {
             </div>
 
             <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
-                <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
+                <div className="hidden md:flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
                     ${ORDER_TABS.map((k) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
                         <${Icon} name=${tabs[k].icon} className="w-3.5 h-3.5" />${tabs[k].label}<span className="opacity-60">${counts[k]}</span>
@@ -1323,6 +1324,23 @@ const ADMIN_TOOLS = [
     { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
     { tab: 'community', icon: 'sparkles', label: 'Community', hint: 'Rewards, notices, alert list' }
 ];
+// Phones: the order tabs as big buttons at the top, in the same style as the admin tools (desktop keeps the tab bar).
+function OrderTabButtons({ tab, setTab, tabs, counts }) {
+    return html`<nav aria-label="Orders" className="md:hidden grid grid-cols-3 gap-2">
+        ${ORDER_TABS.map((k) => {
+            const on = tab === k;
+            return html`<button key=${k} onClick=${() => setTab(k)} aria-pressed=${on} data-tour=${'tab-' + k}
+                className=${`flex flex-col items-center gap-1.5 p-2.5 rounded-2xl border text-center transition-colors ${on ? 'bg-white text-slate-950 border-white' : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-600'}`}>
+                <span className=${`relative w-8 h-8 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : 'bg-sky-400/10 text-sky-300'}`}>
+                    <${Icon} name=${tabs[k].icon} className="w-4 h-4" />
+                    ${counts[k] > 0 && html`<span className=${`absolute -top-1.5 -right-2 min-w-5 h-5 px-1 rounded-full text-[10px] font-black flex items-center justify-center ${on ? 'bg-slate-950 text-white' : 'bg-sky-400 text-slate-950'}`}>${counts[k]}</span>`}
+                </span>
+                <span className="block text-xs font-extrabold">${tabs[k].label}</span>
+            </button>`;
+        })}
+    </nav>`;
+}
+
 function AdminShortcuts({ tab, setTab }) {
     return html`<nav aria-label="Admin tools" className="grid grid-cols-3 gap-2">
         ${ADMIN_TOOLS.map((t) => {
