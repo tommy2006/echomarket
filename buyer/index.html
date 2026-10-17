@@ -16,6 +16,7 @@
     <!-- Libraries are served from this site (copies in vendor/, pinned versions), so no outside server
          can change the code the page runs. The Content-Security-Policy in vercel.json only allows scripts
          from this site. -->
+    <link rel="stylesheet" href="css/echo-loader.css">
     <script src="vendor/tailwindcss-3.4.16.js"></script>
     <script src="vendor/react-18.3.1.min.js"></script>
     <script src="vendor/react-dom-18.3.1.min.js"></script>
@@ -107,7 +108,8 @@
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <!-- First paint: the Echo loader shows while the scripts load; React replaces it. -->
+    <div id="root"><div class="echo-loading-screen" role="status" aria-live="polite"><span class="echo-loader" aria-hidden="true"></span><span class="echo-loader-text">Loading…</span></div></div>
     <noscript>Echo Market needs JavaScript enabled.</noscript>
     <script type="module" src="js/app.js"></script>
 </body>

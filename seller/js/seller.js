@@ -6,7 +6,7 @@ import {
     html, useState, useEffect, useMemo, useCallback, useRef, sb, isConfigured, CONFIG, api, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo, fmtDuration, toneClass,
-    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
+    Spinner, EchoLoader, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
     orderRef, OrderCode, greetingFor, orderAirlines, airlineNames, orderAlliances, deliverableTo,
     orderListValue, orderHelpers, deliveryShares, SellerShares, takeoverIn, TAKEOVER_HOURS, GuidedTour
 } from './ui.js';
@@ -411,9 +411,9 @@ function App() {
         }
     };
 
-    if (!authReady) return html`<div className="min-h-screen flex items-center justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    if (!authReady) return html`<${EchoLoader} full />`;
     if (!session) return html`<${SignInScreen} />`;
-    if (seller === undefined) return html`<div className="min-h-screen flex items-center justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    if (seller === undefined) return html`<${EchoLoader} full />`;
     if (!seller) return html`<${NotASeller} account=${account} />`;
 
     // ---- filtering
@@ -522,7 +522,7 @@ function App() {
             ${tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
-            : loading ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+            : loading ? html`<${EchoLoader} className="py-16" />`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${inTab.length && filterCount ? `${plural(inTab.length, 'order')} hidden by your filters. Change or clear them to see more.`
@@ -654,7 +654,7 @@ function SellerStats({ userId, onOpenOrder }) {
         </div>
 
         ${error ? html`<div className="card p-5 text-sm text-rose-300">${error}</div>`
-        : !data ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+        : !data ? html`<${EchoLoader} className="py-16" />`
         : html`
             <div className="grid grid-cols-2 gap-2 md:gap-3">
                 <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
@@ -743,7 +743,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
             </div>
 
             ${error ? html`<p className="text-sm text-rose-300">${error}</p>`
-            : !data ? html`<div className="py-10 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+            : !data ? html`<${EchoLoader} className="py-10" />`
             : html`
                 <div className="grid grid-cols-3 gap-2 text-center">
                     <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800"><p className="text-2xl font-black text-white tabular-nums">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-400">orders taken</p></div>
@@ -1010,7 +1010,7 @@ function ModerationPanel({ target, onChanged }) {
     };
     return html`<div className="p-3 rounded-2xl border border-slate-800 bg-slate-950/60 space-y-3">
         <p className="label text-slate-500 flex items-center gap-1.5"><${Icon} name="shield" className="w-3.5 h-3.5" />Moderation · admins only</p>
-        ${bans === null ? html`<${Spinner} />` : html`
+        ${bans === null ? html`<${EchoLoader} size="sm" className="py-6" />` : html`
             ${active ? html`<div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm">
                 <p className="font-bold text-rose-200">Market banned ${banUntil(active)}</p>
                 <p className="text-rose-100/80 text-xs mt-0.5">${active.reason} · by ${active.issued_by_name || 'an admin'}${active.source === 'bot' ? ' (bot)' : ''}</p>
@@ -1166,7 +1166,7 @@ function ModerationView({ userId }) {
         <//>`}
         <div>
             <p className="label text-slate-500 mb-2">Active market bans (${bans ? bans.length : '…'})</p>
-            ${bans === null ? html`<${Spinner} />` : !bans.length ? html`<p className="text-sm text-slate-400">Nobody is banned right now.</p>`
+            ${bans === null ? html`<${EchoLoader} size="sm" className="py-6" />` : !bans.length ? html`<p className="text-sm text-slate-400">Nobody is banned right now.</p>`
             : html`<ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">${bans.map((b) => html`<li key=${b.id}>
                 <button onClick=${() => pick(b.discord_id)} className="w-full text-left px-3 py-2.5 hover:bg-slate-800/40">
                     <span className="block font-bold text-white text-sm">${who(b.discord_id)} <span className="text-rose-300 font-medium text-xs">· ${banUntil(b)}</span></span>
@@ -1202,7 +1202,7 @@ function CommunityView({ onAlertsChanged }) {
         catch (err) { toast(err.message, 'error'); return false; }
     };
     if (error) return html`<div className="card p-5 text-sm text-rose-200">${error}</div>`;
-    if (!data) return html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    if (!data) return html`<${EchoLoader} className="py-16" />`;
     return html`<div className="grid lg:grid-cols-2 gap-4 items-start">
         <${AnnouncementsCard} items=${data.announcements} run=${run} />
         <${AlertListCard} items=${data.watchlist} run=${run} />

@@ -6,7 +6,7 @@ import {
     html, useState, useEffect, useMemo, useRef, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
     signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
-    Spinner, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
+    Spinner, EchoLoader, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
     pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor,
     orderAirlines, airlineNames, orderAlliances, deliverableTo, orderHelpers, deliveryShares, SellerShares, GuidedTour
 } from './ui.js';
@@ -509,7 +509,7 @@ function describe(ev) {
 //  Layout
 // =========================================================================
 function FullPageSpinner() {
-    return html`<div className="min-h-screen flex items-center justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    return html`<${EchoLoader} full />`;
 }
 
 function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour, onRules }) {
@@ -911,7 +911,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
                 <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? 'All makers' : makerLabel(c)}</span></button>`)}
         </div>
 
-        ${!pricelist.length ? html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`
+        ${!pricelist.length ? html`<${EchoLoader} className="py-16" />`
         : !list.length ? html`<${EmptyState} icon="search-x" title="No aircraft match" text="Try a different search or maker." />`
         : groups ? html`<div className="space-y-4">
             ${!query.trim() && groups.length > 1 && html`<div className="flex justify-end -mb-2">
@@ -1139,7 +1139,7 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
     }, [highlight]);
 
     if (!session) return html`<${SignInPrompt} what="see your orders" />`;
-    if (!dataReady) return html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    if (!dataReady) return html`<${EchoLoader} className="py-16" />`;
 
     const tabs = {
         active: (o) => ACTIVE_STATUSES.includes(o.status),
@@ -1302,7 +1302,7 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
 // =========================================================================
 function AirlinesView({ session, airlines, orders, dataReady, defaultAirline, setDefaultAirlineId, onCreate, onEdit, setAirlines, alliances }) {
     if (!session) return html`<${SignInPrompt} what="create and manage your airline profiles" />`;
-    if (!dataReady) return html`<div className="py-16 flex justify-center text-slate-500"><${Spinner} className="w-6 h-6" /></div>`;
+    if (!dataReady) return html`<${EchoLoader} className="py-16" />`;
     const full = airlines.length >= MAX_AIRLINES;
 
     const remove = async (a) => {

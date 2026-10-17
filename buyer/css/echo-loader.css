@@ -1,0 +1,62 @@
+/* The Echo loading screen: the Echo wing, small, with the nine division colours swiping through it
+   from right to left (the way the wing points) for as long as the wait lasts.
+   Used by EchoLoader (js/ui.js), the first paint of index.html / seller.html and welcome.html's loader.
+   Source of truth: shared/css/echo-loader.css. Run "npm run sync" at the repo root after editing.
+
+   How: one gradient (white between each division colour), ten times the width of the wing, slid
+   leftwards under it. The wing (img/echo-wing.png, a white silhouette) is a mask, so only its shape
+   shows the colour. The label under it uses the same gradient clipped to the text, in step.
+   Pure CSS: no frame loop, and it disappears with the element. */
+.echo-loader,
+.echo-loader-text {
+    background-image: linear-gradient(90deg,
+        #fff, #7d34ff, #fff, #d3ff4a, #fff, #e76fff, #fff, #82fdff, #fff, #ff7b3e,
+        #fff, #5eff94, #fff, #7f9ff2, #fff, #eba09d, #fff, #fdecd8, #fff);
+    background-size: 1000% 100%;
+    animation: echo-loader-sweep 3.4s linear infinite;
+}
+.echo-loader {
+    display: inline-block;
+    flex: none;
+    width: 34px;
+    aspect-ratio: 256 / 203;
+    -webkit-mask: url(../img/echo-wing.png) center / contain no-repeat;
+    mask: url(../img/echo-wing.png) center / contain no-repeat;
+}
+.echo-loader.echo-loader-sm { width: 24px; }
+.echo-loader.echo-loader-lg { width: 48px; }
+.echo-loader-text {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #a1a1aa;
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .echo-loader-text { -webkit-background-clip: text; background-clip: text; color: transparent; }
+}
+@keyframes echo-loader-sweep {
+    from { background-position: 0% 50%; }
+    to   { background-position: 100% 50%; }
+}
+
+/* Full-screen wait (first load, signing in). */
+.echo-loading-screen {
+    min-height: 100vh;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+}
+
+/* Colours flashing past is what reduced motion asks us not to do: hold one division colour instead. */
+@media (prefers-reduced-motion: reduce) {
+    .echo-loader { background-image: none; background-color: #a78bfa; animation: none; }
+    .echo-loader-text {
+        background-image: none; animation: none;
+        -webkit-background-clip: border-box; background-clip: border-box; color: #a1a1aa;
+    }
+}

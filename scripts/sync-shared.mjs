@@ -11,17 +11,18 @@ import { fileURLToPath } from 'url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Shared code, plus the browser libraries in vendor/ (each site serves its own copy; see SECURITY in HANDOVER.md).
 const VENDOR = readdirSync(join(ROOT, 'shared', 'vendor')).map((f) => 'vendor/' + f);
-const FILES = ['lib/server.js', 'lib/moderation.js', 'js/ui.js', 'js/tailwind-config.js', 'api/config.js', 'api/health.js', ...VENDOR];
+const FILES = ['lib/server.js', 'lib/moderation.js', 'js/ui.js', 'js/tailwind-config.js', 'api/config.js', 'api/health.js',
+    'css/echo-loader.css', 'img/echo-wing.png', ...VENDOR];
 const APPS = ['buyer', 'seller'];
 const check = process.argv.includes('--check');
 
 let stale = 0;
 for (const file of FILES) {
-    const source = readFileSync(join(ROOT, 'shared', file), 'utf8');
+    const source = readFileSync(join(ROOT, 'shared', file));   // bytes, so images copy too
     for (const app of APPS) {
         const target = join(ROOT, app, file);
-        const current = existsSync(target) ? readFileSync(target, 'utf8') : null;
-        if (current === source) continue;
+        const current = existsSync(target) ? readFileSync(target) : null;
+        if (current && current.equals(source)) continue;
         if (check) {
             console.error(`✗ ${app}/${file} differs from shared/${file}`);
             stale++;
