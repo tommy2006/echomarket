@@ -942,6 +942,45 @@ const deliveryText = (d = {}) => [d.dm === 'sent' ? 'DM sent' : d.dm && d.dm !==
     d.logged ? 'logged' : d.logged === false ? 'not logged (no log channel)' : null].filter(Boolean).join(' · ');
 
 // Ban / lift / message one person. target: { accountId, discordId, name }
+// The buyer's disciplinary record at a glance on the order: warnings and bans, details one tap away.
+function BuyerRecord({ discordId }) {
+    const [data, setData] = useState(null);
+    const [open, setOpen] = useState(false);
+    useEffect(() => {
+        if (!discordId) return;
+        Promise.all([
+            sb.from('market_bans').select('*').eq('discord_id', discordId).order('created_at', { ascending: false }),
+            sb.from('market_messages').select('*').eq('discord_id', discordId).eq('kind', 'warning').order('created_at', { ascending: false }).limit(50)
+        ]).then(([b, m]) => setData({ bans: b.data || [], warnings: m.data || [] }));
+    }, [discordId]);
+    if (!discordId || !data) return null;
+    const active = data.bans.find(isActiveBan);
+    const n = data.warnings.length;
+    const clean = !n && !data.bans.length;
+    return html`<div className=${`rounded-2xl border px-3 py-2.5 text-sm ${active ? 'border-rose-500/40 bg-rose-500/[0.07]' : n ? 'border-amber-500/30 bg-amber-500/5' : 'border-slate-800 bg-slate-950/60'}`}>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <${Icon} name=${clean ? 'shield-check' : 'shield-alert'} className=${`w-4 h-4 shrink-0 ${active ? 'text-rose-300' : n ? 'text-amber-300' : 'text-emerald-300'}`} />
+            <span className="flex-1 min-w-0 text-slate-200">
+                ${clean ? 'No warnings or bans on record.' : html`Buyer has <b className="text-white">${plural(n, 'warning')}</b> on record${data.bans.length ? html` · ${active ? html`<b className="text-rose-200">market banned ${banUntil(active)}</b>` : plural(data.bans.length, 'earlier ban')}` : ''}.`}
+            </span>
+            ${!clean && html`<button type="button" onClick=${() => setOpen(!open)} aria-expanded=${open} className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1">
+                ${open ? 'Hide details' : 'Show details'}<${Icon} name=${open ? 'chevron-up' : 'chevron-down'} className="w-3.5 h-3.5" /></button>`}
+        </div>
+        ${open && html`<ul className="mt-2.5 pt-2.5 border-t border-slate-800 space-y-2">
+            ${data.bans.map((b) => html`<li key=${'b' + b.id} className="text-xs">
+                <p className=${isActiveBan(b) ? 'font-bold text-rose-200' : 'font-bold text-slate-300'}>⛔ Market ban (${b.duration})${isActiveBan(b) ? ` · ${banUntil(b)}` : b.revoked_at ? ' · lifted' : ' · ended'}</p>
+                <p className="text-slate-300">${b.reason}</p>
+                <p className="text-slate-500">${b.issued_by_name || 'an admin'} · ${fmtDate(b.created_at)}</p>
+            </li>`)}
+            ${data.warnings.map((w) => html`<li key=${'w' + w.id} className="text-xs">
+                <p className="font-bold text-amber-200">⚠️ Warning</p>
+                <p className="text-slate-300 whitespace-pre-line break-words">${w.body}</p>
+                <p className="text-slate-500">${w.sent_by_name || 'Market Admins'}${w.source === 'theft' ? ' · automatic (plane theft)' : w.source === 'bot' ? ' · via Discord' : ''} · ${fmtDate(w.created_at)}</p>
+            </li>`)}
+        </ul>`}
+    </div>`;
+}
+
 function ModerationPanel({ target, onChanged }) {
     const [bans, setBans] = useState(null);
     const [msgs, setMsgs] = useState([]);
@@ -1476,6 +1515,7 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                 </span>
                 <span className="text-xs font-bold text-slate-300 shrink-0 flex items-center gap-1">Discord info <${Icon} name="chevron-right" /></span>
             </button>
+            <${BuyerRecord} discordId=${order.buyer_discord_id} />
             ${orderAirlines(order).length > 1 && html`<div>
                 <p className="label text-slate-500 mb-1.5">Buyer accepts delivery to any of</p>
                 <div className="flex flex-wrap gap-1.5">${orderAirlines(order).map((a) => {
