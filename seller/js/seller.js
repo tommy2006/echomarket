@@ -65,7 +65,7 @@ const PAGE_SIZES = [5, 10, 25, 50, 'all'];
 // ---- sorting and filtering the order lists (remembered per device)
 const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
 const ORDER_TABS = ['open', 'mine', 'all'];
-const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false };
+const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false, unreadOnly: false };
 const typeCount = (o) => orderLines(o).length;
 const SORTS = {
     default: { label: 'Default order' },   // open queue: longest waiting first; other tabs: newest first
@@ -83,7 +83,9 @@ const SORTS = {
 const num = (v) => (String(v).trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 // Does an order pass the filters? List value is entered in $ millions.
 // mineOnly: orders this seller listed at least one aircraft on (as seller, after taking over, or before passing it on).
-function passesFilters(o, f, userId) {
+// unreadOnly: orders with buyer messages this seller hasn't read yet (not remembered between visits).
+function passesFilters(o, f, userId, unreadOf) {
+    if (f.unreadOnly && !(unreadOf?.(o.id) > 0)) return false;
     if (f.mineOnly && !deliveryShares(o).some((sh) => sh.sellerId === userId && sh.total > 0)) return false;
     if (f.alliance && !orderAlliances(o).includes(f.alliance)) return false;
     const types = typeCount(o);
@@ -166,7 +168,7 @@ function App() {
         const v = store.get(LS_ORDER_VIEW, {});
         return { sort: SORTS[v.sort] ? v.sort : 'default', filters: { ...NO_FILTERS, ...(v.filters || {}) } };
     });
-    useEffect(() => { store.set(LS_ORDER_VIEW, view); }, [view]);
+    useEffect(() => { store.set(LS_ORDER_VIEW, { ...view, filters: { ...view.filters, unreadOnly: false } }); }, [view]);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [sellAsId, setSellAsId] = useState(() => store.get(LS_SELL_AS, null));
     const [detailId, setDetailId] = useState(() => window.location.hash.replace('#', '') || null);
@@ -361,6 +363,12 @@ function App() {
         }
     };
     const openDetail = (id) => { window.location.hash = id; };
+    // "💬 2 orders with new buyer messages" → All orders, only those, right away.
+    const showUnread = () => {
+        setTab('all'); setStatusFilter('ALL'); setQuery('');
+        setView((v) => ({ ...v, filters: { ...NO_FILTERS, unreadOnly: true } }));
+        setTimeout(() => document.getElementById('order-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    };
     const closeDetail = () => { history.replaceState(null, '', window.location.pathname); setDetailId(null); };
 
     const actions = {
@@ -457,7 +465,7 @@ function App() {
         all: orders.length
     };
     const inTab = orders.filter((o) => (tabs[tab] || tabs.open).fn(o) && matches(o));
-    const list = inTab.filter((o) => passesFilters(o, view.filters, userId));
+    const list = inTab.filter((o) => passesFilters(o, view.filters, userId, unreadOf));
     // Default: open queue longest-waiting first, other tabs newest first. Or the seller's chosen sort.
     if (SORTS[view.sort]?.fn) list.sort(SORTS[view.sort].fn);
     else if (tab === 'open') list.sort((a, b) => queuedSince(a) - queuedSince(b));
@@ -485,7 +493,7 @@ function App() {
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
-                unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
+                unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} onShowUnread=${showUnread} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
             <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin}
                 theftHint=${investigating.length ? `${investigating.length} under investigation` : reportsToCheck.length ? `${reportsToCheck.length} to check` : ''} />
@@ -510,7 +518,7 @@ function App() {
                 <${Stat} label="Delivered" value=${orders.filter((o) => o.status === 'FULFILLED').length} icon="circle-check" tone="text-emerald-300" />
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
+            <div id="order-list" className="flex flex-col lg:flex-row gap-2 lg:items-center scroll-mt-20">
                 <div className="hidden md:flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
                     ${ORDER_TABS.map((k) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
@@ -798,7 +806,7 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
 }
 
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
-function SellerGreeting({ account, now, open, mine, unreadOrders = 0 }) {
+function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnread }) {
     const date = new Date(now);
     const g = greetingFor(date);
     const name = account?.display_name || account?.discord_username || '';
@@ -810,7 +818,9 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0 }) {
         <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
         <p className="text-sm text-slate-400 mt-1">${open.length
             ? `${plural(open.length, 'order')} waiting for a seller · the longest for ${fmtDuration(now - oldest)}.`
-            : 'The open queue is empty.'}${mine ? ` You have ${plural(mine, 'active order')}.` : ''}${unreadOrders ? ` 💬 ${plural(unreadOrders, 'order')} with new buyer messages.` : ''}</p>
+            : 'The open queue is empty.'}${mine ? ` You have ${plural(mine, 'active order')}.` : ''}
+            ${unreadOrders > 0 && html` <button type="button" onClick=${onShowUnread} title="Show these orders"
+                className="font-bold text-sky-300 hover:text-white underline decoration-dotted underline-offset-4">💬 ${plural(unreadOrders, 'order')} with new buyer messages</button>`}</p>
     </section>`;
 }
 
@@ -1425,6 +1435,10 @@ function OrderFilters({ filters, alliances, tab, statusFilter, setStatusFilter, 
         <label className="flex items-center gap-2.5 text-sm text-slate-200 cursor-pointer w-fit">
             <input type="checkbox" checked=${filters.mineOnly === true} onChange=${(e) => set({ mineOnly: e.target.checked })} className="w-4 h-4 accent-sky-400" />
             Only orders I delivered on <span className="text-xs text-slate-500">(partly or fully, also after taking over or passing on)</span>
+        </label>
+        <label className="flex items-center gap-2.5 text-sm text-slate-200 cursor-pointer w-fit">
+            <input type="checkbox" checked=${filters.unreadOnly === true} onChange=${(e) => set({ unreadOnly: e.target.checked })} className="w-4 h-4 accent-sky-400" />
+            Only orders with new buyer messages
         </label>
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
             ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">Status
