@@ -84,7 +84,7 @@ function textTexture(text) {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
     g.fillStyle = 'rgba(210,214,230,0.55)';
-    g.font = '600 104px Onest, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '700 96px Orbitron, "Exo 2", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(text, 128, 68);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
     return t;
@@ -305,7 +305,7 @@ function buildWorld() {
     }
     setLoad(100);
 
-    return { renderer, scene, camera, accent, accentMats, rabbit, approach, beacon, beaconGlow, jet, strobes, beaconRed, belly, clouds, route, holdMat };
+    return { renderer, scene, camera, accent, accentMats, rabbit, approach, beacon, beaconGlow, jet, strobes, beaconRed, belly, clouds, route, holdMat, number };
 }
 
 // ------------------------------------------------------------------ scroll state
@@ -472,7 +472,11 @@ function frame(now) {
 
 // ------------------------------------------------------------------ loader
 (async function load() {
-    const fontsReady = document.fonts?.ready?.catch(() => {}) ?? Promise.resolve();
+    // Orbitron + Exo 2 (at most a few seconds; the page works with fallback fonts too).
+    const fontsReady = Promise.race([
+        Promise.all([document.fonts?.load?.('700 40px Orbitron'), document.fonts?.load?.('300 17px "Exo 2"'), document.fonts?.ready].filter(Boolean)).catch(() => {}),
+        new Promise((r) => setTimeout(r, 3500))
+    ]);
     let shownPct = 0;
     await new Promise((done) => {
         const step = () => {
@@ -484,6 +488,8 @@ function frame(now) {
         step();
     });
     await fontsReady;
+    // The runway number is drawn on a canvas: redraw it now that Orbitron has loaded.
+    if (world?.number) { world.number.material.map.dispose(); world.number.material.map = textTexture('09'); world.number.material.needsUpdate = true; }
     readScroll(); resize();
     if (world) world.renderer.compile(world.scene, world.camera);
     requestAnimationFrame(frame);

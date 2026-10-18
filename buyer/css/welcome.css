@@ -1,5 +1,6 @@
 /* "Cleared for takeoff" welcome (welcome.html). Layout and feel inspired by ThreeUI's free Kage page,
-   written from scratch. --accent / --accent-ink are set by js/welcome.js as you scroll between chapters. */
+   written from scratch. --accent / --accent-ink are set by js/welcome.js as you scroll between chapters.
+   Fonts (same as the sellers' welcome): Orbitron for labels, numbers, buttons and the nav; Exo 2 for headings and text. */
 :root {
     --bg: #05060c;
     --text: #f4f5fb;
@@ -9,6 +10,8 @@
     --panel: rgba(8, 10, 22, 0.62);
     --line: rgba(255, 255, 255, 0.12);
     --nav-h: 64px;
+    --display: 'Orbitron', 'Exo 2', system-ui, sans-serif;
+    --body: 'Exo 2', system-ui, sans-serif;
     color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -17,7 +20,7 @@ body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-family: var(--body);
     font-weight: 300;
     font-size: 17px;
     line-height: 1.6;
@@ -43,8 +46,8 @@ body::before {
 }
 #loader.done { opacity: 0; visibility: hidden; }
 .loader-logo { margin-bottom: 14px; }
-.loader-text { margin: 0; letter-spacing: .28em; text-transform: uppercase; font-size: 12px; color: var(--muted); }
-.loader-pct { margin: 0; font-size: 46px; font-weight: 400; letter-spacing: -0.012em; color: var(--accent); font-variant-numeric: tabular-nums; }
+.loader-text { margin: 0; font-family: var(--display); letter-spacing: .3em; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+.loader-pct { margin: 0; font-family: var(--display); font-size: 40px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------ nav */
 .nav {
@@ -56,18 +59,20 @@ body::before {
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; flex-shrink: 0; }
 .brand img { width: 30px; height: 30px; border-radius: 8px; }
 .brand span { display: flex; flex-direction: column; line-height: 1.1; }
-.brand b { font-weight: 600; letter-spacing: .16em; font-size: 13px; }
-.brand small { font-size: 11px; color: var(--accent); letter-spacing: .06em; }
+.brand b { font-family: var(--display); font-weight: 700; letter-spacing: .18em; font-size: 12px; }
+.brand small { font-family: var(--display); font-size: 9px; color: var(--accent); letter-spacing: .2em; text-transform: uppercase; }
 .nav-links { display: flex; gap: 4px; margin-left: auto; }
 .nav-links a {
-    color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 999px;
+    font-family: var(--display); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none; padding: 7px 10px; border-radius: 999px;
     transition: color .2s, background .2s;
 }
 .nav-links a:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .nav-links a.active { color: var(--accent-ink); background: var(--accent); }
-.nav-step { font-size: 12px; letter-spacing: .14em; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nav-step { font-family: var(--display); font-size: 11px; letter-spacing: .16em; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nav-exit {
-    font-size: 13px; text-decoration: none; padding: 7px 14px; border-radius: 999px;
+    font-family: var(--display); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    text-decoration: none; padding: 8px 14px; border-radius: 999px;
     border: 1px solid var(--accent); color: var(--text); white-space: nowrap;
 }
 .nav-exit[hidden] { display: none; }
@@ -96,11 +101,12 @@ main { position: relative; z-index: 2; }
 .panel.wide { max-width: 860px; }
 .chapter.seen .panel { opacity: 1; transform: none; }
 .callout {
-    margin: 0 0 10px; color: var(--accent); font-size: 12px; font-weight: 500;
+    margin: 0 0 12px; color: var(--accent); font-family: var(--display); font-size: 10px; font-weight: 500;
     letter-spacing: .22em; text-transform: uppercase;
 }
-h1, h2 { font-weight: 400; font-size: 46px; letter-spacing: -0.012em; line-height: 1.12; margin: 0 0 18px; }
-h3 { font-weight: 500; font-size: 18px; margin: 0 0 6px; }
+h1, h2 { font-weight: 500; font-size: 44px; letter-spacing: -0.01em; line-height: 1.1; margin: 0 0 18px; }
+h1 { font-family: var(--display); font-weight: 900; font-size: 50px; letter-spacing: .01em; line-height: 1.04; }
+h3 { font-weight: 600; font-size: 18px; margin: 0 0 6px; }
 p { margin: 0 0 14px; color: var(--muted); }
 .panel p b, .panel li b, .panel dd b { color: var(--text); }
 .big-rule {
@@ -111,7 +117,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 
 .cta {
     display: inline-flex; align-items: center; gap: 10px;
-    font: inherit; font-weight: 500; font-size: 16px;
+    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
     background: var(--accent); color: var(--accent-ink);
     border: 0; border-radius: 999px; padding: 13px 26px; cursor: pointer; text-decoration: none;
     box-shadow: 0 0 28px -6px var(--accent);
@@ -144,7 +150,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 .chapter.seen .step:nth-child(2) { transition-delay: .25s; }
 .chapter.seen .step:nth-child(3) { transition-delay: .5s; }
 .step p { margin: 0; font-size: 15px; }
-.counter { color: var(--accent) !important; font-size: 12px !important; letter-spacing: .2em; margin-bottom: 10px !important; font-variant-numeric: tabular-nums; }
+.counter { color: var(--accent) !important; font-family: var(--display); font-weight: 700; font-size: 11px !important; letter-spacing: .22em; margin-bottom: 10px !important; font-variant-numeric: tabular-nums; }
 .note { margin: 0; font-size: 15px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); color: var(--text); }
 
 /* 03 numbered list */
@@ -153,7 +159,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 .numbered li:first-child { border-top: 0; }
 .numbered li::before {
     content: counter(n, decimal-leading-zero); position: absolute; left: 0; top: 12px;
-    font-size: 30px; font-weight: 400; color: var(--accent); letter-spacing: -0.02em;
+    font-family: var(--display); font-size: 24px; font-weight: 700; color: var(--accent); letter-spacing: 0;
 }
 .numbered p { margin: 0; font-size: 15px; }
 
@@ -194,7 +200,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 #quiz legend { padding: 0 6px; margin-left: -6px; color: var(--text); font-weight: 400; display: flex; gap: 10px; align-items: flex-start; float: left; width: 100%; margin-bottom: 8px; }
 #quiz legend span {
     flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
-    font-size: 13px; font-weight: 600; display: grid; place-items: center; margin-top: 1px;
+    font-family: var(--display); font-size: 11px; font-weight: 700; display: grid; place-items: center; margin-top: 1px;
 }
 #quiz label { clear: both; display: flex; gap: 10px; align-items: flex-start; padding: 7px 4px; cursor: pointer; color: var(--muted); font-size: 15px; }
 #quiz label:hover { color: var(--text); }
@@ -221,7 +227,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 .reread[hidden] { display: none; }
 .reread p { margin: 0; color: var(--text); font-size: 15px; }
 .reread button {
-    flex-shrink: 0; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+    flex-shrink: 0; font-family: var(--display); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; cursor: pointer;
     background: #ff6b6b; color: #1a0508; border: 0; border-radius: 999px; padding: 9px 16px;
 }
 
@@ -244,8 +250,9 @@ p { margin: 0 0 14px; color: var(--muted); }
     body { font-size: 16px; }
     .nav { padding: 0 16px; gap: 12px; }
     .brand small { display: none; }
-    .brand b { font-size: 12px; letter-spacing: .12em; }
-    .nav-exit { font-size: 12px; padding: 6px 12px; }
+    .brand b { font-size: 11px; letter-spacing: .14em; }
+    .nav-exit { font-size: 9px; padding: 7px 12px; }
+    h1 { font-size: 34px; }
     .nav:has(.nav-exit:not([hidden])) .nav-step { display: none; }
     .chapter { padding: calc(var(--nav-h) + 20px) 16px 40px; align-items: flex-end; min-height: 100svh; }
     .panel { padding: 22px 20px; border-radius: 16px; background: rgba(8, 10, 22, 0.78); }
