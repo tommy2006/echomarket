@@ -147,6 +147,7 @@ function App() {
     const [teamSize, setTeamSize] = useState(1);        // active sellers
     const [messages, setMessages] = useState([]);       // order_messages (buyers ↔ seller team)
     const [reports, setReports] = useState([]);         // missing_reports (buyers: "my planes were taken")
+    const [culprits, setCulprits] = useState([]);       // missing_report_culprits (who took them; sellers only)
     const [alerts, setAlerts] = useState({});           // order id → true: buyer is on the alert list (order_alerts)
     const [alertReasons, setAlertReasons] = useState({}); // admins only: discord id → reason
     const [msgSeen, setMsgSeen] = useState(() => store.get(LS_MSG_SEEN, {}));
@@ -220,7 +221,7 @@ function App() {
         if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
-        const [ord, fl, air, dec, team, msg, rep, oal] = await Promise.all([
+        const [ord, fl, air, dec, team, msg, rep, oal, cul] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
@@ -228,8 +229,10 @@ function App() {
             sb.from('sellers').select('user_id').eq('active', true),
             sb.from('order_messages').select('*').order('created_at').limit(2000),
             sb.from('missing_reports').select('*').order('created_at').limit(1000),
-            sb.from('order_alerts').select('order_id').limit(2000)
+            sb.from('order_alerts').select('order_id').limit(2000),
+            sb.from('missing_report_culprits').select('*').order('created_at').limit(2000)
         ]);
+        setCulprits(cul.data || []);   // (empty until schema.sql has the table)
         setAlerts(Object.fromEntries((oal.data || []).map((a) => [a.order_id, true])));
         // Admins and Lead Ambassadors also see why someone is on the alert list.
         if (me.is_admin) api('/api/admin/community', { action: 'list' })
@@ -278,6 +281,10 @@ function App() {
                     notifyBrowser('Missing planes reported', `${p.new.buyer_name || 'A buyer'}: ${p.new.details}`, p.new.order_id);
                 }
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_report_culprits' }, (p) => {
+                if (p.eventType === 'DELETE') return setCulprits((l) => l.filter((c) => c.id !== p.old.id));
+                if (p.new?.id) setCulprits((l) => [...l.filter((c) => c.id !== p.new.id), p.new]);
+            })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages' }, (p) => {
                 setMessages((l) => [...l.filter((m) => m.id !== p.new.id), p.new]);
                 if (p.new.from_role === 'buyer') {
@@ -306,6 +313,19 @@ function App() {
     const endTour = () => { setTourOpen(false); if (userId) store.set(LS_SELLER_TOUR + userId, true); };
     const messagesOf = (orderId) => messages.filter((m) => m.order_id === orderId);
     const reportsOf = (orderId) => reports.filter((r) => r.order_id === orderId);
+    const culpritsByReport = useMemo(() => {
+        const by = {};
+        for (const c of culprits) (by[c.report_id] ||= []).push(c);
+        return by;
+    }, [culprits]);
+    const onReport = (r) => setReports((l) => [...l.filter((x) => x.id !== r.id), r]);
+    // After naming culprits: fetch that report's list now (realtime also brings it, a moment later).
+    const refreshCulprits = async (reportId) => {
+        const { data } = await sb.from('missing_report_culprits').select('*').eq('report_id', reportId);
+        if (data) setCulprits((l) => [...l.filter((c) => c.report_id !== reportId), ...data]);
+    };
+    // Confirmed thefts whose culprit is still "under investigation".
+    const investigating = reports.filter((r) => r.status === 'CONFIRMED' && r.investigating);
     // Open reports this seller should check: on orders they delivered (now or earlier), or all of them for admins.
     const onOrder = (o) => deliveryShares(o).some((sh) => sh.sellerId === userId);
     const reportsToCheck = reports.filter((r) => r.status === 'OPEN')
@@ -424,6 +444,7 @@ function App() {
         open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
         mine: { label: 'My orders', icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
+        thefts: { label: 'Theft reports', icon: 'shield-alert', fn: () => false },   // every seller
         // Admins only: seller performance (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
                                 mod: { label: 'Moderation', icon: 'shield', fn: () => false },
@@ -466,7 +487,8 @@ function App() {
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
-            ${seller.is_admin && html`<${AdminShortcuts} tab=${tab} setTab=${setTab} />`}
+            <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin}
+                theftHint=${investigating.length ? `${investigating.length} under investigation` : reportsToCheck.length ? `${reportsToCheck.length} to check` : ''} />
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
                     ${plural(reportsToCheck.length, 'missing-plane report')} to check in-game</p>
@@ -519,7 +541,9 @@ function App() {
                 </select>
             </div>`}
 
-            ${tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
+            ${tab === 'thefts' ? html`<${TheftsView} reports=${reports} orders=${orders} culpritsByReport=${culpritsByReport} seller=${seller} userId=${userId}
+                onOpenOrder=${openDetail} onReport=${onReport} onCulprits=${refreshCulprits} />`
+            : tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
             : loading ? html`<${EchoLoader} className="py-16" />`
@@ -538,7 +562,7 @@ function App() {
             passed=${passedOn(detail)} teamSize=${teamSize} onBuyer=${setBuyerOf}
             messages=${messagesOf(detail.id)} onSeen=${() => markSeen(detail.id)} reports=${reportsOf(detail.id)}
             caution=${alerts[detail.id]} cautionReason=${alertReasons[detail.buyer_discord_id]}
-            onReport=${(r) => setReports((l) => [...l.filter((x) => x.id !== r.id), r])}
+            culpritsByReport=${culpritsByReport} onReport=${onReport} onCulprits=${refreshCulprits}
             onMessage=${(m) => setMessages((l) => [...l.filter((x) => x.id !== m.id), m])}
             actions=${actions} onClose=${closeDetail} />`}
         ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_admin} onClose=${() => setBuyerOf(null)}
@@ -1325,6 +1349,8 @@ function RewardsCard({ data, run }) {
 }
 
 // Admin tools, one tap away on the desk's front page (instead of at the end of a scrolling tab bar).
+// Every seller: the theft reports (identify and warn culprits). Admins also get their tools next to it.
+const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', label: 'Theft reports', hint: 'Identify and warn culprits' };
 const ADMIN_TOOLS = [
     { tab: 'team', icon: 'trophy', label: 'Sellers', hint: 'Leaderboard and stats' },
     { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
@@ -1347,16 +1373,19 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
     </nav>`;
 }
 
-function AdminShortcuts({ tab, setTab }) {
-    return html`<nav aria-label="Admin tools" className="grid grid-cols-3 gap-2">
-        ${ADMIN_TOOLS.map((t) => {
+function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
+    const tools = isAdmin ? [THEFT_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL];
+    return html`<nav aria-label=${isAdmin ? 'Theft reports and admin tools' : 'Theft reports'} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
+        ${tools.map((t) => {
+            const hint = t.tab === 'thefts' && theftHint ? theftHint : t.hint;
+            const alert = t.tab === 'thefts' && theftHint;
             const on = tab === t.tab;
             return html`<button key=${t.tab} onClick=${() => setTab(on ? 'open' : t.tab)} aria-pressed=${on}
                 className=${`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 p-2.5 md:p-3 rounded-2xl border text-center sm:text-left transition-colors ${on ? 'bg-white text-slate-950 border-white' : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-600'}`}>
-                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${t.icon} className="w-4 h-4" /></span>
+                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : alert ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${t.icon} className="w-4 h-4" /></span>
                 <span className="min-w-0">
                     <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${t.label}</span>
-                    <span className=${`hidden sm:block text-[11px] truncate ${on ? 'text-slate-600' : 'text-slate-500'}`}>${on ? 'Open · tap to go back to orders' : t.hint}</span>
+                    <span className=${`${isAdmin ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? 'Open · tap to go back to orders' : hint}</span>
                 </span>
             </button>`;
         })}
@@ -1515,7 +1544,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
     </article>`;
 }
 
-function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport, caution = false, cautionReason = '' }) {
+function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport, culpritsByReport = {}, onCulprits, caution = false, cautionReason = '' }) {
     useEffect(() => { onSeen?.(); }, [order.id, messages.length]);
     const [events, setEvents] = useState([]);
     useEffect(() => {
@@ -1594,6 +1623,7 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             ${reports.length > 0 && html`<div>
                 <p className="label text-slate-500 mb-2">Missing planes (${reports.length})</p>
                 <div className="space-y-2">${[...reports].reverse().map((r) => html`<${MissingReport} key=${r.id} report=${r} order=${order}
+                    culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits}
                     canClose=${seller.is_admin || deliveryShares(order).some((sh) => sh.sellerId === userId)} onDone=${onReport} />`)}</div>
             </div>`}
             <div>
@@ -1621,29 +1651,57 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
 // One missing-plane report on the seller desk. Open: the sellers on the order (and admins) check in-game who
 // bought the planes, then close it. Theft confirmed → posted to the moderation log; with the culprit's Discord ID
 // they also get an automatic market warning. The buyer is told the outcome either way.
-function MissingReport({ report, order, canClose, onDone }) {
+function MissingReport({ report, order, culprits = [], canClose, onDone, onCulprits }) {
     const [outcome, setOutcome] = useState('confirmed');
     const [note, setNote] = useState('');
-    const [culprit, setCulprit] = useState('');
+    const [known, setKnown] = useState(true);          // confirming: we know who took them (else: under investigation)
+    const [ids, setIds] = useState(['']);
     const [busy, setBusy] = useState(false);
-    const [warned, setWarned] = useState(null);   // the warning that went to the culprit (sellers can read it)
+    // Reports from before several culprits: the one warning kept on the report (sellers can read it).
+    const [legacy, setLegacy] = useState(null);
     useEffect(() => {
-        if (!report.warning_id) return;
-        sb.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle().then(({ data }) => setWarned(data));
-    }, [report.warning_id]);
-    const idOk = !culprit.trim() || /^\d{17,20}$/.test(culprit.trim());
+        if (!report.warning_id || culprits.length) return;
+        sb.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle().then(({ data }) => setLegacy(data));
+    }, [report.warning_id, culprits.length]);
+    const named = culprits.length ? culprits : legacy ? [{ id: 'legacy', discord_id: legacy.discord_id }] : [];
+    const after = () => onCulprits?.(report.id);
     const submit = async () => {
         setBusy(true);
         try {
-            const r = await api(`/api/orders/${order.id}`, { action: 'missing', reportId: report.id, outcome, note: note.trim(),
-                culpritDiscordId: outcome === 'confirmed' ? culprit.trim() : '' });
-            onDone?.(r.report);
+            const list = outcome === 'confirmed' && known ? cleanIds(ids) : [];
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing', reportId: report.id, outcome, note: note.trim(), culprits: list });
+            onDone?.(r.report); after();
             toast(outcome === 'confirmed'
-                ? `Theft logged${r.logged ? ' in the moderation channel' : ''}${r.warned ? ' and the culprit was warned' : ''}. The buyer has been told.`
+                ? `Theft logged${r.logged ? ' in the moderation channel' : ''}${r.warned ? `, ${plural(r.warned, 'culprit')} warned` : ', culprit under investigation'}. The buyer has been told.`
                 : 'Report closed. The buyer has been told.', 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
-    // Clear a confirmed theft once the warned culprit re-listed the planes (checked in-game).
+    // Name (more) culprits later: any seller.
+    const [warning, setWarning] = useState(false);
+    const [warnIds, setWarnIds] = useState(['']);
+    const [closeIt, setCloseIt] = useState(true);
+    const warn = async () => {
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing-culprits', reportId: report.id, culprits: cleanIds(warnIds),
+                done: report.investigating ? closeIt : false });
+            onDone?.(r.report); after();
+            setWarning(false); setWarnIds(['']);
+            toast(`${plural(r.warned, 'culprit')} warned and logged${r.report?.investigating ? '. The investigation stays open' : ''}.`, 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    const giveUp = async () => {
+        const ok = await ask({ title: 'Close the investigation?', confirmLabel: 'Close investigation',
+            message: "The theft stays confirmed, with the culprit marked as not identified. If someone finds out later, you can still add and warn them here." });
+        if (!ok) return;
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing-culprits', reportId: report.id, culprits: [], done: true });
+            onDone?.(r.report);
+            toast('Investigation closed: culprit not identified.', 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    // Clear a confirmed theft once the warned culprit(s) re-listed the planes (checked in-game).
     const [clearing, setClearing] = useState(false);
     const [clearNote, setClearNote] = useState('');
     const [verified, setVerified] = useState(false);
@@ -1653,7 +1711,7 @@ function MissingReport({ report, order, canClose, onDone }) {
             const r = await api(`/api/orders/${order.id}`, { action: 'missing-clear', reportId: report.id, note: clearNote.trim(), verified });
             onDone?.(r.report);
             setClearing(false);
-            toast(`Theft cleared${r.logged ? ' and logged' : ''}. The buyer was told to buy the re-listed planes${r.culpritTold ? ', and the culprit was told the case is closed' : ''}.`, 'success');
+            toast(`Theft cleared${r.logged ? ' and logged' : ''}. The buyer was told to buy the re-listed planes${r.culpritTold ? ', and the culprits were told the case is closed' : ''}.`, 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     const head = {
@@ -1662,24 +1720,52 @@ function MissingReport({ report, order, canClose, onDone }) {
         NOT_THEFT: ['text-slate-200 border-slate-800 bg-slate-950', 'circle-check', 'Not a theft'],
         CLEARED: ['text-emerald-200 border-emerald-500/30 bg-slate-950', 'shield-check', 'Theft cleared · planes re-listed']
     }[report.status] || [];
+    const theft = ['CONFIRMED', 'CLEARED'].includes(report.status);
+    const confirmIdsOk = !known || idsValid(ids);
     return html`<div className=${`p-3 rounded-2xl border space-y-2 ${head[0]}`}>
-        <p className="text-sm font-bold flex items-center gap-1.5"><${Icon} name=${head[1]} className="w-4 h-4" />${head[2]}
+        <p className="text-sm font-bold flex flex-wrap items-center gap-1.5"><${Icon} name=${head[1]} className="w-4 h-4" />${head[2]}
+            ${report.status === 'CONFIRMED' && report.investigating && html`<span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-amber-400/15 text-amber-200 border border-amber-400/30">Culprit under investigation</span>`}
             <span className="text-xs font-normal opacity-60">· ${timeAgo(report.created_at)}</span></p>
         <p className="text-sm text-slate-100">${report.buyer_name || 'Buyer'}: “${report.details}”</p>
-        ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”${warned ? html` · warned <span className="font-mono">${warned.discord_id}</span>` : ''}</p>`}
-        ${report.status === 'CLEARED' && html`<p className="text-xs text-emerald-200/90">${report.cleared_by_name}: “${report.cleared_note}” · ${timeAgo(report.cleared_at)}</p>`}
-        ${report.status === 'CONFIRMED' && report.warning_id && canClose && !clearing && html`<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
-            <p className="text-xs text-slate-400">Did the warned culprit re-list the planes for the buyer?</p>
-            <${Button} size="sm" variant="secondary" icon="shield-check" onClick=${() => setClearing(true)}>Clear theft<//>
+        ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”</p>`}
+        ${theft && html`<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5 space-y-1.5">
+            <p className="label text-slate-500">${named.length ? `Culprits (${named.length}) · warned` : 'Culprit'}</p>
+            ${named.length ? html`<ul className="space-y-1">${named.map((c) => html`<li key=${c.id} className="text-xs text-slate-200 flex flex-wrap items-center gap-x-2">
+                    <${Icon} name="user-x" className="w-3.5 h-3.5 text-rose-300" /><b>${c.name || 'Discord user'}</b>
+                    <span className="font-mono text-slate-400">${c.discord_id}</span>
+                    ${c.added_by_name && html`<span className="text-slate-500">· by ${c.added_by_name}${c.created_at ? `, ${timeAgo(c.created_at)}` : ''}</span>`}
+                </li>`)}</ul>`
+            : html`<p className="text-xs text-slate-400">${report.investigating ? '🔍 Not identified yet. Found out who it was? Warn them below.' : 'Not identified (investigation closed).'}</p>`}
         </div>`}
-        ${report.status === 'CONFIRMED' && report.warning_id && canClose && clearing && html`<div className="pt-2 border-t border-slate-800 space-y-2">
+        ${report.status === 'CLEARED' && html`<p className="text-xs text-emerald-200/90">${report.cleared_by_name}: “${report.cleared_note}” · ${timeAgo(report.cleared_at)}</p>`}
+
+        ${theft && !warning && !clearing && html`<div className="flex flex-wrap items-center gap-2 pt-1">
+            <${Button} size="sm" variant="danger" icon="user-x" onClick=${() => setWarning(true)}>
+                ${report.investigating ? 'Identify & warn culprits' : named.length ? 'Warn another culprit' : 'Warn a culprit'}<//>
+            ${report.investigating && html`<${Button} size="sm" variant="ghost" busy=${busy} onClick=${giveUp}>Can't identify: close investigation<//>`}
+            ${report.status === 'CONFIRMED' && named.length > 0 && canClose && html`<${Button} size="sm" variant="secondary" icon="shield-check" className="ml-auto" onClick=${() => setClearing(true)}>Clear theft<//>`}
+        </div>`}
+        ${theft && warning && html`<div className="pt-2 border-t border-slate-800 space-y-2">
+            <p className="text-xs text-slate-300">Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.</p>
+            <${CulpritInputs} ids=${warnIds} setIds=${setWarnIds} />
+            ${report.investigating && html`<label className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer">
+                <input type="checkbox" checked=${closeIt} onChange=${(e) => setCloseIt(e.target.checked)} className="mt-0.5 accent-rose-400" />
+                <span>That's everyone: close the investigation. (Untick if more culprits may still be found.)</span>
+            </label>`}
+            <div className="flex justify-end gap-2">
+                <${Button} size="sm" variant="ghost" onClick=${() => setWarning(false)}>Cancel<//>
+                <${Button} size="sm" variant="danger" icon="user-x" busy=${busy} disabled=${!cleanIds(warnIds).length || !idsValid(warnIds)} onClick=${warn}>
+                    Warn ${plural(cleanIds(warnIds).length || 1, 'culprit')}<//>
+            </div>
+        </div>`}
+        ${report.status === 'CONFIRMED' && named.length > 0 && canClose && clearing && html`<div className="pt-2 border-t border-slate-800 space-y-2">
             <textarea value=${clearNote} maxLength="1000" rows="2" onChange=${(e) => setClearNote(e.target.value)} className="input"
                 placeholder="What was re-listed and where, e.g. 2× A320neo listed again at WIII"></textarea>
             <label className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer">
                 <input type="checkbox" checked=${verified} onChange=${(e) => setVerified(e.target.checked)} className="mt-0.5 accent-emerald-400" />
                 <span>I checked in-game: the planes are listed for the buyer again.</span>
             </label>
-            <p className="text-[11px] text-slate-500">Logged in the moderation channel. The buyer is told to buy them; the culprit is told the case is closed (the warning stays on their record).</p>
+            <p className="text-[11px] text-slate-500">Logged in the moderation channel. The buyer is told to buy them; the culprits are told the case is closed (the warnings stay on their record).</p>
             <div className="flex justify-end gap-2">
                 <${Button} size="sm" variant="ghost" onClick=${() => setClearing(false)}>Cancel<//>
                 <${Button} size="sm" icon="shield-check" busy=${busy} disabled=${!verified || !clearNote.trim()} onClick=${clear}>Clear theft<//>
@@ -1692,15 +1778,82 @@ function MissingReport({ report, order, canClose, onDone }) {
                 className=${`py-2 rounded-xl border text-xs font-bold ${outcome === k ? (k === 'confirmed' ? 'bg-rose-500 text-[#fff] border-rose-500' : 'bg-white text-slate-950 border-white') : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
             <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input"
                 placeholder=${outcome === 'confirmed' ? 'What happened, e.g. 2× A320neo bought by another player; relisted for the buyer' : 'What you found, e.g. the planes are still listed, buy them at WIII'}></textarea>
-            ${outcome === 'confirmed' && html`<label className="block">
-                <span className="text-xs font-bold text-slate-400">Culprit's Discord user ID (optional: sends them an automatic warning)</span>
-                <input value=${culprit} onChange=${(e) => setCulprit(e.target.value)} inputMode="numeric" className=${`input font-mono mt-1 ${idOk ? '' : '!border-rose-500'}`} placeholder="e.g. 123456789012345678" />
-            </label>`}
-            <p className="text-[11px] text-slate-500">${outcome === 'confirmed' ? 'Posted in the moderation log channel. The buyer sees your note, never the culprit.' : 'The buyer sees your note.'}</p>
-            <div className="flex justify-end"><${Button} size="sm" variant=${outcome === 'confirmed' ? 'danger' : 'primary'} busy=${busy} disabled=${!note.trim() || !idOk}
-                icon=${outcome === 'confirmed' ? 'shield-x' : 'check'} onClick=${submit}>${outcome === 'confirmed' ? 'Log theft' : 'Close report'}<//></div>
+            ${outcome === 'confirmed' && html`<div className="space-y-2">
+                <p className="text-xs font-bold text-slate-400">Who took them?</p>
+                <div className="grid grid-cols-2 gap-1.5">${[[true, 'I know who'], [false, 'Under investigation']].map(([k, label]) => html`<button key=${label} type="button" onClick=${() => setKnown(k)}
+                    className=${`py-2 rounded-xl border text-xs font-bold ${known === k ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
+                ${known ? html`<${CulpritInputs} ids=${ids} setIds=${setIds} />`
+                    : html`<p className="text-[11px] text-slate-400">The theft is logged now. When you find out who it was, any seller can warn them from this report (or from Theft reports on the front page).</p>`}
+            </div>`}
+            <p className="text-[11px] text-slate-500">${outcome === 'confirmed' ? 'Posted in the moderation log channel. Each culprit gets an automatic warning. The buyer sees your note, never who it was.' : 'The buyer sees your note.'}</p>
+            <div className="flex justify-end"><${Button} size="sm" variant=${outcome === 'confirmed' ? 'danger' : 'primary'} busy=${busy}
+                disabled=${!note.trim() || (outcome === 'confirmed' && !confirmIdsOk)}
+                icon=${outcome === 'confirmed' ? 'shield-x' : 'check'} onClick=${submit}>${outcome !== 'confirmed' ? 'Close report'
+                    : known && cleanIds(ids).length ? `Log theft & warn ${plural(cleanIds(ids).length, 'culprit')}` : 'Log theft'}<//></div>
         </div>`}
     </div>`;
+}
+
+// Discord user IDs typed into CulpritInputs.
+const cleanIds = (list) => [...new Set(list.map((x) => x.trim()).filter(Boolean))];
+const ID_RE = /^\d{17,20}$/;
+const idsValid = (list) => list.every((x) => !x.trim() || ID_RE.test(x.trim()));
+const MAX_CULPRITS = 10;
+
+// One Discord user ID per culprit, with "Add another culprit" (a theft can have several).
+function CulpritInputs({ ids, setIds }) {
+    const set = (i, v) => setIds(ids.map((x, j) => (j === i ? v.replace(/[^\d]/g, '') : x)));
+    return html`<div className="space-y-1.5">
+        <p className="text-xs font-bold text-slate-400">Culprit Discord user IDs <span className="font-normal text-slate-500">(Discord: right-click the user → Copy User ID)</span></p>
+        ${ids.map((v, i) => html`<div key=${i} className="flex gap-1.5">
+            <input value=${v} onChange=${(e) => set(i, e.target.value)} inputMode="numeric" aria-label=${`Culprit ${i + 1} Discord user ID`}
+                className=${`input font-mono !py-2 ${!v.trim() || ID_RE.test(v.trim()) ? '' : '!border-rose-500'}`} placeholder=${`Culprit ${i + 1}, e.g. 123456789012345678`} />
+            ${ids.length > 1 && html`<button type="button" onClick=${() => setIds(ids.filter((_, j) => j !== i))} title="Remove"
+                className="shrink-0 w-10 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 flex items-center justify-center"><${Icon} name="x" /></button>`}
+        </div>`)}
+        ${ids.length < MAX_CULPRITS && html`<button type="button" onClick=${() => setIds([...ids, ''])}
+            className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1"><${Icon} name="user-plus" className="w-3.5 h-3.5" />Add another culprit</button>`}
+    </div>`;
+}
+
+// "Theft reports" (every seller): all missing-plane reports, so anyone who finds out who took planes can warn
+// them straight away. Needs attention first: open reports and thefts with the culprit under investigation.
+function TheftsView({ reports, orders, culpritsByReport, seller, userId, onOpenOrder, onReport, onCulprits }) {
+    const [filter, setFilter] = useState('attention');
+    const byId = useMemo(() => Object.fromEntries(orders.map((o) => [o.id, o])), [orders]);
+    const all = [...reports].filter((r) => byId[r.order_id]).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const needs = (r) => r.status === 'OPEN' || (r.status === 'CONFIRMED' && r.investigating);
+    const FILTERS = {
+        attention: ['Needs attention', all.filter(needs)],
+        thefts: ['Confirmed thefts', all.filter((r) => ['CONFIRMED', 'CLEARED'].includes(r.status))],
+        all: ['All reports', all]
+    };
+    const list = FILTERS[filter][1];
+    const [shown, bar] = usePaged(list, 'reports');
+    return html`<section className="space-y-4">
+        <div>
+            <h2 className="text-lg font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />Theft reports</h2>
+            <p className="text-sm text-slate-400">Know who took a buyer's planes? Open the theft below and press <b className="text-slate-200">Warn</b>: each culprit gets an automatic warning (Discord DM, moderation log, disciplinary record). Any seller can do this.</p>
+        </div>
+        <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 w-fit max-w-full overflow-x-auto no-scrollbar">
+            ${Object.entries(FILTERS).map(([k, [label, items]]) => html`<button key=${k} onClick=${() => setFilter(k)} aria-pressed=${filter === k}
+                className=${`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold ${filter === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label} <span className="opacity-60">${items.length}</span></button>`)}
+        </div>
+        ${!list.length ? html`<${EmptyState} icon="shield-check" title=${filter === 'attention' ? 'Nothing needs attention' : 'No reports yet'}
+            text=${filter === 'attention' ? 'No open reports and no thefts with an unknown culprit.' : 'When buyers report missing planes, they show up here.'} />`
+        : html`<div className="space-y-3">${shown.map((r) => {
+            const o = byId[r.order_id];
+            return html`<div key=${r.id} className="card p-3 space-y-2">
+                <button onClick=${() => onOpenOrder(o.id)} className="w-full text-left flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm hover:text-white">
+                    <b className="text-white">${orderRef(o)}</b><span className="text-slate-400">${airlineNames(o)}</span>
+                    <span className="text-xs text-slate-500">· buyer ${o.buyer_name || '-'} · ${plural(o.total_qty, 'aircraft')}</span>
+                    <span className="ml-auto text-xs font-bold text-sky-300 flex items-center gap-1">Open order<${Icon} name="chevron-right" className="w-3.5 h-3.5" /></span>
+                </button>
+                <${MissingReport} report=${r} order=${o} culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits} onDone=${onReport}
+                    canClose=${seller.is_admin || deliveryShares(o).some((sh) => sh.sellerId === userId)} />
+            </div>`;
+        })}${bar}</div>`}
+    </section>`;
 }
 
 function StatusHistory({ order, now }) {
@@ -1726,19 +1879,19 @@ const CLOSED = ['FULFILLED', 'CANCELLED', 'DECLINED'];
 
 // "Showing 5 of 23" + Show 5 / 10 / 25 / 50 / All, and a "Show N more" button.
 // Paging for short lists inside pop-ups (seller stats, buyer info): newest 5 first, same steps as the order tabs.
-function usePaged(items) {
+function usePaged(items, noun = 'orders') {
     const [size, setSize] = useState(5);
     const shown = size === 'all' ? items : items.slice(0, size);
-    const bar = items.length > 5 ? html`<${PageSizeBar} total=${items.length} shown=${shown.length} pageSize=${size} setPageSize=${setSize} compact=${true} />` : null;
+    const bar = items.length > 5 ? html`<${PageSizeBar} total=${items.length} shown=${shown.length} pageSize=${size} setPageSize=${setSize} compact=${true} noun=${noun} />` : null;
     return [shown, bar];
 }
 
-function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false }) {
+function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false, noun = 'orders' }) {
     const hidden = total - shown;
     const options = PAGE_SIZES.filter((p) => p === 'all' || p < total);
     const nextSize = PAGE_SIZES.find((p) => p !== 'all' && p > shown && p < total) || 'all';
     return html`<div className=${compact ? 'pt-2 flex flex-wrap items-center gap-2' : 'card p-3 flex flex-wrap items-center gap-3'}>
-        <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total} orders${hidden > 0 ? ` · ${hidden} hidden` : ''}</span>
+        <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total} ${noun}${hidden > 0 ? ` · ${hidden} hidden` : ''}</span>
         ${hidden > 0 && html`<${Button} size="sm" variant="secondary" icon="chevron-down" onClick=${() => setPageSize(nextSize)}>
             Show ${nextSize === 'all' ? `all ${total}` : `${Math.min(nextSize, total) - shown} more`}<//>`}
         <div className="flex items-center gap-2">

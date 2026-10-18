@@ -401,7 +401,7 @@ export function DiscordLogo({ className = 'w-5 h-5' }) {
 }
 
 // The Echo loading screen: the small Echo wing with the division colours swiping through it
-// (css/echo-loader.css). Use it wherever a page or panel is waiting for data; Spinner is for busy buttons.
+// (css/echo-loader.css). Use it wherever a page or panel is waiting for data; Spinner is the winglet for busy buttons.
 //   <${EchoLoader} full />                 whole screen (first load, signing in)
 //   <${EchoLoader} className="py-16" />    inside a page or card;  size="sm" for small spots
 export function EchoLoader({ label = 'Loading', full = false, size = '', className = '' }) {
@@ -412,8 +412,12 @@ export function EchoLoader({ label = 'Loading', full = false, size = '', classNa
     </div>`;
 }
 
-export function Spinner({ className = 'w-4 h-4' }) {
-    return html`<span className=${`${className} inline-block rounded-full border-2 border-current border-r-transparent animate-spin`}></span>`;
+// Busy buttons: a tiny Echo winglet with the division colours swiping through it, on a small dark chip so it
+// reads on every button colour (white, purple, red…). width: the winglet's width in px.
+export function Spinner({ width = 15 }) {
+    return html`<span className="inline-flex items-center justify-center shrink-0 rounded-md bg-slate-950/85 px-[3px] py-[3px]" role="status" aria-label="Working">
+        <span className="echo-loader" style=${{ width: `${width}px` }} aria-hidden="true"></span>
+    </span>`;
 }
 
 export function Avatar({ account, size = 'w-8 h-8' }) {

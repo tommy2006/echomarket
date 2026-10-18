@@ -15,11 +15,15 @@
 //   decline   { reason, force }        pass on an open order. The order is only DECLINED for the buyer
 //                                      when every active seller has passed; the last one writes the reason.
 //                                      Admins can send force: true to decline it for everyone at once.
-//   missing   { reportId, outcome, note, culpritDiscordId }  close a buyer's missing-plane report: 'confirmed'
-//                                      (theft: posted to the moderation log; a culprit ID gets an automatic warning)
-//                                      or 'not_theft'. Sellers on the order and admins only.
-//   missing-clear { reportId, note, verified }  clear a confirmed theft: the warned culprit re-listed the
-//                                      planes for the buyer (checked in-game). Logged; buyer and culprit are DMed.
+//   missing   { reportId, outcome, note, culprits: [discordId, …] }  close a buyer's missing-plane report:
+//                                      'confirmed' (theft: posted to the moderation log; every culprit gets an
+//                                      automatic warning; no culprits = "under investigation") or 'not_theft'.
+//                                      Sellers on the order and admins only.
+//   missing-culprits { reportId, culprits: [discordId, …], done }  any seller: name (more) culprits of a
+//                                      confirmed theft later; each is warned and logged. done: true closes the
+//                                      investigation (also with no names: "culprit could not be identified").
+//   missing-clear { reportId, note, verified }  clear a confirmed theft: the warned culprit(s) re-listed the
+//                                      planes for the buyer (checked in-game). Logged; buyer and culprits are DMed.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
 //   delete    {}                       admins only — removes the order completely
@@ -31,6 +35,51 @@ import {
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
+const MAX_CULPRITS = 10;   // per report (one theft had 4)
+const THEFT_WARNING = (ref) => `You bought aircraft on the in-game market that were listed for another Echo Market buyer (order ${ref}). Only buy planes you ordered: that is a market rule. Follow the seller team's instructions (for example, re-list the planes for the buyer). Another case can lead to a market ban.`;
+
+// The culprit Discord IDs a seller typed: cleaned, checked, without duplicates.
+function culpritIds(input, order, account) {
+    const raw = Array.isArray(input.culprits) ? input.culprits : [input.culpritDiscordId];   // older form: one ID
+    const ids = [...new Set(raw.map((x) => String(x ?? '').trim()).filter(Boolean))];
+    if (ids.length > MAX_CULPRITS) throw new HttpError(400, `At most ${MAX_CULPRITS} culprits at once.`);
+    for (const id of ids) {
+        if (!/^\d{17,20}$/.test(id)) throw new HttpError(400, `"${id.slice(0, 30)}" isn't a Discord user ID (17–20 digits: right-click the user → Copy User ID).`);
+        if (id === order.buyer_discord_id) throw new HttpError(400, "One of those is the buyer's own Discord ID.");
+        if (id === account.discord_id) throw new HttpError(400, 'One of those is your own Discord ID.');
+    }
+    return ids;
+}
+
+// Warn each culprit of a confirmed theft (automatic market warning: DM + moderation log) and attach them to
+// the report. Skips anyone already attached to it. Returns [{ discordId, name, warningId }].
+async function warnCulprits({ db, order, report, ids, account, ref }) {
+    const { data: existing } = await db.from('missing_report_culprits').select('discord_id').eq('report_id', report.id);
+    const known = new Set((existing || []).map((c) => c.discord_id));
+    const out = [];
+    for (const id of ids) {
+        if (known.has(id)) continue;
+        // Attach first (unique per report), so two sellers pressing at once can't warn the same person twice.
+        const { data: row, error } = await db.from('missing_report_culprits').insert({
+            report_id: report.id, order_id: order.id, discord_id: id,
+            added_by: account.id, added_by_name: accountName(account)
+        }).select().single();
+        if (error) { if (error.code === '23505') continue; throw error; }
+        const target = await resolveTarget({ discordId: id });
+        const sent = await sendMarketMessage({
+            target, kind: 'warning', source: 'theft',
+            by: { accountId: account.id, name: accountName(account) }, body: THEFT_WARNING(ref)
+        });
+        await db.from('missing_report_culprits').update({ name: target.name, warning_id: sent.message.id }).eq('id', row.id);
+        out.push({ discordId: id, name: target.name, warningId: sent.message.id });
+    }
+    return out;
+}
+const culpritLines = (list) => list.map((c) => `<@${c.discordId}> (${md(c.name)})`).join('\n').slice(0, 1000);
+async function culpritTableReady(db) {
+    const { error } = await db.from('missing_report_culprits').select('id').limit(1);
+    if (error) throw new HttpError(503, 'Theft reports need a database update: an admin must re-run supabase/schema.sql.');
+}
 const CLOSED = ['FULFILLED', 'CANCELLED', 'DECLINED'];
 const FLAGS = ['NORMAL', 'SUSPICIOUS', 'BLACKLISTED'];
 const statusFor = (filled, total) => (filled >= total ? 'FULFILLED' : filled > 0 ? 'PARTIAL' : 'CLAIMED');
@@ -352,7 +401,7 @@ Answer on Echo Market (Orders).`,
 
         case 'missing': {
             // Close a buyer's missing-plane report after checking in-game who bought the planes.
-            // { reportId, outcome: 'confirmed' | 'not_theft', note, culpritDiscordId (optional, confirmed only) }
+            // { reportId, outcome: 'confirmed' | 'not_theft', note, culprits: [discordId, …] (confirmed only) }
             const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
             if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can close missing-plane reports.');
             const { data: report } = await db.from('missing_reports').select('*')
@@ -363,29 +412,34 @@ Answer on Echo Market (Orders).`,
             if (!outcome) throw new HttpError(400, 'Choose: theft confirmed, or not a theft.');
             const note = cleanText(input.note, 1000);
             if (!note) throw new HttpError(400, 'Write what you found. The buyer sees it.');
-            const culpritId = outcome === 'CONFIRMED' ? String(input.culpritDiscordId || '').trim() : '';
-            if (culpritId) {
-                if (!/^\d{17,20}$/.test(culpritId)) throw new HttpError(400, 'A Discord user ID is 17–20 digits: right-click the user → Copy User ID.');
-                if (culpritId === order.buyer_discord_id) throw new HttpError(400, "That's the buyer's own Discord ID.");
-                if (culpritId === account.discord_id) throw new HttpError(400, "That's your own Discord ID.");
-            }
+            const ids = outcome === 'CONFIRMED' ? culpritIds(input, order, account) : [];
+            const newDb = 'investigating' in report;   // false until schema.sql has been re-run
+            if (outcome === 'CONFIRMED' && newDb) await culpritTableReady(db);
+            if (ids.length > 1 && !newDb) throw new HttpError(503, 'Several culprits need a database update: an admin must re-run supabase/schema.sql.');
+            // No names yet: the theft is confirmed, the culprit(s) are "under investigation".
+            const investigating = outcome === 'CONFIRMED' && !ids.length;
             // Close it first (only once, even if two sellers press at the same moment), then warn and log.
             const { data: closed } = await db.from('missing_reports').update({
                 status: outcome, resolved_by: account.id, resolved_by_name: accountName(account),
-                resolved_at: new Date().toISOString(), resolution_note: note
+                resolved_at: new Date().toISOString(), resolution_note: note,
+                ...(newDb ? { investigating } : {})
             }).eq('id', report.id).eq('status', 'OPEN').select();
             if (!closed?.length) throw new HttpError(409, 'Another seller closed this report just now.');
             let result = closed[0];
-            let culprit = null, warning = null;
-            if (culpritId) {
-                culprit = await resolveTarget({ discordId: culpritId });
-                const sentWarning = await sendMarketMessage({
-                    target: culprit, kind: 'warning', source: 'theft',
-                    by: { accountId: account.id, name: accountName(account) },
-                    body: `You bought aircraft on the in-game market that were listed for another Echo Market buyer (order ${ref}). Only buy planes you ordered: that is a market rule. Another case can lead to a market ban.`
+            let warned = [];
+            if (ids.length && newDb) {
+                warned = await warnCulprits({ db, order, report, ids, account, ref });
+            } else if (ids.length) {
+                // Older database (no culprits table yet): one culprit, kept on the report itself.
+                const target = await resolveTarget({ discordId: ids[0] });
+                const sent = await sendMarketMessage({
+                    target, kind: 'warning', source: 'theft',
+                    by: { accountId: account.id, name: accountName(account) }, body: THEFT_WARNING(ref)
                 });
-                warning = sentWarning;
-                const { data: linked } = await db.from('missing_reports').update({ warning_id: sentWarning.message.id }).eq('id', report.id).select();
+                warned = [{ discordId: ids[0], name: target.name, warningId: sent.message.id }];
+            }
+            if (warned.length) {
+                const { data: linked } = await db.from('missing_reports').update({ warning_id: warned[0].warningId }).eq('id', report.id).select();
                 if (linked?.length) result = linked[0];
             }
             const logged = outcome === 'CONFIRMED' ? await logModeration({
@@ -393,7 +447,12 @@ Answer on Echo Market (Orders).`,
                 fields: [
                     { name: 'Buyer', value: `${/^\d+$/.test(order.buyer_discord_id || '') ? `<@${order.buyer_discord_id}> ` : ''}(${md(order.buyer_name || '-')})`, inline: true },
                     { name: 'Confirmed by', value: md(accountName(account)), inline: true },
-                    { name: 'Culprit', value: culprit ? `<@${culprit.discordId}> (${md(culprit.name)}) · automatic warning sent` : 'not identified', inline: false },
+                    {
+                        name: warned.length > 1 ? `Culprits (${warned.length}) · automatic warnings sent` : warned.length ? 'Culprit · automatic warning sent' : 'Culprit',
+                        value: warned.length ? culpritLines(warned)
+                            : '🔍 Under investigation: not identified yet. Any seller can add them later (seller desk → Theft reports).',
+                        inline: false
+                    },
                     { name: "Buyer's report", value: md(report.details).slice(0, 1000) },
                     { name: 'Findings', value: md(note).slice(0, 1000) }
                 ]
@@ -410,7 +469,45 @@ Answer on Echo Market (Orders).`,
                     url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
                 });
             }
-            return res.json({ ok: true, order, report: result, warned: Boolean(warning), logged });
+            return res.json({ ok: true, order, report: result, warned: warned.length, investigating,
+                culprits: warned.map(({ discordId, name }) => ({ discordId, name })), logged });
+        }
+
+        case 'missing-culprits': {
+            // Name the culprit(s) of a confirmed theft later ("under investigation" → identified), or add more.
+            // Any active seller: { reportId, culprits: [discordId, …], done: true = the investigation is closed }.
+            const { data: report } = await db.from('missing_reports').select('*')
+                .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
+            if (!report) throw new HttpError(404, 'Report not found.');
+            if (!('investigating' in report)) throw new HttpError(503, 'Theft reports need a database update: an admin must re-run supabase/schema.sql.');
+            await culpritTableReady(db);
+            if (!['CONFIRMED', 'CLEARED'].includes(report.status)) throw new HttpError(409, 'Only a confirmed theft can have culprits.');
+            const ids = culpritIds(input, order, account);
+            const done = input.done === true;
+            if (!ids.length && !done) throw new HttpError(400, "Add the culprit's Discord user ID.");
+            const warned = await warnCulprits({ db, order, report, ids, account, ref });
+            if (ids.length && !warned.length && !done) throw new HttpError(409, 'Everyone you listed is already on this report.');
+            const patch = {};
+            if (done && report.investigating) patch.investigating = false;
+            if (!report.warning_id && warned.length) patch.warning_id = warned[0].warningId;
+            let result = report;
+            if (Object.keys(patch).length) {
+                const { data: upd } = await db.from('missing_reports').update(patch).eq('id', report.id).select();
+                if (upd?.length) result = upd[0];
+            }
+            const logged = (warned.length || patch.investigating === false) ? await logModeration({
+                title: warned.length ? `🕵️ Theft culprit${warned.length > 1 ? 's' : ''} identified · ${plain(ref)}` : `🔍 Theft investigation closed · ${plain(ref)}`,
+                color: warned.length ? EMBED_COLORS.declined : EMBED_COLORS.progress,
+                fields: [
+                    ...(warned.length ? [{ name: warned.length > 1 ? `Culprits (${warned.length}) · automatic warnings sent` : 'Culprit · automatic warning sent', value: culpritLines(warned) }] : []),
+                    { name: 'By', value: md(accountName(account)), inline: true },
+                    { name: 'Investigation', value: result.investigating ? 'still open: more culprits may follow' : warned.length ? 'closed' : 'closed: the culprit could not be identified', inline: true },
+                    { name: "Buyer's report", value: md(report.details).slice(0, 1000) }
+                ]
+            }) : null;
+            if (warned.length) await addEvent(order, 'MISSING', account, { message: 'Theft follow-up: the sellers identified who took the planes, and they were warned.' });
+            return res.json({ ok: true, order, report: result, warned: warned.length,
+                culprits: warned.map(({ discordId, name }) => ({ discordId, name })), logged });
         }
 
         case 'missing-clear': {
@@ -423,8 +520,16 @@ Answer on Echo Market (Orders).`,
             if (!report) throw new HttpError(404, 'Report not found.');
             if (!('cleared_at' in report)) throw new HttpError(503, 'Clearing a theft needs a database update: an admin must re-run supabase/schema.sql.');
             if (report.status === 'CLEARED') throw new HttpError(409, `${report.cleared_by_name || 'Another seller'} already cleared this theft.`);
-            if (report.status !== 'CONFIRMED' || !report.warning_id) {
-                throw new HttpError(409, 'Only a confirmed theft whose culprit was warned can be cleared.');
+            // Everyone named on the report (older reports: the one warning kept on the report).
+            const { data: rows } = 'investigating' in report
+                ? await db.from('missing_report_culprits').select('discord_id').eq('report_id', report.id) : { data: [] };
+            let named = (rows || []).map((c) => c.discord_id);
+            if (!named.length && report.warning_id) {
+                const { data: warning } = await db.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle();
+                if (warning?.discord_id) named = [warning.discord_id];
+            }
+            if (report.status !== 'CONFIRMED' || !named.length) {
+                throw new HttpError(409, 'Only a confirmed theft whose culprit was identified and warned can be cleared.');
             }
             if (input.verified !== true) throw new HttpError(400, 'Check in-game first that the planes are listed for the buyer again.');
             const note = cleanText(input.note, 1000);
@@ -434,12 +539,10 @@ Answer on Echo Market (Orders).`,
                 cleared_by_name: accountName(account), cleared_note: note
             }).eq('id', report.id).eq('status', 'CONFIRMED').select();
             if (!cleared?.length) throw new HttpError(409, 'Another seller changed this report just now.');
-            const { data: warning } = await db.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle();
-            const culpritId = warning?.discord_id || null;
             const logged = await logModeration({
                 title: `✅ Theft cleared · ${plain(ref)}`, color: EMBED_COLORS.fulfilled,
                 fields: [
-                    { name: 'Culprit', value: culpritId ? `<@${culpritId}>` : 'unknown', inline: true },
+                    { name: named.length > 1 ? 'Culprits' : 'Culprit', value: named.map((id) => `<@${id}>`).join(' ').slice(0, 1000), inline: true },
                     { name: 'Cleared by', value: md(accountName(account)), inline: true },
                     { name: 'Re-listed', value: md(note).slice(0, 1000) },
                     { name: 'Note', value: 'Planes re-listed for the buyer, checked in-game. The warning stays on record.' }
@@ -447,8 +550,8 @@ Answer on Echo Market (Orders).`,
             });
             await addEvent(order, 'MISSING', account, { message: `The missing planes were re-listed for you: ${note}` });
             const dmed = [];
-            if (culpritId) {
-                dmed.push(await dmDiscordUser(culpritId, {
+            for (const id of named) {
+                dmed.push(await dmDiscordUser(id, {
                     title: `✅ Echo Market: case cleared (${ref})`, color: EMBED_COLORS.progress,
                     description: 'Thanks for re-listing the planes for their buyer. The case is closed; the warning stays on your record. Only buy planes you ordered.'
                 }));
@@ -462,7 +565,7 @@ Answer on Echo Market (Orders).`,
                     url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
                 });
             }
-            return res.json({ ok: true, order, report: cleared[0], logged, culpritTold: dmed[0] === 'sent' });
+            return res.json({ ok: true, order, report: cleared[0], logged, culpritTold: dmed.some((d) => d === 'sent') });
         }
 
         case 'flag': {

@@ -8,8 +8,9 @@
 --    2. Run STEP 1 first: it only shows what would be removed.
 --    3. Run STEP 2: removes it and shows how many were removed.
 --
---  Removed: warnings (market_messages, kind 'warning') and every market ban
---  (active and old). Kept: ordinary info messages, orders, airlines.
+--  Removed: warnings (market_messages, kind 'warning'), every market ban
+--  (active and old) and their names on theft reports (missing_report_culprits).
+--  Kept: ordinary info messages, orders, airlines, the theft reports themselves.
 --  This can't be undone.
 --
 --  ⚠️ Active bans: deleting the ban doesn't remove the "Market Banned" ROLE
@@ -29,7 +30,8 @@ select t.discord_id,
        (select count(*) from public.market_messages m where m.discord_id = t.discord_id and m.kind = 'warning') as warnings,
        (select count(*) from public.market_bans b where b.discord_id = t.discord_id) as bans,
        (select count(*) from public.market_bans b where b.discord_id = t.discord_id and b.revoked_at is null
-            and (b.ends_at is null or b.ends_at > now())) as active_bans
+            and (b.ends_at is null or b.ends_at > now())) as active_bans,
+       (select count(*) from public.missing_report_culprits c where c.discord_id = t.discord_id) as named_on_theft_reports
 from target t;
 
 -- ---------------------------------------------------------------- STEP 2: clear (run after checking STEP 1)
@@ -50,7 +52,13 @@ bans_removed as (
     delete from public.market_bans b using target t
     where b.discord_id = t.discord_id
     returning b.id
+),
+theft_names_removed as (
+    delete from public.missing_report_culprits c using target t
+    where c.discord_id = t.discord_id
+    returning c.id
 )
 select (select count(*) from warnings_removed) as warnings_removed,
        (select count(*) from bans_removed)     as bans_removed,
+       (select count(*) from theft_names_removed) as theft_names_removed,
        (select count(*) from active)           as active_bans_removed;   -- > 0: remove their Market Banned role in Discord

@@ -1515,6 +1515,7 @@ function MissingPlanes({ order, reports, onReported }) {
             const l = REPORT_LABEL[r.status] || REPORT_LABEL.OPEN;
             return html`<div key=${r.id} className=${`p-3 rounded-2xl border text-sm space-y-1 ${l.cls}`}>
                 <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />Missing planes · ${l.text}</p>
+                ${r.status === 'CONFIRMED' && r.investigating && html`<p className="text-xs">The sellers are still finding out who took them.</p>`}
                 <p className="text-xs opacity-80">You wrote: “${r.details}” · ${timeAgo(r.created_at)}</p>
                 ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || 'Seller'}: “${r.resolution_note}”</p>`}
                 ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || 'Seller'}: “${r.cleared_note}”</p>`}

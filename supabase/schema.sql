@@ -537,6 +537,30 @@ alter table public.missing_reports add column if not exists cleared_note    text
 alter table public.missing_reports drop constraint if exists missing_reports_status_check;
 alter table public.missing_reports add constraint missing_reports_status_check
     check (status in ('OPEN', 'CONFIRMED', 'NOT_THEFT', 'CLEARED'));
+-- A confirmed theft whose culprit(s) are not known yet: "under investigation" until a seller attaches them
+-- (or closes the investigation without a name).
+alter table public.missing_reports add column if not exists investigating boolean not null default false;
+
+-- The people who took the planes in a confirmed theft (there can be several), each with the automatic
+-- warning they were sent. Sellers only: buyers never learn who it was.
+create table if not exists public.missing_report_culprits (
+    id             bigint generated always as identity primary key,
+    report_id      bigint not null references public.missing_reports(id) on delete cascade,
+    order_id       text not null references public.orders(id) on delete cascade,
+    discord_id     text not null,
+    name           text,
+    warning_id     bigint references public.market_messages(id) on delete set null,
+    added_by       uuid references public.accounts(id) on delete set null,
+    added_by_name  text,
+    created_at     timestamptz not null default now(),
+    unique (report_id, discord_id)
+);
+create index if not exists missing_report_culprits_discord_idx on public.missing_report_culprits (discord_id);
+-- Reports from before this table had one culprit, in missing_reports.warning_id: copy them over (once).
+insert into public.missing_report_culprits (report_id, order_id, discord_id, warning_id, added_by, added_by_name, created_at)
+select r.id, r.order_id, m.discord_id, r.warning_id, r.resolved_by, r.resolved_by_name, coalesce(r.resolved_at, r.created_at)
+from public.missing_reports r join public.market_messages m on m.id = r.warning_id
+on conflict (report_id, discord_id) do nothing;
 
 -- Market-wide settings that admins change on the seller desk (no redeploy needed), e.g.
 --   order_channel_ids: Discord channels where buyers may use /order and /airline (empty = anywhere).
@@ -595,6 +619,7 @@ alter table public.market_bans        enable row level security;
 alter table public.market_messages    enable row level security;
 alter table public.order_messages     enable row level security;
 alter table public.missing_reports    enable row level security;
+alter table public.missing_report_culprits enable row level security;
 
 -- May this signed-in person use the market (create/edit airlines)? Member of the Echo server (checked
 -- by the API) and not market-banned (ban record or the Market Banned role).
@@ -649,6 +674,10 @@ drop policy if exists "missing reports: buyer or seller read" on public.missing_
 create policy "missing reports: buyer or seller read" on public.missing_reports
     for select to authenticated using (buyer_id = auth.uid() or public.is_seller());
 grant select on public.missing_reports to authenticated;
+drop policy if exists "missing culprits: seller read" on public.missing_report_culprits;
+create policy "missing culprits: seller read" on public.missing_report_culprits
+    for select to authenticated using (public.is_seller());
+grant select on public.missing_report_culprits to authenticated;
 drop policy if exists "order messages: buyer or seller read" on public.order_messages;
 create policy "order messages: buyer or seller read" on public.order_messages
     for select to authenticated using (buyer_id = auth.uid() or public.is_seller());
@@ -696,9 +725,11 @@ grant execute on function public.is_seller() to anon, authenticated;
 revoke insert, update, delete, truncate, references, trigger on
     public.orders, public.order_events, public.order_flags, public.order_declines,
     public.push_subscriptions, public.sellers, public.alliances,
-    public.market_bans, public.market_messages, public.order_messages, public.missing_reports
+    public.market_bans, public.market_messages, public.order_messages, public.missing_reports,
+    public.missing_report_culprits
     from anon, authenticated;
-revoke all on public.market_bans, public.market_messages, public.order_messages, public.missing_reports from anon;
+revoke all on public.market_bans, public.market_messages, public.order_messages, public.missing_reports,
+    public.missing_report_culprits from anon;
 revoke insert, delete, truncate, references, trigger on public.accounts from anon, authenticated;
 revoke all on public.airlines from anon;
 revoke truncate, references, trigger on public.airlines from authenticated;
@@ -714,7 +745,8 @@ do $$
 declare t text;
 begin
     foreach t in array array['orders', 'order_events', 'order_flags', 'order_declines',
-                             'market_messages', 'order_messages', 'market_bans', 'missing_reports'] loop
+                             'market_messages', 'order_messages', 'market_bans', 'missing_reports',
+                             'missing_report_culprits'] loop
         if not exists (
             select 1 from pg_publication_tables
             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
