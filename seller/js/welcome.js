@@ -157,7 +157,7 @@ $('exhibits').outerHTML = EXHIBITS.map((x, i) => `
             <p class="kind">${esc(x.kind)}</p>
             <h2>${esc(x.title)}</h2>
             <ul class="lines">${x.lines.map((l) => `<li>${l}</li>`).join('')}</ul>
-            <div class="row"><button type="button" class="ghost" data-open="${i}">Open the close-up</button><span class="hint">Drag to turn</span></div>
+            <div class="row"><button type="button" class="ghost" data-open="${i}">Open the close-up</button><span class="hint"><span class="hint-mouse">Drag the exhibit to turn it</span><span class="hint-touch">Swipe the exhibit sideways to turn it</span></span></div>
         </div>
     </section>`).join('');
 $('index-list').innerHTML = EXHIBITS.map((x, i) => `<li><a href="#p${i + 1}"><span class="n">${String(i + 1).padStart(2, '0')}</span>

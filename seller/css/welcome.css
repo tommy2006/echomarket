@@ -66,7 +66,8 @@ body::before {
 #nav-progress-bar { height: 100%; width: 0; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
 
 /* ------------------------------------------------------------ pages */
-main { position: relative; z-index: 2; }
+/* Only the cards catch clicks: everything else passes through to the 3D scene, so the exhibit can be dragged. */
+main { position: relative; z-index: 2; pointer-events: none; }
 .page {
     min-height: 100vh; min-height: 100svh; display: flex; align-items: center;
     padding: calc(var(--nav-h) + 32px) 6vw 64px;
@@ -98,6 +99,8 @@ p { margin: 0 0 12px; color: var(--muted); }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
 .hint { font-family: var(--display); font-size: 9px; letter-spacing: .24em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
 .hint::before { content: '⟲'; font-size: 14px; color: var(--accent); }
+.hint-touch { display: none; }
+@media (hover: none) { .hint-mouse { display: none; } .hint-touch { display: inline; } }
 .key .card { border-color: var(--accent); }
 .key-badge { display: inline-block; font-family: var(--display); font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
     padding: 4px 10px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); margin: 0 0 12px; }
