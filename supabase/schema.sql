@@ -200,6 +200,8 @@ alter table public.sellers add column if not exists role_checked_at timestamptz;
 -- (only a look on the seller desk: being an admin still comes from is_admin). Role-based sellers get it from their Discord roles on every role check;
 -- for sellers added by hand, set it yourself (SETUP.md 8.2). is_admin = true makes anyone an admin.
 alter table public.sellers add column if not exists rank text not null default 'verified';
+-- When the seller finished the sellers' welcome (seller/welcome.html). Until then they can't take orders.
+alter table public.sellers add column if not exists welcome_done_at timestamptz;
 -- true while the seller has the "Market Admin" Discord role (admin rights; kept with the role checks).
 alter table public.sellers add column if not exists market_admin boolean not null default false;
 alter table public.sellers drop constraint if exists sellers_rank_check;

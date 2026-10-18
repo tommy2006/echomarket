@@ -35,6 +35,12 @@ import {
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
+// Sellers take (or take over) orders only after the sellers' welcome (welcome.html). Older databases: no gate.
+function requireWelcome(seller) {
+    if ('welcome_done_at' in seller && !seller.welcome_done_at) {
+        throw new HttpError(403, `Before your first order, finish the sellers' welcome (a few minutes): ${SELLER_URL || ''}/welcome.html`);
+    }
+}
 const MAX_CULPRITS = 10;   // per report (one theft had 4)
 const THEFT_WARNING = (ref) => `You bought aircraft on the in-game market that were listed for another Echo Market buyer (order ${ref}). Only buy planes you ordered: that is a market rule. Follow the seller team's instructions (for example, re-list the planes for the buyer). Another case can lead to a market ban.`;
 
@@ -124,6 +130,7 @@ export default handler(['POST'], async (req, res) => {
 
     switch (input.action) {
         case 'claim': {
+            requireWelcome(seller);
             if (order.status !== 'PENDING') throw new HttpError(409, 'This order has already been taken or closed.');
             const { data: airline } = await db.from('airlines').select('*')
                 .eq('id', input.airlineId || '00000000-0000-0000-0000-000000000000')
@@ -156,6 +163,7 @@ export default handler(['POST'], async (req, res) => {
         }
 
         case 'join': {
+            requireWelcome(seller);
             if (!('helpers' in order)) throw new HttpError(503, 'Taking over needs a database update: an admin must re-run supabase/schema.sql.');
             if (!ACTIVE.includes(order.status)) throw new HttpError(409, 'Only orders that are being delivered can be taken over.');
             if (isOwner || myHelp) throw new HttpError(409, 'You are already delivering this order.');

@@ -443,6 +443,11 @@ function App() {
     if (!session) return html`<${SignInScreen} />`;
     if (seller === undefined) return html`<${EchoLoader} full />`;
     if (!seller) return html`<${NotASeller} account=${account} />`;
+    // Every seller goes through the sellers' welcome once ("A new era begins"). Older databases: no column, no redirect.
+    if ('welcome_done_at' in seller && !seller.welcome_done_at) {
+        window.location.replace('/welcome.html');
+        return html`<${EchoLoader} full />`;
+    }
 
     // ---- filtering
     const q = query.trim().toLowerCase();
@@ -854,6 +859,7 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
             </label>`}
             <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> Open the market</a>
             <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
+            <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> Seller welcome</a>
             <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
         </div>`}
     </div>`;

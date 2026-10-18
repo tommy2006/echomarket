@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>A new era begins · Echo Market sellers</title>
+    <meta name="description" content="The sellers' welcome: how Echo Market orders work on the web, and checking who bought before you claim the money.">
+    <link rel="icon" type="image/png" href="echo_logo.png">
+    <meta name="theme-color" content="#04050a">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/echo-loader.css">
+    <link rel="stylesheet" href="css/welcome.css">
+    <!-- Same sign-in as the seller desk (served from this site; the CSP only allows scripts from here). -->
+    <script src="vendor/supabase-js-2.117.2.js"></script>
+    <script src="/api/config"></script>
+    <script type="module" src="js/welcome.js"></script>
+</head>
+<body>
+    <!-- Loader -->
+    <div id="loader" role="status" aria-live="polite">
+        <span class="echo-loader echo-loader-lg" aria-hidden="true"></span>
+        <p class="loader-text">Opening the hangar</p>
+        <p class="loader-pct"><span id="loader-pct">0</span>%</p>
+    </div>
+
+    <!-- "A NEW ERA BEGINS" burst (start and end) -->
+    <div id="burst" aria-hidden="true"><div class="burst-flash"></div><div class="burst-sparks"></div><p class="burst-text">A NEW ERA<br>BEGINS</p></div>
+    <!-- Jet-exhaust transition between pages -->
+    <div id="exhaust" aria-hidden="true"><div class="exhaust-core"></div></div>
+
+    <header class="nav">
+        <a class="brand" href="#p0"><img src="echo_logo.png" alt=""><span><b>ECHO MARKET</b><small>Seller welcome</small></span></a>
+        <nav class="nav-links" aria-label="Sections">
+            <a href="#index">Index</a><a href="#p1">01</a><a href="#p2">02</a><a href="#p3">03</a><a href="#p4">04</a>
+            <a href="#p5">05</a><a href="#p6">06</a><a href="#p7">07</a><a href="#p8">08</a><a href="#pledge">Pledge</a>
+        </nav>
+        <span class="nav-step" id="nav-step">00 / 08</span>
+        <a class="nav-exit" id="nav-exit" href="/" hidden>Back to the desk</a>
+        <div class="nav-progress"><div id="nav-progress-bar"></div></div>
+    </header>
+
+    <main>
+        <section class="page hero" id="p0" data-page="0">
+            <div class="hero-inner">
+                <p class="eyebrow">Echo Market · Sellers</p>
+                <h1 class="era">A NEW ERA<br>BEGINS</h1>
+                <p class="hero-lead">Orders now come in on the web. Welcome to the alliance's new way of selling: eight exhibits, a few minutes, and the one habit that protects every buyer.</p>
+                <a class="cta" href="#index">Enter the hangar <span aria-hidden="true">↓</span></a>
+            </div>
+        </section>
+
+        <section class="page index-page" id="index" data-page="0">
+            <div class="card wide">
+                <p class="eyebrow">The exhibits</p>
+                <h2>Eight things every seller knows</h2>
+                <ol class="index-list" id="index-list"></ol>
+            </div>
+        </section>
+
+        <!-- The eight exhibits are filled in by js/welcome.js (one source for the stand cards and the details). -->
+        <div id="exhibits"></div>
+
+        <section class="page finale" id="pledge" data-page="8">
+            <div class="card wide finale-card">
+                <h2 class="era era-sm">A NEW ERA<br>BEGINS</h2>
+                <p class="hero-lead">You're cleared to sell. Two promises, then the desk is yours.</p>
+                <p class="replay-note" id="replay-note" hidden>You've already made these pledges. Read them again, or go straight back to the desk.</p>
+                <div class="pledges" id="pledges">
+                    <label class="pledge"><input type="checkbox" id="pledge-check">
+                        <span><b>I check who bought every listing before I claim the money,</b> and I keep a note of any wrong buyer for the theft report.</span></label>
+                    <label class="pledge"><input type="checkbox" id="pledge-serve">
+                        <span><b>I'm ready to serve Echo to the fullest of my ability</b> in the alliance's new era: fair, fast and honest with every buyer.</span></label>
+                </div>
+                <button type="button" class="cta" id="enter" disabled>Open the seller desk</button>
+                <p class="msg" id="enter-msg" role="status"></p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="foot">
+        <div><b>ECHO MARKET</b><span>Echo Alliances · sellers</span></div>
+        <div><b>QUESTIONS</b><span>Ask the admins, or in #market-chat</span></div>
+        <div><b>THE DESK</b><span>Open queue · My orders · Theft reports</span></div>
+        <div><b>REPLAY</b><span>Account menu → Seller welcome</span></div>
+    </footer>
+
+    <!-- Exhibit close-up -->
+    <div id="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" hidden>
+        <div class="detail-card">
+            <p class="eyebrow" id="detail-kind"></p>
+            <h2 id="detail-title"></h2>
+            <div id="detail-body"></div>
+            <button type="button" class="detail-close" id="detail-close">Close · Esc</button>
+        </div>
+    </div>
+    <div id="fade" aria-hidden="true"></div>
+</body>
+</html>
