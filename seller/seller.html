@@ -15,17 +15,20 @@
          can change the code the page runs. The Content-Security-Policy in vercel.json only allows scripts
          from this site. -->
     <link rel="stylesheet" href="css/echo-loader.css">
-    <script src="vendor/tailwindcss-3.4.16.js"></script>
-    <script src="vendor/react-18.3.1.min.js"></script>
-    <script src="vendor/react-dom-18.3.1.min.js"></script>
-    <script src="vendor/htm-3.1.1.js"></script>
-    <script src="vendor/lucide-0.469.0.min.js"></script>
-    <script src="vendor/supabase-js-2.117.2.js"></script>
+    <!-- Scripts are deferred so the page (and the Echo loader) paints at once; our modules download in parallel. -->
+    <link rel="modulepreload" href="js/seller.js">
+    <link rel="modulepreload" href="js/ui.js">
+    <script defer src="vendor/tailwindcss-3.4.16.js"></script>
+    <script defer src="vendor/react-18.3.1.min.js"></script>
+    <script defer src="vendor/react-dom-18.3.1.min.js"></script>
+    <script defer src="vendor/htm-3.1.1.js"></script>
+    <script defer src="vendor/lucide-icons-36ffdea008.js"></script>
+    <script defer src="vendor/supabase-js-2.117.2.js"></script>
     <!-- Public settings (Supabase URL + anon key) served from Vercel env vars by api/config.js -->
-    <script src="/api/config"></script>
+    <script defer src="/api/config"></script>
 
-    <script src="js/theme.js"></script>
-    <script src="js/tailwind-config.js"></script>
+    <script defer src="js/theme.js"></script>
+    <script defer src="js/tailwind-config.js"></script>
     <style type="text/tailwindcss">
         :root { color-scheme: dark; }
         /* Night sky.

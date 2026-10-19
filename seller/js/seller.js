@@ -207,15 +207,29 @@ function App() {
                     if (me) toast(`Welcome to the seller desk! You were added because you're a ${RANK_LABEL[rankOf(me)]} on Discord.`, 'success');
                 }
             } else {
-                // Role sellers can only read orders while their role was confirmed in the last hour, so refresh
-                // the check first when it's older than 30 minutes (or once per visit). This also brings the
-                // rank (colour and title) up to date with the highest seller role on Discord.
+                // Once per visit (and every 30 minutes) the Discord role is checked again: rank (colour and title)
+                // follows the highest seller role. Role sellers can only read orders while that check is under
+                // an hour old, so only then does the desk wait for it (Discord can take a second or two);
+                // otherwise the desk opens straight away and the check runs alongside.
                 const age = me.role_checked_at ? Date.now() - new Date(me.role_checked_at).getTime() : Infinity;
                 if (!roleChecked.current || (me.source === 'discord_role' && age > 30 * 60e3)) {
                     roleChecked.current = true;
-                    const r = await api('/api/enroll').catch(() => null);
-                    if (r && !r.seller) me = null;
-                    else if (r?.rank) me = { ...me, rank: r.rank, admin_now: r.admin };   // promoted or demoted on Discord
+                    const check = api('/api/enroll').catch(() => null);
+                    if (me.source === 'discord_role' && age > 50 * 60e3) {
+                        const r = await check;
+                        if (r && !r.seller) me = null;
+                        else if (r?.rank) me = { ...me, rank: r.rank, admin_now: r.admin };   // promoted or demoted on Discord
+                    } else {
+                        check.then((r) => {
+                            if (r && !r.seller) { setSeller(null); return; }   // lost the seller role on Discord
+                            if (!r?.rank) return;
+                            setSeller((cur) => {
+                                const next = cur && withAdmin({ ...cur, rank: r.rank, admin_now: r.admin });
+                                if (next) window.setSellerTint?.(rankOf(next));
+                                return next;
+                            });
+                        });
+                    }
                 }
             }
         }

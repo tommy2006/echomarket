@@ -11,10 +11,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/echo-loader.css">
+    <!-- Scripts are deferred so the page (and the Echo loader) paints at once; our modules download in parallel. -->
+    <link rel="modulepreload" href="js/welcome.js">
+    <link rel="modulepreload" href="js/welcome-perf.js">
     <link rel="stylesheet" href="css/welcome.css">
     <!-- Same sign-in as the seller desk (served from this site; the CSP only allows scripts from here). -->
-    <script src="vendor/supabase-js-2.117.2.js"></script>
-    <script src="/api/config"></script>
+    <script defer src="vendor/supabase-js-2.117.2.js"></script>
+    <script defer src="/api/config"></script>
     <script type="module" src="js/welcome.js"></script>
 </head>
 <body>
