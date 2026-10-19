@@ -3,7 +3,12 @@
 // to turn and open for a close-up, one alliance division colour per page, jet-exhaust transitions.
 // The layout borrows the feel of ThreeUI's free Kibori page; all code here is our own.
 // Finishing it: POST /api/welcome { pledges: { check, serve } } (records sellers.welcome_done_at).
-import * as THREE from '../vendor/three-0.160.1/three.module.min.js';
+import { pickQuality, lowerThan, rememberQuality, pixelRatioFor, frameWatch, mixHex, inkFor, qualitySwitch } from './welcome-perf.js';
+// three.js is loaded only when the device shows the 3D hangar (not at the 'lite' graphics level).
+let THREE = null;
+// Graphics level (js/welcome-perf.js): 'high', 'low' or 'lite'; lowered automatically if frames drop.
+let quality = pickQuality();
+document.documentElement.dataset.quality = quality;
 
 // ------------------------------------------------------------------ setup
 const CONFIG = window.ECHO_CONFIG || {};
@@ -200,7 +205,8 @@ const glowTex = () => canvasTexture(64, 64, (g) => {
     grad.addColorStop(0.6, 'rgba(255,255,255,0.12)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
 });
-const DISPLAY = '"Orbitron", "Exo 2", sans-serif', BODY = '"Exo 2", sans-serif';
+// The seller desk's own fonts: JetBrains Mono for labels and numbers, Plus Jakarta Sans for text.
+const DISPLAY = '"JetBrains Mono", ui-monospace, monospace', BODY = '"Plus Jakarta Sans", sans-serif';
 
 function ticketTexture(colour) {
     return canvasTexture(1024, 540, (g, w, h) => {
@@ -384,8 +390,8 @@ function buildWorld() {
     const canvas = document.createElement('canvas');
     canvas.id = 'scene'; canvas.setAttribute('aria-hidden', 'true');
     document.body.prepend(canvas);
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
+    renderer.setPixelRatio(pixelRatioFor(quality));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
     const scene = new THREE.Scene();
@@ -444,7 +450,7 @@ function buildWorld() {
     const backL = new THREE.Mesh(new THREE.PlaneGeometry(70, 90), wallMat); backL.position.set(-85, 45, -70); scene.add(backL);
     const lintel = new THREE.Mesh(new THREE.PlaneGeometry(80, 30), wallMat); lintel.position.set(-10, 75, -70); scene.add(lintel);
     const stars = [];
-    for (let k = 0; k < 700; k++) stars.push(-130 + Math.random() * 240, 40 + Math.random() * 60, -125);
+    for (let k = 0; k < (quality === 'high' ? 700 : 260); k++) stars.push(-130 + Math.random() * 240, 40 + Math.random() * 60, -125);
     const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.Float32BufferAttribute(stars, 3));
     scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 1.6, map: glow, color: 0xdfe4ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })));
     const apron = [];   // runway lights far outside
@@ -476,12 +482,20 @@ function buildWorld() {
         const pivot = new THREE.Group(); pivot.position.set(x, 0, 0);
         pivot.add(exhibit);
         scene.add(plinth, rim, pool, spot, spot.target, cone, rimLight, pivot);
+        // 'high' only: 16 lights on every surface is what slows older tablets down. Lower levels use followSpot.
+        spot.visible = rimLight.visible = quality === 'high';
         // Flat exhibits (ticket, board, sold listing) sway and spring back so they stay readable; the rest turn.
         stands.push({ x, pivot, exhibit, spot, cone, rimMat, pool, rimLight, spin: 0, vel: 0, flat: [0, 2, 3].includes(i) });
         setLoad(40 + (i + 1) * 6);
     }
     setLoad(92);
-    return { renderer, scene, camera, stands, doors: [doorL, doorR], apronMat, parked };
+    // Lower levels: one spotlight and one coloured rim light that follow the camera from stand to stand.
+    const followSpot = new THREE.SpotLight(0xfff3e2, 4200, 120, 0.42, 0.55, 1.4);
+    followSpot.position.set(STAND_X(0), 64, 10); followSpot.target.position.set(STAND_X(0), 4, 0);
+    const followRim = new THREE.PointLight(COLOURS[1], 260, 46, 1.5);
+    followSpot.visible = followRim.visible = quality !== 'high';
+    scene.add(followSpot, followSpot.target, followRim);
+    return { renderer, scene, camera, stands, doors: [doorL, doorR], apronMat, parked, followSpot, followRim };
 }
 
 let world = null;
@@ -537,20 +551,16 @@ const seen = new IntersectionObserver((entries) => {
 PAGES.forEach((p) => seen.observe(p));
 
 // ------------------------------------------------------------------ colours
-const tmpA = new THREE.Color(), tmpB = new THREE.Color();
 let lastCss = '';
 function applyAccent(f) {
     const i = Math.floor(f), t = f - i;
-    tmpA.set(colourOfView(VIEW_OF[i])); tmpB.set(colourOfView(VIEW_OF[Math.min(i + 1, LAST)]));
-    const c = tmpA.lerp(tmpB, t);
-    if (world) world.apronMat.color.copy(c);
-    const hex = '#' + c.getHexString(THREE.SRGBColorSpace);
+    const hex = mixHex(colourOfView(VIEW_OF[i]), colourOfView(VIEW_OF[Math.min(i + 1, LAST)]), t);
     if (hex === lastCss) return;
     lastCss = hex;
+    if (world) world.apronMat.color.set(hex);
     const root = document.documentElement.style;
     root.setProperty('--accent', hex);
-    const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;   // linear colours: relative luminance
-    root.setProperty('--accent-ink', lum > 0.2 ? '#070910' : '#ffffff');
+    root.setProperty('--accent-ink', inkFor(hex));
 }
 
 // ------------------------------------------------------------------ "A NEW ERA BEGINS"
@@ -613,7 +623,28 @@ $('detail').addEventListener('click', (e) => { if (e.target.id === 'detail') clo
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
 
 // ------------------------------------------------------------------ frame loop
-const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), goalPos = new THREE.Vector3(), goalLook = new THREE.Vector3();
+let camPos, camLook, goalPos, goalLook;   // set once three.js has loaded
+let watch = null;   // frame-rate watch (welcome-perf.js)
+function startWatch() {
+    watch = quality === 'lite' ? null : frameWatch(quality === 'high' ? 45 : 24, () => setQuality(lowerThan(quality), true));
+}
+// Change the graphics level while the page runs (auto: remembered on this device for next time).
+function setQuality(level, auto = false) {
+    if (level === quality) return;
+    quality = level;
+    document.documentElement.dataset.quality = level;
+    if (auto) rememberQuality(level);
+    if (level === 'lite') {
+        if (world) { world.renderer.dispose(); world.renderer.domElement.remove(); world = null; }
+        watch = null;
+        return;
+    }
+    if (!world) return;
+    world.renderer.setPixelRatio(pixelRatioFor(level)); resize();
+    for (const st of world.stands) st.spot.visible = st.rimLight.visible = level === 'high';
+    world.followSpot.visible = world.followRim.visible = level !== 'high';
+    startWatch();
+}
 let firstFrame = true, doorsT = REDUCED ? 1 : 0, leaving = false;
 function resize() {
     if (!world) return;
@@ -628,6 +659,7 @@ function resize() {
 }
 function frame(now) {
     requestAnimationFrame(frame);
+    watch?.(now);
     const time = now / 1000;
     if (REDUCED) shown = Math.round(target); else shown += (target - shown) * (firstFrame ? 1 : 0.07);
     applyAccent(shown);
@@ -647,6 +679,12 @@ function frame(now) {
     else { camPos.lerp(goalPos, 0.07); camLook.lerp(goalLook, 0.07); }
     camera.position.copy(camPos); camera.lookAt(camLook);
     world.parked.rotation.y = Math.PI / 2 + (REDUCED ? 0 : Math.sin(time * 0.2) * 0.15);
+    if (world.followSpot.visible) {   // lower levels: the one spotlight follows the camera to the stand in view
+        const fx = camLook.x;
+        world.followSpot.position.set(fx, 64, 10); world.followSpot.target.position.set(fx, 4, 0);
+        const k = Math.max(0, Math.min(7, Math.round((fx - STAND_X(0)) / (STAND_X(1) - STAND_X(0)))));
+        world.followRim.position.set(fx - 9, 10, 14); world.followRim.color.set(COLOURS[k + 1]);
+    }
     firstFrame = false;
 
     // the doors slide open once the hangar is lit
@@ -682,11 +720,18 @@ let loaded = false;
 (async function load() {
     // Wait for the fonts (the canvas textures use them), at most a few seconds.
     await Promise.race([
-        Promise.all([document.fonts?.load?.(`700 40px Orbitron`), document.fonts?.load?.(`500 40px "Exo 2"`), document.fonts?.ready].filter(Boolean)).catch(() => {}),
+        Promise.all([document.fonts?.load?.('800 40px "Plus Jakarta Sans"'), document.fonts?.load?.('500 20px "JetBrains Mono"'), document.fonts?.ready].filter(Boolean)).catch(() => {}),
         new Promise((r) => setTimeout(r, 3500))
     ]);
     setLoad(10);
-    try { world = buildWorld(); } catch (err) { console.warn('3D scene unavailable:', err); }
+    if (quality !== 'lite') {
+        try {
+            THREE = await import('../vendor/three-0.160.1/three.module.min.js');
+            camPos = new THREE.Vector3(); camLook = new THREE.Vector3(); goalPos = new THREE.Vector3(); goalLook = new THREE.Vector3();
+            world = buildWorld();
+            lastCss = '';   // repaint the scene's colour on the next frame
+        } catch (err) { console.warn('3D scene unavailable:', err); setQuality('lite'); }
+    }
     setLoad(100);
     let pct = 0;
     await new Promise((done) => {
@@ -705,6 +750,8 @@ let loaded = false;
         c.addEventListener('pointerup', onUp); c.addEventListener('pointercancel', onUp);
         world.renderer.compile(world.scene, world.camera);
     }
+    startWatch();
+    qualitySwitch($('quality-switch'), quality);
     requestAnimationFrame(frame);
     setTimeout(() => {
         $('loader').classList.add('done');

@@ -1,6 +1,6 @@
 /* "Cleared for takeoff" welcome (welcome.html). Layout and feel inspired by ThreeUI's free Kage page,
    written from scratch. --accent / --accent-ink are set by js/welcome.js as you scroll between chapters.
-   Fonts (same as the sellers' welcome): Orbitron for labels, numbers, buttons and the nav; Exo 2 for headings and text. */
+   Fonts: the market's own, Plus Jakarta Sans (text, headings, buttons) and JetBrains Mono (small labels and numbers). */
 :root {
     --bg: #05060c;
     --text: #f4f5fb;
@@ -10,8 +10,9 @@
     --panel: rgba(8, 10, 22, 0.62);
     --line: rgba(255, 255, 255, 0.12);
     --nav-h: 64px;
-    --display: 'Orbitron', 'Exo 2', system-ui, sans-serif;
-    --body: 'Exo 2', system-ui, sans-serif;
+    --display: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --body: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
     color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -21,7 +22,7 @@ body {
     background: var(--bg);
     color: var(--text);
     font-family: var(--body);
-    font-weight: 300;
+    font-weight: 400;
     font-size: 17px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
@@ -46,7 +47,7 @@ body::before {
 }
 #loader.done { opacity: 0; visibility: hidden; }
 .loader-logo { margin-bottom: 14px; }
-.loader-text { margin: 0; font-family: var(--display); letter-spacing: .3em; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+.loader-text { margin: 0; font-family: var(--mono); letter-spacing: .3em; text-transform: uppercase; font-size: 11px; color: var(--muted); }
 .loader-pct { margin: 0; font-family: var(--display); font-size: 40px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------ nav */
@@ -60,18 +61,18 @@ body::before {
 .brand img { width: 30px; height: 30px; border-radius: 8px; }
 .brand span { display: flex; flex-direction: column; line-height: 1.1; }
 .brand b { font-family: var(--display); font-weight: 700; letter-spacing: .18em; font-size: 12px; }
-.brand small { font-family: var(--display); font-size: 9px; color: var(--accent); letter-spacing: .2em; text-transform: uppercase; }
+.brand small { font-family: var(--mono); font-size: 9px; color: var(--accent); letter-spacing: .2em; text-transform: uppercase; }
 .nav-links { display: flex; gap: 4px; margin-left: auto; }
 .nav-links a {
-    font-family: var(--display); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
     color: var(--muted); text-decoration: none; padding: 7px 10px; border-radius: 999px;
     transition: color .2s, background .2s;
 }
 .nav-links a:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .nav-links a.active { color: var(--accent-ink); background: var(--accent); }
-.nav-step { font-family: var(--display); font-size: 11px; letter-spacing: .16em; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nav-step { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nav-exit {
-    font-family: var(--display); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
     text-decoration: none; padding: 8px 14px; border-radius: 999px;
     border: 1px solid var(--accent); color: var(--text); white-space: nowrap;
 }
@@ -101,11 +102,11 @@ main { position: relative; z-index: 2; }
 .panel.wide { max-width: 860px; }
 .chapter.seen .panel { opacity: 1; transform: none; }
 .callout {
-    margin: 0 0 12px; color: var(--accent); font-family: var(--display); font-size: 10px; font-weight: 500;
+    margin: 0 0 12px; color: var(--accent); font-family: var(--mono); font-size: 10px; font-weight: 500;
     letter-spacing: .22em; text-transform: uppercase;
 }
-h1, h2 { font-weight: 500; font-size: 44px; letter-spacing: -0.01em; line-height: 1.1; margin: 0 0 18px; }
-h1 { font-family: var(--display); font-weight: 900; font-size: 50px; letter-spacing: .01em; line-height: 1.04; }
+h1, h2 { font-weight: 800; font-size: 42px; letter-spacing: -0.025em; line-height: 1.1; margin: 0 0 18px; }
+h1 { font-family: var(--display); font-weight: 900; font-size: 50px; letter-spacing: -0.03em; line-height: 1.04; }
 h3 { font-weight: 600; font-size: 18px; margin: 0 0 6px; }
 p { margin: 0 0 14px; color: var(--muted); }
 .panel p b, .panel li b, .panel dd b { color: var(--text); }
@@ -117,7 +118,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 
 .cta {
     display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0;
     background: var(--accent); color: var(--accent-ink);
     border: 0; border-radius: 999px; padding: 13px 26px; cursor: pointer; text-decoration: none;
     box-shadow: 0 0 28px -6px var(--accent);
@@ -150,7 +151,7 @@ p { margin: 0 0 14px; color: var(--muted); }
 .chapter.seen .step:nth-child(2) { transition-delay: .25s; }
 .chapter.seen .step:nth-child(3) { transition-delay: .5s; }
 .step p { margin: 0; font-size: 15px; }
-.counter { color: var(--accent) !important; font-family: var(--display); font-weight: 700; font-size: 11px !important; letter-spacing: .22em; margin-bottom: 10px !important; font-variant-numeric: tabular-nums; }
+.counter { color: var(--accent) !important; font-family: var(--mono); font-weight: 500; font-size: 11px !important; letter-spacing: .22em; margin-bottom: 10px !important; font-variant-numeric: tabular-nums; }
 .note { margin: 0; font-size: 15px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); color: var(--text); }
 
 /* 03 numbered list */
@@ -266,6 +267,27 @@ p { margin: 0 0 14px; color: var(--muted); }
     .reread { flex-direction: column; align-items: stretch; bottom: 12px; }
     .foot { padding: 24px 16px 32px; }
 }
+
+
+/* ------------------------------------------------------------ graphics levels (js/welcome-perf.js) */
+/* low / lite: no blur behind the cards and the nav (blurring a moving 3D scene is costly on tablets). */
+html[data-quality="low"] .nav, html[data-quality="lite"] .nav { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(5, 6, 12, 0.94); }
+html[data-quality="low"] .panel, html[data-quality="lite"] .panel { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 10, 22, 0.92); }
+/* lite: no 3D. A starry backdrop with a glow in the current division colour instead. */
+html[data-quality="lite"] body { background:
+    radial-gradient(1.5px 1.5px at 23px 41px, rgba(255,255,255,.8), transparent),
+    radial-gradient(1.5px 1.5px at 141px 97px, rgba(255,255,255,.6), transparent),
+    radial-gradient(2px 2px at 77px 173px, rgba(199,210,254,.8), transparent),
+    radial-gradient(1.5px 1.5px at 203px 211px, rgba(255,255,255,.5), transparent),
+    var(--bg);
+    background-size: 240px 240px, 240px 240px, 240px 240px, 240px 240px, auto; }
+html[data-quality="lite"] body::after { content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse 55% 60% at 78% 45%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 70%);
+    transition: background .6s; }
+.quality-switch { margin-top: 10px; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px;
+    padding: 7px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; cursor: pointer; }
+.quality-switch:hover { color: var(--text); border-color: var(--accent); }
+.quality-switch[hidden] { display: none; }
 
 /* ------------------------------------------------------------ reduced motion */
 @media (prefers-reduced-motion: reduce) {

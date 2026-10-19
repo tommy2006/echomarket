@@ -12,7 +12,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Shared code, plus the browser libraries in vendor/ (each site serves its own copy; see SECURITY in HANDOVER.md).
 const VENDOR = readdirSync(join(ROOT, 'shared', 'vendor')).map((f) => 'vendor/' + f);
 const FILES = ['lib/server.js', 'lib/moderation.js', 'js/ui.js', 'js/tailwind-config.js', 'api/config.js', 'api/health.js',
-    'css/echo-loader.css', 'img/echo-wing.png', ...VENDOR];
+    'css/echo-loader.css', 'img/echo-wing.png', 'js/welcome-perf.js', ...VENDOR];
 const APPS = ['buyer', 'seller'];
 const check = process.argv.includes('--check');
 

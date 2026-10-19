@@ -2,7 +2,12 @@
 // A night airport drawn with Three.js (no image files) taxis along as you scroll, one stop per chapter.
 // The layout borrows the feel of ThreeUI's free Kage page; all code here is our own.
 // Finishing it: POST /api/me { action: 'welcome-done', answers, understood } (the server checks the answers too).
-import * as THREE from '../vendor/three-0.160.1/three.module.min.js';
+import { pickQuality, lowerThan, rememberQuality, pixelRatioFor, frameWatch, mixHex, inkFor, qualitySwitch } from './welcome-perf.js';
+// three.js is loaded only when the device shows the 3D airport (not at the 'lite' graphics level).
+let THREE = null;
+// Graphics level (js/welcome-perf.js): 'high', 'low' or 'lite'; lowered automatically if frames drop.
+let quality = pickQuality();
+document.documentElement.dataset.quality = quality;
 
 // ------------------------------------------------------------------ setup
 const CONFIG = window.ECHO_CONFIG || {};
@@ -84,7 +89,7 @@ function textTexture(text) {
     const c = document.createElement('canvas'); c.width = 256; c.height = 128;
     const g = c.getContext('2d');
     g.fillStyle = 'rgba(210,214,230,0.55)';
-    g.font = '700 96px Orbitron, "Exo 2", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '800 96px "Plus Jakarta Sans", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(text, 128, 68);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
     return t;
@@ -148,15 +153,14 @@ const loaderPct = $('loader-pct');
 let loadTarget = 0;
 const setLoad = (p) => { loadTarget = Math.max(loadTarget, p); };
 
-let world = null;
-try { world = buildWorld(); } catch (err) { console.warn('3D scene unavailable:', err); }
+let world = null;   // built in load() once three.js is in
 
 function buildWorld() {
     const canvas = document.createElement('canvas');
     canvas.id = 'scene'; canvas.setAttribute('aria-hidden', 'true');
     document.body.prepend(canvas);
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
+    renderer.setPixelRatio(pixelRatioFor(quality));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
     const scene = new THREE.Scene();
@@ -177,7 +181,7 @@ function buildWorld() {
     scene.add(new THREE.HemisphereLight(0x2a3566, 0x05060c, 1.1));
     const moon = new THREE.DirectionalLight(0x9fb2ff, 0.6); moon.position.set(-300, 400, -200); scene.add(moon);
     const stars = [];
-    for (let i = 0; i < 1800; i++) {
+    for (let i = 0; i < (quality === 'high' ? 1800 : 600); i++) {
         const th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * 0.46;
         const r = 2600;
         stars.push([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph) + 20, r * Math.sin(ph) * Math.sin(th)]);
@@ -293,6 +297,7 @@ function buildWorld() {
     // low clouds and ground fog
     const cloudTex = cloudTexture();
     const clouds = [];
+    // Big see-through cloud sprites cost a lot on weak graphics chips: lower levels show only the first few.
     for (let i = 0; i < 34; i++) {
         const low = i < 10;
         const m = new THREE.SpriteMaterial({ map: cloudTex, color: low ? 0x7782a8 : 0x5d678f, transparent: true, depthWrite: false, opacity: low ? 0.07 : 0.12 + Math.random() * 0.08 });
@@ -301,6 +306,7 @@ function buildWorld() {
         s.scale.set(scale, scale * 0.45, 1);
         s.position.set(-900 + Math.random() * 1800, low ? 6 + Math.random() * 6 : 90 + Math.random() * 120, -1400 + Math.random() * 1700);
         s.userData.speed = 1.5 + Math.random() * 3;
+        s.visible = quality === 'high' || i % 3 === 0;
         clouds.push(s); scene.add(s);
     }
     setLoad(100);
@@ -347,35 +353,44 @@ const ticker = new IntersectionObserver((entries) => {
 checks.forEach((b) => ticker.observe(b));
 
 // ------------------------------------------------------------------ colours
-const tmpA = new THREE.Color(), tmpB = new THREE.Color();
 let lastCss = '';
-function accentAt(f) {
-    const i = Math.floor(f), t = f - i;
-    tmpA.set(COLOURS[Math.min(i, COLOURS.length - 1)]);
-    tmpB.set(COLOURS[Math.min(i + 1, COLOURS.length - 1)]);
-    return tmpA.lerp(tmpB, t);
-}
 function applyAccent(f) {
-    const c = accentAt(f);
+    const i = Math.floor(f), t = f - i, n = COLOURS.length - 1;
+    const hex = mixHex(COLOURS[Math.min(i, n)], COLOURS[Math.min(i + 1, n)], t);
+    if (hex === lastCss) return;
+    lastCss = hex;
     if (world) {
-        world.accent.copy(c);
-        for (const m of world.accentMats) m.color.copy(c);
-        world.belly.color.copy(c);
+        world.accent.set(hex);
+        for (const m of world.accentMats) m.color.set(hex);
+        world.belly.color.set(hex);
     }
-    const hex = '#' + c.getHexString(THREE.SRGBColorSpace);
-    if (hex !== lastCss) {
-        lastCss = hex;
-        const root = document.documentElement.style;
-        root.setProperty('--accent', hex);
-        // Dark text on the lighter colours (all but the purple), white on dark ones, for readable buttons.
-        const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;   // THREE colours are linear: relative luminance
-        root.setProperty('--accent-ink', lum > 0.2 ? '#0b0d14' : '#ffffff');
-    }
+    const root = document.documentElement.style;
+    root.setProperty('--accent', hex);
+    root.setProperty('--accent-ink', inkFor(hex));   // dark text on the lighter colours, white on dark ones
 }
 
 // ------------------------------------------------------------------ camera + animation
-const camOff = new THREE.Vector3(), v = new THREE.Vector3(), look = new THREE.Vector3(), camPos = new THREE.Vector3(), camGoal = new THREE.Vector3();
-const fwd = new THREE.Vector3(), right = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+let camOff, v, look, camPos, camGoal, fwd, right, UP;   // set once three.js has loaded
+let watch = null;   // frame-rate watch (welcome-perf.js)
+function startWatch() {
+    watch = quality === 'lite' ? null : frameWatch(quality === 'high' ? 45 : 24, () => setQuality(lowerThan(quality), true));
+}
+// Change the graphics level while the page runs (auto: remembered on this device for next time).
+function setQuality(level, auto = false) {
+    if (level === quality) return;
+    quality = level;
+    document.documentElement.dataset.quality = level;
+    if (auto) rememberQuality(level);
+    if (level === 'lite') {
+        if (world) { world.renderer.dispose(); world.renderer.domElement.remove(); world = null; }
+        watch = null;
+        return;
+    }
+    if (!world) return;
+    world.renderer.setPixelRatio(pixelRatioFor(level)); resize();
+    world.clouds.forEach((c, i) => { c.visible = level === 'high' || i % 3 === 0; });
+    startWatch();
+}
 let camScale = 1;
 let takeoff = null;   // { start } once "Enter the market" is pressed
 let firstFrame = true;
@@ -406,6 +421,7 @@ function routeAt(f) {
 
 function frame(now) {
     requestAnimationFrame(frame);
+    watch?.(now);
     const time = now / 1000;
     // smooth the scroll (or snap, for reduced motion)
     if (REDUCED) shown = Math.round(target);
@@ -472,11 +488,22 @@ function frame(now) {
 
 // ------------------------------------------------------------------ loader
 (async function load() {
-    // Orbitron + Exo 2 (at most a few seconds; the page works with fallback fonts too).
+    // The market's own fonts (at most a few seconds; the page works with fallback fonts too).
     const fontsReady = Promise.race([
-        Promise.all([document.fonts?.load?.('700 40px Orbitron'), document.fonts?.load?.('300 17px "Exo 2"'), document.fonts?.ready].filter(Boolean)).catch(() => {}),
+        Promise.all([document.fonts?.load?.('800 40px "Plus Jakarta Sans"'), document.fonts?.load?.('500 16px "JetBrains Mono"'), document.fonts?.ready].filter(Boolean)).catch(() => {}),
         new Promise((r) => setTimeout(r, 3500))
     ]);
+    setLoad(5);
+    if (quality !== 'lite') {
+        try {
+            THREE = await import('../vendor/three-0.160.1/three.module.min.js');
+            camOff = new THREE.Vector3(); v = new THREE.Vector3(); look = new THREE.Vector3(); camPos = new THREE.Vector3();
+            camGoal = new THREE.Vector3(); fwd = new THREE.Vector3(); right = new THREE.Vector3(); UP = new THREE.Vector3(0, 1, 0);
+            world = buildWorld();
+            lastCss = '';   // repaint the scene's colour on the next frame
+        } catch (err) { console.warn('3D scene unavailable:', err); setQuality('lite'); }
+    }
+    setLoad(100);
     let shownPct = 0;
     await new Promise((done) => {
         const step = () => {
@@ -488,10 +515,12 @@ function frame(now) {
         step();
     });
     await fontsReady;
-    // The runway number is drawn on a canvas: redraw it now that Orbitron has loaded.
+    // The runway number is drawn on a canvas: redraw it now that the font has loaded.
     if (world?.number) { world.number.material.map.dispose(); world.number.material.map = textTexture('09'); world.number.material.needsUpdate = true; }
     readScroll(); resize();
     if (world) world.renderer.compile(world.scene, world.camera);
+    startWatch();
+    qualitySwitch($('quality-switch'), quality);
     requestAnimationFrame(frame);
     setTimeout(() => $('loader').classList.add('done'), REDUCED ? 0 : 250);
 })();
