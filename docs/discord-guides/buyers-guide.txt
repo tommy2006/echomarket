@@ -2,7 +2,7 @@
 Order aircraft from the alliance's sellers, *below the in-game list price*.
 
 ## 1 · Sign in
-Open **<https://echomarket-buyer.vercel.app>** and press **Sign in with Discord**. Only members of this server can use the market.
+Open **<https://market.echoalliances.com>** and press **Sign in with Discord**. Only members of this server can use the market.
 -# The market rules pop up on your first visit; they're always behind the 📜 button at the top.
 
 ## 2 · Create your airline

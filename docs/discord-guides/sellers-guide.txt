@@ -2,7 +2,7 @@
 For **Verified Sellers**, **Ambassadors** and **Lead Ambassadors**.
 
 ## Getting in
-Open **<https://echomarket-seller.vercel.app>** and sign in with Discord. Your seller role lets you in automatically.
+Open **<https://desk.echoalliances.com>** and sign in with Discord. Your seller role lets you in automatically.
 Create an airline first on the market site (**Airlines**): buyers see which airline sells to them.
 -# A short tour shows you around. Replay it any time: profile picture → *Show me around*.
 

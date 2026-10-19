@@ -9,8 +9,8 @@ One repo, **two Vercel projects**, one Supabase database:
 
 | Folder | Vercel project (Root Directory) | Who uses it |
 |---|---|---|
-| [`buyer/`](buyer) | buyer site, e.g. `echomarket-buyer.vercel.app` | everyone: the market |
-| [`seller/`](seller) | seller site, e.g. `echomarket-seller.vercel.app` | accounts in the `sellers` table |
+| [`buyer/`](buyer) | buyer site, `market.echoalliances.com` (old `echomarket-buyer.vercel.app` forwards there) | everyone: the market |
+| [`seller/`](seller) | seller site, `desk.echoalliances.com` (old `echomarket-seller.vercel.app` forwards there) | accounts in the `sellers` table |
 | [`shared/`](shared) | not deployed | code both apps use; copied into each by `npm run sync` |
 | [`supabase/`](supabase) | not deployed | `schema.sql`: tables, security rules, triggers |
 

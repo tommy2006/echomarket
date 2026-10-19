@@ -15,6 +15,17 @@
       "source": "/lib/:path*",
       "destination": "/",
       "permanent": false
+    },
+    {
+      "source": "/((?!api/).*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "echomarket-buyer.vercel.app"
+        }
+      ],
+      "destination": "https://market.echoalliances.com/$1",
+      "permanent": true
     }
   ],
   "headers": [
