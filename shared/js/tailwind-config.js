@@ -1,5 +1,6 @@
 // Tailwind settings shared by both apps (colours come from window.ECHO_THEME, set in each app's js/theme.js).
-// Source of truth: shared/js/tailwind-config.js. Run "npm run sync" at the repo root after editing.
+// Only used when building the stylesheets (scripts/build-css.mjs, part of "npm run sync"); browsers get the
+// built buyer/css/app.css and seller/css/app.css. Run "npm run sync" at the repo root after editing.
 tailwind.config = {
     theme: {
         extend: {

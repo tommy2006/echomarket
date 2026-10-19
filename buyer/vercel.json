@@ -1,4 +1,7 @@
 {
+  "regions": [
+    "dub1"
+  ],
   "functions": {
     "api/orders.js": {
       "includeFiles": "aircraft_pricelist.json"

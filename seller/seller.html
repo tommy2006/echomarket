@@ -14,11 +14,12 @@
     <!-- Libraries are served from this site (copies in vendor/, pinned versions), so no outside server
          can change the code the page runs. The Content-Security-Policy in vercel.json only allows scripts
          from this site. -->
+    <!-- Built ahead of time from styles/seller.css by "npm run sync" (scripts/build-css.mjs). -->
+    <link rel="stylesheet" href="css/app.css">
     <link rel="stylesheet" href="css/echo-loader.css">
     <!-- Scripts are deferred so the page (and the Echo loader) paints at once; our modules download in parallel. -->
     <link rel="modulepreload" href="js/seller.js">
     <link rel="modulepreload" href="js/ui.js">
-    <script defer src="vendor/tailwindcss-3.4.16.js"></script>
     <script defer src="vendor/react-18.3.1.min.js"></script>
     <script defer src="vendor/react-dom-18.3.1.min.js"></script>
     <script defer src="vendor/htm-3.1.1.js"></script>
@@ -28,82 +29,6 @@
     <script defer src="/api/config"></script>
 
     <script defer src="js/theme.js"></script>
-    <script defer src="js/tailwind-config.js"></script>
-    <style type="text/tailwindcss">
-        :root { color-scheme: dark; }
-        /* Night sky.
-           body:         stars (tiled at four sizes so the pattern looks random) over a black sky.
-           body::before / body::after: the pink aurora, see below. */
-        body {
-            background-image:
-                radial-gradient(1.5px 1.5px at 31px 47px, rgba(255,240,250,.85), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 157px 119px, rgba(255,255,255,.6), rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 89px 191px, rgb(var(--sky-200) / .8), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 211px 23px, rgba(255,255,255,.5), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 271px 149px, rgba(255,255,255,.55), rgba(0,0,0,0)),
-                radial-gradient(2.5px 2.5px at 53px 293px, rgb(var(--sky-300) / .75), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 389px 71px, rgba(255,255,255,.6), rgba(0,0,0,0)),
-                radial-gradient(1.5px 1.5px at 443px 331px, rgba(255,255,255,.5), rgba(0,0,0,0)),
-                linear-gradient(to bottom, #000000 0%, #050505 60%, #0B0B0D 100%);
-            background-size: 240px 240px, 240px 240px, 240px 240px, 330px 330px, 330px 330px, 420px 420px,
-                             510px 510px, 510px 510px, 100% 100%;
-            background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat;
-            background-attachment: fixed;
-        }
-        /* Faint aurora in the seller's rank tint (CSS variables set by js/theme.js).
-           body::before and body::after are two layers of soft aurora clouds. They drift, stretch and
-           tilt on different slow cycles (≈70s and ≈95s), so the combined glow slowly changes shape. */
-        body::before, body::after { content: ""; position: fixed; z-index: -1; pointer-events: none; will-change: transform, opacity; }
-        body::before {
-            inset: -15% -20% 10% -20%;
-            background:
-                radial-gradient(ellipse 24% 40% at 14% 42%, rgb(var(--sky-500) / .80), transparent 70%),
-                radial-gradient(ellipse 22% 48% at 38% 34%, rgb(var(--sky-400) / .70), transparent 70%),
-                radial-gradient(ellipse 20% 38% at 60% 44%, rgb(var(--sky-600) / .60), transparent 70%),
-                radial-gradient(ellipse 22% 46% at 82% 36%, rgb(var(--sky-400) / .70), transparent 70%);
-            filter: blur(60px);
-            opacity: .2;
-            transform-origin: 30% 20%;
-            animation: aurora-drift-a 70s ease-in-out infinite alternate;
-        }
-        body::after {
-            inset: -10% -20% 20% -20%;
-            background:
-                radial-gradient(ellipse 34% 26% at 26% 56%, rgb(var(--sky-500) / .50), transparent 72%),
-                radial-gradient(ellipse 30% 30% at 55% 24%, rgb(var(--sky-300) / .45), transparent 72%),
-                radial-gradient(ellipse 36% 24% at 78% 58%, rgb(var(--sky-600) / .45), transparent 72%);
-            filter: blur(70px);
-            opacity: .15;
-            transform-origin: 70% 30%;
-            animation: aurora-drift-b 95s ease-in-out infinite alternate;
-        }
-        @keyframes aurora-drift-a {
-            0%   { transform: translate(-4%, 0) rotate(-3deg) scale(1, .92); }
-            35%  { transform: translate(2%, 2%) rotate(1deg) scale(1.08, 1.06); }
-            70%  { transform: translate(5%, -1%) rotate(4deg) scale(.96, 1.12); }
-            100% { transform: translate(-1%, 3%) rotate(-1deg) scale(1.05, .98); }
-        }
-        @keyframes aurora-drift-b {
-            0%   { transform: translate(5%, 2%) rotate(3deg) scale(1.06, 1); }
-            40%  { transform: translate(-3%, -2%) rotate(-2deg) scale(.94, 1.1); }
-            100% { transform: translate(-6%, 1%) rotate(-5deg) scale(1.1, .94); }
-        }
-        @media (prefers-reduced-motion: reduce) { body::before, body::after { animation: none; } }
-        @media (max-width: 640px) { html { font-size: 14px; } }
-        @supports (-webkit-touch-callout: none) { @media (max-width: 640px) { input, select, textarea { font-size: 16px !important; } } }
-        body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highlight-color: transparent; }
-        @layer components {
-        .card { @apply bg-slate-900/80 backdrop-blur-sm border border-slate-800 rounded-3xl transition-colors; }
-        .label { @apply font-mono text-[10px] font-medium uppercase tracking-[0.16em]; }
-        .field-label { @apply block text-xs font-bold text-slate-400 mb-1.5; }
-        .input { @apply w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-sky-400/70 focus:ring-2 focus:ring-sky-400/20; }
-        .stepper { @apply w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-200 hover:bg-slate-700 shrink-0; }
-        .menu-item { @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white; }
-        }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { scrollbar-width: none; }
-        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-    </style>
 </head>
 <body>
     <!-- First paint: the Echo loader shows while the scripts load; React replaces it. -->
