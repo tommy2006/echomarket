@@ -542,6 +542,10 @@ alter table public.missing_reports add constraint missing_reports_status_check
 -- A confirmed theft whose culprit(s) are not known yet: "under investigation" until a seller attaches them
 -- (or closes the investigation without a name).
 alter table public.missing_reports add column if not exists investigating boolean not null default false;
+-- A cleared theft (planes re-listed) whose warnings a seller or admin then removed from the culprits' record.
+alter table public.missing_reports add column if not exists record_cleared_at      timestamptz;
+alter table public.missing_reports add column if not exists record_cleared_by      uuid references public.accounts(id) on delete set null;
+alter table public.missing_reports add column if not exists record_cleared_by_name text;
 
 -- The people who took the planes in a confirmed theft (there can be several), each with the automatic
 -- warning they were sent. Sellers only: buyers never learn who it was.

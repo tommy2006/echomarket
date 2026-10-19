@@ -24,6 +24,8 @@
 //                                      investigation (also with no names: "culprit could not be identified").
 //   missing-clear { reportId, note, verified }  clear a confirmed theft: the warned culprit(s) re-listed the
 //                                      planes for the buyer (checked in-game). Logged; buyer and culprits are DMed.
+//   missing-record-clear { reportId }  after that: remove the theft warnings from the culprits' disciplinary
+//                                      record. Sellers on the order and admins. Logged; culprits are DMed.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
 //   delete    {}                       admins only — removes the order completely
@@ -574,6 +576,48 @@ Answer on Echo Market (Orders).`,
                 });
             }
             return res.json({ ok: true, order, report: cleared[0], logged, culpritTold: dmed.some((d) => d === 'sent') });
+        }
+
+        case 'missing-record-clear': {
+            // The culprits re-listed the planes (report CLEARED): take the theft warnings off their record.
+            const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
+            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can change the culprits\' record.');
+            const { data: report } = await db.from('missing_reports').select('*')
+                .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
+            if (!report) throw new HttpError(404, 'Report not found.');
+            if (!('record_cleared_at' in report)) throw new HttpError(503, 'This needs a database update: an admin must re-run supabase/schema.sql.');
+            if (report.status !== 'CLEARED') throw new HttpError(409, 'Only after the planes were re-listed (Clear theft).');
+            if (report.record_cleared_at) throw new HttpError(409, `${report.record_cleared_by_name || 'Someone'} already removed it from the record.`);
+            // Mark it first (only once, even if two people press at the same moment).
+            const { data: marked } = await db.from('missing_reports').update({
+                record_cleared_at: new Date().toISOString(), record_cleared_by: account.id, record_cleared_by_name: accountName(account)
+            }).eq('id', report.id).is('record_cleared_at', null).select();
+            if (!marked?.length) throw new HttpError(409, 'Someone removed it from the record just now.');
+            const { data: rows } = await db.from('missing_report_culprits').select('discord_id, warning_id').eq('report_id', report.id);
+            const warningIds = [...new Set([...(rows || []).map((c) => c.warning_id), report.warning_id].filter(Boolean))];
+            let people = (rows || []).map((c) => c.discord_id);
+            if (!people.length && report.warning_id) {   // older single-culprit report
+                const { data: w } = await db.from('market_messages').select('discord_id').eq('id', report.warning_id).maybeSingle();
+                if (w?.discord_id) people = [w.discord_id];
+            }
+            const { data: removed } = warningIds.length
+                ? await db.from('market_messages').delete().in('id', warningIds).eq('kind', 'warning').select('id') : { data: [] };
+            const logged = await logModeration({
+                title: `🧹 Theft removed from the record · ${plain(ref)}`, color: EMBED_COLORS.fulfilled,
+                fields: [
+                    { name: people.length > 1 ? 'Culprits' : 'Culprit', value: people.map((id) => `<@${id}>`).join(' ').slice(0, 1000) || 'unknown', inline: true },
+                    { name: 'By', value: md(accountName(account)), inline: true },
+                    { name: 'Warnings removed', value: String(removed?.length || 0), inline: true },
+                    { name: 'Why', value: 'The planes were re-listed for the buyer (theft cleared).' }
+                ]
+            });
+            for (const id of people) {
+                await dmDiscordUser(id, {
+                    title: `✅ Echo Market: warning removed (${ref})`, color: EMBED_COLORS.progress,
+                    description: 'You re-listed the planes for their buyer, so the warning for this case was removed from your disciplinary record. Only buy planes you ordered.'
+                });
+            }
+            return res.json({ ok: true, order, report: marked[0], removed: removed?.length || 0, logged });
         }
 
         case 'flag': {

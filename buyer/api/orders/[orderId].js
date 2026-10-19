@@ -6,7 +6,7 @@
 //   { action: 'report-missing', details }  planes listed in-game were bought by someone else (free text)
 import {
     admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, orderRef, accountName,
-    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, EMBED_COLORS, sharesLines, missingReportRecipients, HttpError
+    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, EMBED_COLORS, deliveryShares, shareText, missingReportRecipients, HttpError
 } from '../../lib/server.js';
 
 export const CONTACT_AFTER_HOURS = 24;
@@ -70,14 +70,26 @@ export default handler(['POST'], async (req, res) => {
         if (error) throw error;
         const ref = orderRef(order);
         await addEvent(order, 'MISSING', account, { message: `Missing planes reported: ${details}` });
-        const listed = sharesLines(order, 1);
+        // Every seller on the order with their Discord username (and a mention to open their profile), and what they listed.
+        const shares = deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0);
+        const sellerIds = shares.map((sh) => sh.sellerId).filter(Boolean);
+        const { data: people } = sellerIds.length
+            ? await db.from('accounts').select('id, discord_id, discord_username, display_name').in('id', sellerIds) : { data: [] };
+        const byId = Object.fromEntries((people || []).map((p) => [p.id, p]));
+        const listed = shares.map((sh) => {
+            const p = byId[sh.sellerId];
+            const who = p?.discord_username ? `@${md(p.discord_username)}` : md(sh.name || 'seller');
+            const mention = /^\d+$/.test(p?.discord_id || '') ? ` <@${p.discord_id}>` : '';
+            const role = sh.role === 'earlier' ? ' _(earlier)_' : sh.role === 'helper' ? ' _(also delivering)_' : '';
+            return `**${md(sh.airline || sh.name)}** · ${who}${mention}${role}: ${shareText(order, sh)}`;
+        }).join('\n').slice(0, 1000);
         const recipients = await missingReportRecipients(order);
         const sent = await Promise.all(recipients.map((r) => sendDM({ ...r, dm_enabled: true }, {
             title: `🚨 Missing planes reported · ${ref}`,
             color: EMBED_COLORS.declined,
             description: `**${md(accountName(account))}** (${md(order.airline_name)}) says aircraft listed for them in-game were bought by someone else before they could take them:\n> ${md(details).slice(0, 1200)}\n\nCheck in-game who bought them, then mark the report on the seller desk: **Theft confirmed** (logged, and the culprit can get an automatic warning) or **Not a theft**.`,
             url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined,
-            fields: listed ? [{ name: 'Listed by each seller', value: listed }] : []
+            fields: listed ? [{ name: 'Sellers on this order (Discord) · what they listed', value: listed }] : []
         })));
         return res.json({ ok: true, report, alerted: sent.filter((x) => x === 'sent').length });
     }

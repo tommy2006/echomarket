@@ -1185,7 +1185,10 @@ function ModerationView({ userId }) {
         const id = discordId.trim();
         if (!/^\d{5,25}$/.test(id)) return toast('Paste a Discord user ID (numbers only): right-click the user → Copy User ID.', 'error');
         const { data } = await sb.from('accounts').select('id, discord_id, display_name, discord_username').eq('discord_id', id).maybeSingle();
-        setTarget({ accountId: data?.id || null, discordId: id, name: data ? (data.display_name || data.discord_username) : `Discord user ${id}` });
+        const who = data ? null : await lookupDiscord(id);   // not on the market: ask Discord for the username
+        const username = data?.discord_username || (who?.found ? who.username : null);
+        const name = data?.display_name || who?.name || username || `Discord user ${id}`;
+        setTarget({ accountId: data?.id || null, discordId: id, name: username && name !== username ? `${name} (@${username})` : username ? `@${username}` : name });
     };
     return html`<section className="space-y-4">
         <div>
@@ -1199,6 +1202,7 @@ function ModerationView({ userId }) {
                 <input value=${discordId} onChange=${(e) => setDiscordId(e.target.value)} placeholder="Discord user ID, e.g. 526234727321960450" className="input font-mono" />
                 <${Button} icon="search" onClick=${lookUp}>Open<//>
             </div>
+            <${DiscordName} id=${discordId} min=${5} />
             <p className="text-[11px] text-slate-500">Or click a buyer's airline name on any order.</p>
         </div>
         ${target && html`<${Modal} open=${true} onClose=${() => setTarget(null)} size="sm" title=${target.name} subtitle=${`Discord ID ${target.discordId}`}>
@@ -1291,6 +1295,7 @@ function AlertListCard({ items, run }) {
         <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="eye" className="w-4 h-4" /> Alert list</p>
             <p className="text-xs text-slate-400 mt-0.5">Orders from these Discord accounts warn the sellers (seller desk and Discord): "be cautious and check with the admins". The reason is for admins and Lead Ambassadors only; the buyer is never told.</p></div>
         <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID, e.g. 123456789012345678" />
+        <${DiscordName} id=${id} />
         <input value=${reason} maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Reason, e.g. possible spy from a rival alliance" />
         <div className="flex justify-end"><${Button} size="sm" icon="eye" busy=${busy} disabled=${!idOk || !reason.trim()} onClick=${add}>Add to alert list<//></div>
         ${items.length > 0 && html`<ul className="space-y-2 pt-2 border-t border-slate-800">${items.map((w) => html`<li key=${w.id} className="flex gap-2 items-start">
@@ -1329,7 +1334,10 @@ function RewardsCard({ data, run }) {
             <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members · Tier 1 role or granted' : t === 2 ? 'big contribution / even more active · Tier 2 role or granted' : 'server boosters (automatic)'}</p>
         </div>`)}</div>
         <div className="grid sm:grid-cols-2 gap-2">
-            <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID (must be on the market)" />
+            <div className="space-y-1">
+                <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID (must be on the market)" />
+                <${DiscordName} id=${id} />
+            </div>
             <div className="grid grid-cols-2 gap-1.5">${[1, 2].map((t) => html`<button key=${t} type="button" onClick=${() => setTier(t)}
                 className=${`py-2 rounded-xl border text-xs font-bold ${tier === t ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</button>`)}</div>
         </div>
@@ -1734,12 +1742,28 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
             toast(`Theft cleared${r.logged ? ' and logged' : ''}. The buyer was told to buy the re-listed planes${r.culpritTold ? ', and the culprits were told the case is closed' : ''}.`, 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
-    const head = {
-        OPEN: ['text-rose-200 border-rose-500/40 bg-rose-500/[0.07]', 'shield-alert', 'Reported, needs checking'],
-        CONFIRMED: ['text-rose-200 border-rose-500/30 bg-slate-950', 'shield-x', 'Theft confirmed'],
-        NOT_THEFT: ['text-slate-200 border-slate-800 bg-slate-950', 'circle-check', 'Not a theft'],
-        CLEARED: ['text-emerald-200 border-emerald-500/30 bg-slate-950', 'shield-check', 'Theft cleared · planes re-listed']
-    }[report.status] || [];
+    // Red: not dealt with yet (or the thief is still unknown). Yellow: thief identified and warned, planes not
+    // re-listed yet (the warning stays on their record). Green: the thief re-listed the planes.
+    const RED = 'text-rose-200 border-rose-500/40 bg-rose-500/[0.07]', YELLOW = 'text-amber-100 border-amber-400/40 bg-amber-400/[0.07]';
+    const GREEN = 'text-emerald-200 border-emerald-500/40 bg-emerald-500/[0.07]', GREY = 'text-slate-200 border-slate-800 bg-slate-950';
+    const head = report.status === 'OPEN' ? [RED, 'shield-alert', 'Reported, needs checking']
+        : report.status === 'CONFIRMED' && named.length ? [YELLOW, 'user-x', 'Thief identified · planes not re-listed yet']
+        : report.status === 'CONFIRMED' && report.investigating ? [RED, 'shield-x', 'Theft confirmed · thief not identified yet']
+        : report.status === 'CONFIRMED' ? [GREY, 'shield-x', 'Theft confirmed · thief could not be identified']
+        : report.status === 'CLEARED' ? [GREEN, 'shield-check', 'Planes re-listed by the thief']
+        : [GREY, 'circle-check', 'Not a theft'];
+    // Green: take the warnings off the thieves' record (sellers on the order and admins).
+    const clearRecord = async () => {
+        const ok = await ask({ title: "Clear it from the thief's record?", confirmLabel: 'Clear from record',
+            message: `The theft warning${named.length > 1 ? 's' : ''} for this order will be removed from ${named.length > 1 ? 'the culprits\' records' : 'the culprit\'s record'}. They are told by DM, and it is logged. The report itself stays.` });
+        if (!ok) return;
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'missing-record-clear', reportId: report.id });
+            onDone?.(r.report); after();
+            toast(`Removed from the record (${plural(r.removed, 'warning')}).`, 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
     const theft = ['CONFIRMED', 'CLEARED'].includes(report.status);
     const confirmIdsOk = !known || idsValid(ids);
     return html`<div className=${`p-3 rounded-2xl border space-y-2 ${head[0]}`}>
@@ -1749,7 +1773,7 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
         <p className="text-sm text-slate-100">${report.buyer_name || 'Buyer'}: “${report.details}”</p>
         ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”</p>`}
         ${theft && html`<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5 space-y-1.5">
-            <p className="label text-slate-500">${named.length ? `Culprits (${named.length}) · warned` : 'Culprit'}</p>
+            <p className="label text-slate-500">${!named.length ? 'Culprit' : report.record_cleared_at ? `Culprits (${named.length}) · warning removed from record` : `Culprits (${named.length}) · warned`}</p>
             ${named.length ? html`<ul className="space-y-1">${named.map((c) => html`<li key=${c.id} className="text-xs text-slate-200 flex flex-wrap items-center gap-x-2">
                     <${Icon} name="user-x" className="w-3.5 h-3.5 text-rose-300" /><b>${c.name || 'Discord user'}</b>
                     <span className="font-mono text-slate-400">${c.discord_id}</span>
@@ -1757,7 +1781,13 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
                 </li>`)}</ul>`
             : html`<p className="text-xs text-slate-400">${report.investigating ? '🔍 Not identified yet. Found out who it was? Warn them below.' : 'Not identified (investigation closed).'}</p>`}
         </div>`}
+        ${report.status === 'CONFIRMED' && named.length > 0 && html`<p className="text-xs text-amber-100/90 flex items-center gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5" />The warning stays on the thief's record until the planes are re-listed for the buyer.</p>`}
         ${report.status === 'CLEARED' && html`<p className="text-xs text-emerald-200/90">${report.cleared_by_name}: “${report.cleared_note}” · ${timeAgo(report.cleared_at)}</p>`}
+        ${report.status === 'CLEARED' && report.record_cleared_at && html`<p className="text-xs text-emerald-200/90 flex items-center gap-1.5"><${Icon} name="eraser" className="w-3.5 h-3.5" />Removed from the thief's record by ${report.record_cleared_by_name || 'a seller'} · ${timeAgo(report.record_cleared_at)}</p>`}
+        ${report.status === 'CLEARED' && !report.record_cleared_at && named.length > 0 && canClose && !warning && html`<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-500/20">
+            <p className="text-xs text-emerald-100/80">The thief re-listed the planes. Their warning is still on record.</p>
+            <${Button} size="sm" variant="secondary" icon="eraser" busy=${busy} onClick=${clearRecord}>Clear from the thief's record<//>
+        </div>`}
 
         ${theft && !warning && !clearing && html`<div className="flex flex-wrap items-center gap-2 pt-1">
             <${Button} size="sm" variant="danger" icon="user-x" onClick=${() => setWarning(true)}>
@@ -1814,6 +1844,38 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
     </div>`;
 }
 
+// Who is this Discord ID? /api/lookup (Echo Market accounts first, then Discord). Cached for the visit.
+const lookupCache = new Map();
+function lookupDiscord(id) {
+    if (!lookupCache.has(id)) {
+        lookupCache.set(id, api('/api/lookup', { discordId: id }).catch((err) => { lookupCache.delete(id); return { error: err.message }; }));
+    }
+    return lookupCache.get(id);
+}
+// The line under a Discord ID box: the person's avatar, @username and name, or "no Discord user with this ID".
+function DiscordName({ id, min = 17 }) {
+    const clean = String(id || '').trim();
+    const valid = new RegExp(`^\\d{${min},25}$`).test(clean);
+    const [who, setWho] = useState(null);
+    useEffect(() => {
+        setWho(null);
+        if (!valid) return;
+        let live = true;
+        const t = setTimeout(() => lookupDiscord(clean).then((r) => { if (live) setWho(r); }), 350);
+        return () => { live = false; clearTimeout(t); };
+    }, [clean, valid]);
+    if (!valid) return null;
+    if (!who) return html`<p className="text-[11px] text-slate-500 flex items-center gap-2"><${Spinner} width=${12} /> Looking up this Discord ID…</p>`;
+    if (who.error) return html`<p className="text-[11px] text-slate-500">Couldn't look this ID up: ${who.error}</p>`;
+    if (who.found === false) return html`<p className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5"><${Icon} name="user-x" className="w-3.5 h-3.5" />No Discord user has this ID. Check it.</p>`;
+    if (who.found !== true) return html`<p className="text-[11px] text-slate-500">Discord couldn't be asked right now; the ID will still work.</p>`;
+    return html`<p className="text-[11px] text-emerald-200 flex items-center gap-2 min-w-0">
+        ${who.avatar ? html`<img src=${who.avatar} alt="" className="w-5 h-5 rounded-full shrink-0" />` : html`<${Icon} name="circle-user" className="w-4 h-4 shrink-0" />`}
+        <span className="truncate"><b className="text-white">@${who.username || 'unknown'}</b>${who.name && who.name !== who.username ? ` · ${who.name}` : ''}</span>
+        <span className="shrink-0 text-slate-500">${who.onMarket ? '· on Echo Market' : '· not on Echo Market yet'}</span>
+    </p>`;
+}
+
 // Discord user IDs typed into CulpritInputs.
 const cleanIds = (list) => [...new Set(list.map((x) => x.trim()).filter(Boolean))];
 const ID_RE = /^\d{17,20}$/;
@@ -1825,12 +1887,12 @@ function CulpritInputs({ ids, setIds }) {
     const set = (i, v) => setIds(ids.map((x, j) => (j === i ? v.replace(/[^\d]/g, '') : x)));
     return html`<div className="space-y-1.5">
         <p className="text-xs font-bold text-slate-400">Culprit Discord user IDs <span className="font-normal text-slate-500">(Discord: right-click the user → Copy User ID)</span></p>
-        ${ids.map((v, i) => html`<div key=${i} className="flex gap-1.5">
+        ${ids.map((v, i) => html`<div key=${i} className="space-y-1"><div className="flex gap-1.5">
             <input value=${v} onChange=${(e) => set(i, e.target.value)} inputMode="numeric" aria-label=${`Culprit ${i + 1} Discord user ID`}
                 className=${`input font-mono !py-2 ${!v.trim() || ID_RE.test(v.trim()) ? '' : '!border-rose-500'}`} placeholder=${`Culprit ${i + 1}, e.g. 123456789012345678`} />
             ${ids.length > 1 && html`<button type="button" onClick=${() => setIds(ids.filter((_, j) => j !== i))} title="Remove"
                 className="shrink-0 w-10 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 flex items-center justify-center"><${Icon} name="x" /></button>`}
-        </div>`)}
+        </div><${DiscordName} id=${v} /></div>`)}
         ${ids.length < MAX_CULPRITS && html`<button type="button" onClick=${() => setIds([...ids, ''])}
             className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1"><${Icon} name="user-plus" className="w-3.5 h-3.5" />Add another culprit</button>`}
     </div>`;

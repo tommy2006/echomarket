@@ -1490,7 +1490,10 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
 // =========================================================================
 const REPORT_LABEL = {
     OPEN: { text: 'Reported · the sellers are checking', cls: 'text-amber-200 border-amber-500/30 bg-amber-500/5', icon: 'search' },
-    CONFIRMED: { text: 'Theft confirmed', cls: 'text-rose-200 border-rose-500/30 bg-rose-500/5', icon: 'shield-alert' },
+    // Same colours as the seller desk: red while the thief is unknown, yellow once identified, green when re-listed.
+    CONFIRMED: { text: 'Theft confirmed · the thief was identified', cls: 'text-amber-100 border-amber-400/40 bg-amber-400/5', icon: 'shield-alert' },
+    INVESTIGATING: { text: 'Theft confirmed · finding out who took them', cls: 'text-rose-200 border-rose-500/30 bg-rose-500/5', icon: 'shield-alert' },
+    UNIDENTIFIED: { text: 'Theft confirmed', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'shield-alert' },
     NOT_THEFT: { text: 'Checked · not a theft', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'circle-check' },
     CLEARED: { text: 'Re-listed for you · buy them in-game', cls: 'text-emerald-200 border-emerald-500/30 bg-emerald-500/5', icon: 'shield-check' }
 };
@@ -1512,10 +1515,12 @@ function MissingPlanes({ order, reports, onReported }) {
     };
     return html`<div className="space-y-2">
         ${reports.map((r) => {
-            const l = REPORT_LABEL[r.status] || REPORT_LABEL.OPEN;
+            // warning_id: someone was identified and warned (the buyer never sees who).
+            const key = r.status !== 'CONFIRMED' ? r.status : r.investigating ? 'INVESTIGATING' : r.warning_id ? 'CONFIRMED' : 'UNIDENTIFIED';
+            const l = REPORT_LABEL[key] || REPORT_LABEL.OPEN;
             return html`<div key=${r.id} className=${`p-3 rounded-2xl border text-sm space-y-1 ${l.cls}`}>
                 <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />Missing planes · ${l.text}</p>
-                ${r.status === 'CONFIRMED' && r.investigating && html`<p className="text-xs">The sellers are still finding out who took them.</p>`}
+                ${key === 'CONFIRMED' && html`<p className="text-xs">The sellers will ask them to re-list your planes. You'll be told when they're back on the market.</p>`}
                 <p className="text-xs opacity-80">You wrote: “${r.details}” · ${timeAgo(r.created_at)}</p>
                 ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || 'Seller'}: “${r.resolution_note}”</p>`}
                 ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || 'Seller'}: “${r.cleared_note}”</p>`}
