@@ -8,7 +8,7 @@ self.addEventListener('push', (event) => {
     try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data && event.data.text() }; }
     event.waitUntil(self.registration.showNotification(data.title || 'Echo Market', {
         body: data.body || '',
-        icon: '/echo_logo.png',
+        icon: '/icons/icon-192.png',
         badge: '/echo_logo.png',
         tag: data.tag || undefined,          // same tag = replaces instead of stacking
         data: { url: data.url || '/#orders' }
