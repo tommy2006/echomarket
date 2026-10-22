@@ -14,7 +14,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const LANGS = ['id', 'zh', 'ko', 'bn', 'hi'];
+const LANGS = ['id', 'zh', 'ko', 'bn', 'hi', 'vi', 'fil'];
 const OUT = join(ROOT, 'shared', 'js', 'i18n');
 const check = process.argv.includes('--check');
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');

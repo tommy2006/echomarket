@@ -19,9 +19,11 @@ export const LANGS = [
     { code: 'zh', label: '中文', name: '简体中文' },
     { code: 'ko', label: '한국어', name: '한국어' },
     { code: 'bn', label: 'বাংলা', name: 'বাংলা' },
-    { code: 'hi', label: 'हिन्दी', name: 'हिन्दी' }
+    { code: 'hi', label: 'हिन्दी', name: 'हिन्दी' },
+    { code: 'vi', label: 'VI', name: 'Tiếng Việt' },
+    { code: 'fil', label: 'FIL', name: 'Filipino' }
 ];
-// Noto fonts for scripts the Latin fonts don't have, loaded only with their language (fallbacks after ours).
+// Noto fonts for scripts the Latin fonts don't have (ours cover Vietnamese and Filipino), loaded only with their language (fallbacks after ours).
 const FONTS = {
     zh: 'Noto+Sans+SC:wght@400;500;700;900',
     ko: 'Noto+Sans+KR:wght@400;500;700;900',

@@ -1056,7 +1056,7 @@
   "{n} line": "{n} baris",
   "{n} min ago": "{n} menit lalu",
   "{n} model": "{n} model",
-  "{n} models. The {priceLevel} is the % of the in-game list price you offer: a seller sells you the aircraft in-game at that price. Lower is cheaper, but sellers might be slower to accept it.": "{n} model. {priceLevel} adalah persentase harga daftar di dalam game yang kamu tawarkan: penjual menjual pesawat kepadamu di dalam game dengan harga itu. Makin rendah makin murah, tapi penjual mungkin lebih lambat menerimanya.",
+  "{n} models. The {priceLevel} is the % of the in-game list price you offer: a seller sells you the aircraft in-game at that price. Lower is cheaper, but sellers might be slower to accept it.": "{n} model. Kamu memilih {priceLevel}: persentase dari harga daftar di dalam game yang kamu tawarkan, dan penjual menjual pesawat kepadamu di dalam game dengan harga itu. Makin rendah makin murah, tapi penjual mungkin lebih lambat menerimanya.",
   "{n} of 3 not right yet. Reread, then try all three again.": "{n} dari 3 belum benar. Baca ulang, lalu coba ketiganya lagi.",
   "{n} of {max} used": "{n} dari {max} terpakai",
   "{n} order": "{n} pesanan",
