@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync": "node scripts/build-icons.mjs && node scripts/sync-shared.mjs && node scripts/build-css.mjs",
-    "check": "node scripts/build-icons.mjs --check && node scripts/sync-shared.mjs --check && node scripts/build-css.mjs --check",
+    "sync": "node scripts/build-icons.mjs && node scripts/build-i18n.mjs && node scripts/sync-shared.mjs && node scripts/build-css.mjs",
+    "check": "node scripts/build-icons.mjs --check && node scripts/build-i18n.mjs --check && node scripts/sync-shared.mjs --check && node scripts/build-css.mjs --check",
     "check-db": "node scripts/check-supabase.mjs"
   },
   "devDependencies": {

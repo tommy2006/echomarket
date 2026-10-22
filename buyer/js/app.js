@@ -8,7 +8,8 @@ import {
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, EchoLoader, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
     pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor,
-    orderAirlines, airlineNames, orderAlliances, deliverableTo, orderHelpers, deliveryShares, SellerShares, GuidedTour
+    orderAirlines, airlineNames, orderAlliances, deliverableTo, orderHelpers, deliveryShares, SellerShares, GuidedTour,
+    t, tj, tx, useLang, LanguageMenu, greetingLine, setLang, savedLang
 } from './ui.js';
 
 // Keep in sync with lib/pricing.js (the server re-checks everything).
@@ -38,12 +39,8 @@ const MARKET_RULES = [
     'Refrain from having a full-on conversation within the tickets.'
 ];
 
-const VIEWS = [
-    { id: 'home', label: 'Home', icon: 'house' },
-    { id: 'shop', label: 'Shop', icon: 'plane' },
-    { id: 'orders', label: 'Orders', icon: 'package' },
-    { id: 'airlines', label: 'Airlines', icon: 'building-2' }
-];
+const navItem = (id, label, icon) => ({ id, icon, get label() { return t(label); } });
+const VIEWS = [navItem('home', 'Home', 'house'), navItem('shop', 'Shop', 'plane'), navItem('orders', 'Orders', 'package'), navItem('airlines', 'Airlines', 'building-2')];
 const viewFromHash = () => {
     const h = window.location.hash.replace('#', '').split('/')[0];
     return VIEWS.some((v) => v.id === h) ? h : 'home';
@@ -70,6 +67,7 @@ const refFor = (orderId) => (SERIALS[orderId] ? `#${SERIALS[orderId]}` : orderId
 
 // =========================================================================
 function App() {
+    useLang();   // re-render everything when the language changes
     const [authReady, setAuthReady] = useState(false);
     const [session, setSession] = useState(null);
     const [account, setAccount] = useState(null);
@@ -110,7 +108,7 @@ function App() {
         // Service worker for phone / browser alerts (also needed to show alerts on Android).
         try { navigator.serviceWorker?.register('/sw.js').catch(() => {}); } catch { /* unsupported */ }
         fetch('aircraft_pricelist.json').then((r) => r.json()).then(setPricelist)
-            .catch(() => toast('Could not load the aircraft catalog. Refresh the page.', 'error'));
+            .catch(() => toast(t('Could not load the aircraft catalog. Refresh the page.'), 'error'));
         if (window.location.hash === '#home') history.replaceState(null, '', homeUrl());
         const onHash = () => {
             if (window.location.hash === '#home') history.replaceState(null, '', homeUrl());
@@ -143,7 +141,7 @@ function App() {
             sb.from('missing_reports').select('*').eq('buyer_id', userId).order('created_at').limit(200)
         ]);
         const failed = [acc, air, all, ord, ev].find((r) => r.error);
-        if (failed) toast('Could not load your data: ' + failed.error.message, 'error');
+        if (failed) toast(t('Could not load your data: {msg}', { msg: failed.error.message }), 'error');
         setAccount(acc.data || null);
         setIsSeller(Boolean(sel.data?.active));
         setAirlines(air.data || []);
@@ -178,7 +176,7 @@ function App() {
                 if (ev.actor_id !== userId) {
                     const text = describeEvent(ev);
                     toast(text, ev.kind === 'DECLINED' ? 'error' : 'success');
-                    notifyBrowser(`Order ${refFor(ev.order_id)}`, text, ev.order_id);
+                    notifyBrowser(t('Order {ref}', { ref: refFor(ev.order_id) }), text, ev.order_id);
                 }
             })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'market_messages', filter: `account_id=eq.${userId}` }, (p) => {
@@ -199,7 +197,7 @@ function App() {
                 if (p.new.from_role === 'seller') {
                     const text = describeEvent(asInboxItem.order(p.new));
                     toast(text, 'info');
-                    notifyBrowser(`Order ${refFor(p.new.order_id)}`, text, 'om' + p.new.id);
+                    notifyBrowser(t('Order {ref}', { ref: refFor(p.new.order_id) }), text, 'om' + p.new.id);
                 }
             })
             .subscribe();
@@ -263,7 +261,7 @@ function App() {
     // ---------------- actions
     const requireAirline = () => {
         if (!session) { signInWithDiscord(); return false; }
-        if (!airlines.length) { setAirlineForm({}); toast('Create an airline profile first — orders are placed for an airline.'); return false; }
+        if (!airlines.length) { setAirlineForm({}); toast(t('Create an airline profile first — orders are placed for an airline.')); return false; }
         return true;
     };
     const addToCart = (line) => {
@@ -274,7 +272,7 @@ function App() {
             next[i] = { ...next[i], qty: Math.min(MAX_QTY, next[i].qty + line.qty) };
             return next;
         });
-        toast(`Added ${line.qty}× ${line.model} to your order.`, 'success');
+        toast(t('Added {n}× {model} to your order.', { n: line.qty, model: line.model }), 'success');
     };
     const markNotificationsSeen = async () => {
         const now = new Date().toISOString();
@@ -341,7 +339,7 @@ function App() {
                 setCart([]); setCartOpen(false);
                 setOrders((list) => [order, ...list.filter((o) => o.id !== order.id)]);
                 setHighlightOrder(order.id); go('orders'); loadAll();
-                toast(`Order ${orderRef(order)} sent! Sellers have been notified — you'll see here when one takes it.`, 'success');
+                toast(t("Order {ref} sent! Sellers have been notified — you'll see here when one takes it.", { ref: orderRef(order) }), 'success');
                 if (isSeaNight(order.created_at)) setNightNotice(true);
             }} />
 
@@ -355,25 +353,25 @@ function App() {
                 setAirlines((list) => isNew ? [...list, a] : list.map((x) => (x.id === a.id ? a : x)));
                 if (isNew && airlines.length === 0) setDefaultAirlineId(a.id);
                 setAirlineForm(null);
-                toast(isNew ? `${a.name} is ready. Now pick some aircraft!` : `${a.name} updated.`, 'success');
+                toast(isNew ? t('{name} is ready. Now pick some aircraft!', { name: a.name }) : t('{name} updated.', { name: a.name }), 'success');
                 if (isNew && airlines.length === 0) go('shop');
             }} />
 
         ${rulesOpen && html`<${RulesModal} first=${rulesFirst} onClose=${closeRules} />`}
         ${celebrate && html`<${BudgetCelebration} budget=${standing.budget} name=${account?.display_name || account?.discord_username || ''}
             onClose=${() => { setCelebrated(true); api('/api/me', { action: 'budget-seen', key: standing.budget.key }).catch(() => {}); }} />`}
-        ${nightNotice && html`<${Modal} open=${true} onClose=${() => setNightNotice(false)} title="🌙 Your order is in, expect a wait" size="sm"
-            footer=${html`<${Button} onClick=${() => setNightNotice(false)}>Got it<//>`}>
-            <p className="text-sm text-slate-200 leading-relaxed">${SEA_NIGHT_TEXT}</p>
+        ${nightNotice && html`<${Modal} open=${true} onClose=${() => setNightNotice(false)} title=${t('🌙 Your order is in, expect a wait')} size="sm"
+            footer=${html`<${Button} onClick=${() => setNightNotice(false)}>${t('Got it')}<//>`}>
+            <p className="text-sm text-slate-200 leading-relaxed">${t(SEA_NIGHT_TEXT)}</p>
         <//>`}
         ${nextAnnouncement && html`<${Modal} open=${true} onClose=${() => seeAnnouncement(nextAnnouncement.id)} size="sm"
-            title=${nextAnnouncement.title || '📣 Notice from the Market Admins'} subtitle=${`${nextAnnouncement.created_by_name || 'Market Admins'} · ${timeAgo(nextAnnouncement.created_at)}`}
-            footer=${html`<${Button} onClick=${() => seeAnnouncement(nextAnnouncement.id)}>Got it<//>`}>
+            title=${nextAnnouncement.title || t('📣 Notice from the Market Admins')} subtitle=${`${nextAnnouncement.created_by_name || t('Market Admins')} · ${timeAgo(nextAnnouncement.created_at)}`}
+            footer=${html`<${Button} onClick=${() => seeAnnouncement(nextAnnouncement.id)}>${t('Got it')}<//>`}>
             <p className="text-sm text-slate-200 whitespace-pre-line break-words leading-relaxed">${nextAnnouncement.body}</p>
         <//>`}
 
-        ${tourOpen && html`<${GuidedTour} steps=${TOUR_STEPS} label="Echo Market tour" name=${account?.display_name || account?.discord_username || ''}
-            finishLabel=${airlines.length ? 'Done' : 'Create my airline'} finishIcon=${airlines.length ? 'check' : 'plus'}
+        ${tourOpen && html`<${GuidedTour} steps=${TOUR_STEPS} label=${t('Echo Market tour')} name=${account?.display_name || account?.discord_username || ''}
+            finishLabel=${airlines.length ? t('Done') : t('Create my airline')} finishIcon=${airlines.length ? 'check' : 'plus'}
             onDone=${(finished) => { endTour(); if (finished && !airlines.length) { go('airlines'); setAirlineForm({}); } }} />`}
 
         <${Toasts} />
@@ -384,18 +382,19 @@ function App() {
 // =========================================================================
 //  First-time walkthrough: spotlights the real buttons, one short step each.
 // =========================================================================
+// Step texts are English keys: GuidedTour shows them in the chosen language (tx).
 const TOUR_STEPS = [
-    { target: null, icon: 'plane-takeoff', title: (n) => `Welcome to Echo Market${n ? `, ${n}` : ''}!`,
+    { target: null, icon: 'plane-takeoff', title: (n) => (n ? t('Welcome to Echo Market, {name}!', { name: n }) : t('Welcome to Echo Market!')),
       text: 'A 30-second tour of how ordering works. You can skip it any time.' },
-    { target: 'airlines', icon: 'building-2', title: () => '1 · Create your airline',
+    { target: 'airlines', icon: 'building-2', title: () => t('1 · Create your airline'),
       text: 'Orders are placed on behalf of an airline. Make one here (up to 20), each with its alliance.' },
-    { target: 'shop', icon: 'plane', title: () => '2 · Pick aircraft',
+    { target: 'shop', icon: 'plane', title: () => t('2 · Pick aircraft'),
       text: 'Choose a model, how many, and a price level: the % of the in-game list price you pay.' },
-    { target: 'cart', icon: 'shopping-cart', title: () => '3 · Review and send',
+    { target: 'cart', icon: 'shopping-cart', title: () => t('3 · Review and send'),
       text: 'Your picks collect here. Pick which of your airlines can receive them (one or more), then send the order.' },
-    { target: 'bell', icon: 'bell', title: () => '4 · Follow your order',
+    { target: 'bell', icon: 'bell', title: () => t('4 · Follow your order'),
       text: "A seller takes it and sells you the aircraft in-game. Updates land here; turn on Discord DMs to get them even when you're away." },
-    { target: 'rules', icon: 'scroll-text', title: () => '5 · Market rules',
+    { target: 'rules', icon: 'scroll-text', title: () => t('5 · Market rules'),
       text: 'The alliance market rules are always one tap away, right here.' }
 ];
 
@@ -407,15 +406,17 @@ function BudgetCelebration({ budget, name, onClose }) {
     const booster = budget.source === 'booster';
     const until = budget.expiresAt ? new Date(budget.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : null;
     return html`<${Fireworks} />
-        <${Modal} open=${true} onClose=${onClose} size="sm" title=${booster ? '💜 Thank you for boosting!' : '🎉 Thank you!'}
-            footer=${html`<${Button} icon="heart" onClick=${onClose}>You're welcome<//>`}>
+        <${Modal} open=${true} onClose=${onClose} size="sm" title=${booster ? t('💜 Thank you for boosting!') : t('🎉 Thank you!')}
+            footer=${html`<${Button} icon="heart" onClick=${onClose}>${t("You're welcome")}<//>`}>
             <div className="text-center space-y-3">
-                <p className="label text-sky-300">${booster ? 'Server booster' : budget.source === 'role' ? `Role reward · Tier ${budget.tier}` : `Reward · Tier ${budget.tier}`}</p>
-                <p className="text-4xl font-black text-white tracking-tight">${usdB(budget.limit)}<span className="text-base font-bold text-slate-400"> daily budget</span></p>
+                <p className="label text-sky-300">${booster ? t('Server booster') : budget.source === 'role' ? t('Role reward · Tier {n}', { n: budget.tier }) : t('Reward · Tier {n}', { n: budget.tier })}</p>
+                <p className="text-4xl font-black text-white tracking-tight">${usdB(budget.limit)}<span className="text-base font-bold text-slate-400"> ${t('daily budget')}</span></p>
                 <p className="text-sm text-slate-200 leading-relaxed">${booster
-                    ? `${name ? name + ', thank' : 'Thank'} you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is ${usdB(budget.limit)} instead of ${usdB(10e9)} for as long as you boost.`
-                    : `${name ? name + ', thank' : 'Thank'} you for your active dedication to our Echo Alliances community! As a thank-you, your daily market budget has been raised to ${usdB(budget.limit)} (normally ${usdB(10e9)}).`}</p>
-                ${!booster && html`<p className="text-xs text-slate-400">${budget.source === 'role' ? 'Comes with your Discord role: it applies for as long as you have it.' : until ? `Valid until ${until}.` : 'No end date.'}</p>`}
+                    ? (name ? t('{name}, thank you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is {limit} instead of {normal} for as long as you boost.', { name, limit: usdB(budget.limit), normal: usdB(10e9) })
+                        : t('Thank you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is {limit} instead of {normal} for as long as you boost.', { limit: usdB(budget.limit), normal: usdB(10e9) }))
+                    : (name ? t('{name}, thank you for your active dedication to our Echo Alliances community! As a thank-you, your daily market budget has been raised to {limit} (normally {normal}).', { name, limit: usdB(budget.limit), normal: usdB(10e9) })
+                        : t('Thank you for your active dedication to our Echo Alliances community! As a thank-you, your daily market budget has been raised to {limit} (normally {normal}).', { limit: usdB(budget.limit), normal: usdB(10e9) }))}</p>
+                ${!booster && html`<p className="text-xs text-slate-400">${budget.source === 'role' ? t('Comes with your Discord role: it applies for as long as you have it.') : until ? t('Valid until {date}.', { date: until }) : t('No end date.')}</p>`}
             </div>
         <//>`;
 }
@@ -461,17 +462,27 @@ function Fireworks() {
 
 // The market rules. First sign-in: must be acknowledged; afterwards opened from the 📜 button or the account menu.
 function RulesModal({ first, onClose }) {
-    return html`<${Modal} open=${true} onClose=${onClose} title="Echo Market rules" size="sm"
-        subtitle=${first ? 'Please read these before you order.' : 'The alliance market rules.'}
-        footer=${html`<${Button} icon=${first ? 'check' : null} onClick=${onClose}>${first ? 'I understand' : 'Close'}<//>`}>
-        <ol className="space-y-3">
+    // The rules themselves stay in English (the official wording); a translated note says so.
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Echo Market rules')} size="sm"
+        subtitle=${first ? t('Please read these before you order.') : t('The alliance market rules.')}
+        footer=${html`<${LanguageMenu} packs=${['app']} up=${true} className="mr-auto" />
+            <${Button} icon=${first ? 'check' : null} onClick=${onClose}>${first ? t('I understand') : t('Close')}<//>`}>
+        ${currentLangNote()}
+        <ol className="space-y-3" lang="en">
             ${MARKET_RULES.map((rule, i) => html`<li key=${i} className="flex gap-3 text-sm text-slate-200 leading-relaxed">
                 <span className="w-6 h-6 shrink-0 rounded-full bg-sky-400/15 text-sky-300 text-xs font-black flex items-center justify-center">${i + 1}</span>
                 <span>${rule}</span>
             </li>`)}
         </ol>
-        <p className="text-xs text-slate-500 mt-4">Breaking the rules can lead to a warning or a market ban.</p>
+        <p className="text-xs text-slate-500 mt-4">${t('Breaking the rules can lead to a warning or a market ban.')}</p>
     <//>`;
+}
+
+// "The market rules are in English (the official version)." in the chosen language; nothing in English.
+function currentLangNote() {
+    const note = t('The market rules are shown in English: that is the official wording.');
+    return note === 'The market rules are shown in English: that is the official wording.' ? null
+        : html`<p className="text-xs text-sky-300 mb-3 flex gap-1.5"><${Icon} name="languages" className="w-3.5 h-3.5 mt-px shrink-0" />${note}</p>`;
 }
 
 function describeEvent(ev) {
@@ -481,27 +492,27 @@ function describeEvent(ev) {
 // Admin messages and seller replies, shaped like order events for the inbox.
 const asInboxItem = {
     market: (m) => ({ id: 'mm' + m.id, created_at: m.created_at, kind: m.kind === 'warning' ? 'ADMIN_WARNING' : 'ADMIN_INFO',
-        order_id: null, actor_id: null, actor_name: m.sent_by_name || 'Market Admins', message: m.body }),
+        order_id: null, actor_id: null, actor_name: m.sent_by_name || t('Market Admins'), message: m.body }),
     order: (m) => ({ id: 'om' + m.id, created_at: m.created_at, kind: 'SELLER_MESSAGE', order_id: m.order_id,
-        actor_id: m.author_id, actor_name: `${m.author_name} · seller team`, message: m.body })
+        actor_id: m.author_id, actor_name: `${m.author_name} · ${t('seller team')}`, message: m.body })
 };
 function describe(ev) {
     switch (ev.kind) {
-        case 'ADMIN_WARNING': return `⚠️ Warning from the Market Admins: ${ev.message}`;
-        case 'ADMIN_INFO': return `📣 Message from the Market Admins: ${ev.message}`;
-        case 'SELLER_MESSAGE': return `${ev.order_id}: the seller team wrote "${ev.message}"`;
-        case 'CLAIMED': return `${ev.order_id}: ${ev.message || 'A seller took your order.'}`;
-        case 'RELEASED': return /stopped delivering/.test(ev.message || '') ? `${ev.order_id}: ${ev.message}` : `${ev.order_id}: the seller released it — waiting for another seller.`;
-        case 'HANDOFF': return `${ev.order_id}: ${ev.message || 'the seller passed on the rest — waiting for a new seller.'}`;
-        case 'PROGRESS': return `${ev.order_id}: ${ev.filled} delivered. ${ev.message || ''}`.trim();
-        case 'FULFILLED': return `${ev.order_id} is fully delivered! ${ev.message || ''}`.trim();
-        case 'DECLINED': return `${ev.order_id} was declined: ${ev.message || ''}`;
-        case 'NOTE': return `${ev.order_id}: new note from the seller — "${ev.message}"`;
-        case 'CANCELLED': return `${ev.order_id} was cancelled.`;
-        case 'RENAMED': return `${ev.order_id}: ${ev.message}`;
-        case 'JOINED': return `${ev.order_id}: ${ev.message}`;
-        case 'MISSING': return `${ev.order_id}: ${ev.message}`;
-        default: return `${ev.order_id}: ${ev.message || 'updated'}`;
+        case 'ADMIN_WARNING': return t('⚠️ Warning from the Market Admins: {message}', { message: ev.message });
+        case 'ADMIN_INFO': return t('📣 Message from the Market Admins: {message}', { message: ev.message });
+        case 'SELLER_MESSAGE': return t('{ref}: the seller team wrote "{message}"', { ref: ev.order_id, message: ev.message });
+        case 'CLAIMED': return `${ev.order_id}: ${ev.message ? tx(ev.message) : t('A seller took your order.')}`;
+        case 'RELEASED': return /stopped delivering/.test(ev.message || '') ? `${ev.order_id}: ${tx(ev.message)}` : t('{ref}: the seller released it — waiting for another seller.', { ref: ev.order_id });
+        case 'HANDOFF': return `${ev.order_id}: ${ev.message ? tx(ev.message) : t('the seller passed on the rest — waiting for a new seller.')}`;
+        case 'PROGRESS': return `${t('{ref}: {n} delivered.', { ref: ev.order_id, n: ev.filled })} ${tx(ev.message || '')}`.trim();
+        case 'FULFILLED': return `${t('{ref} is fully delivered!', { ref: ev.order_id })} ${tx(ev.message || '')}`.trim();
+        case 'DECLINED': return t('{ref} was declined: {reason}', { ref: ev.order_id, reason: ev.message || '' });
+        case 'NOTE': return t('{ref}: new note from the seller — "{message}"', { ref: ev.order_id, message: ev.message });
+        case 'CANCELLED': return t('{ref} was cancelled.', { ref: ev.order_id });
+        case 'RENAMED': return `${ev.order_id}: ${tx(ev.message)}`;
+        case 'JOINED': return `${ev.order_id}: ${tx(ev.message)}`;
+        case 'MISSING': return `${ev.order_id}: ${tx(ev.message)}`;
+        default: return `${ev.order_id}: ${ev.message ? tx(ev.message) : t('updated')}`;
     }
 }
 
@@ -538,38 +549,39 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                 </a>`)}
             </nav>
             <div className="flex-1"></div>
-            <button onClick=${onRules} className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-400 hover:text-slate-200" aria-label="Market rules" title="Market rules" data-tour="rules">
+            <${LanguageMenu} packs=${['app']} />
+            <button onClick=${onRules} className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-400 hover:text-slate-200" aria-label=${t('Market rules')} title=${t('Market rules')} data-tour="rules">
                 <${Icon} name="scroll-text" className="w-[18px] h-[18px]" />
             </button>
             ${session ? html`
-                <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Open your order" data-tour="cart">
+                <button onClick=${onCart} className="hidden md:flex relative items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label=${t('Open your order')} data-tour="cart">
                     <${Icon} name="shopping-cart" className="w-5 h-5" />
                     ${cartCount > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-sky-400 text-slate-950 text-[10px] font-black flex items-center justify-center">${cartCount}</span>`}
                 </button>
-                <button onClick=${onBell} className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label="Notifications" data-tour="bell">
+                <button onClick=${onBell} className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 text-slate-300" aria-label=${t('Notifications')} data-tour="bell">
                     <${Icon} name="bell" className="w-5 h-5" />
                     ${unread > 0 && html`<span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">${unread}</span>`}
                 </button>
                 <div className="relative" ref=${menuRef}>
-                    <button onClick=${() => setMenu(!menu)} aria-label="Account menu" aria-expanded=${menu} className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
+                    <button onClick=${() => setMenu(!menu)} aria-label=${t('Account menu')} aria-expanded=${menu} className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
                         <${Avatar} account=${account} />
                         <${Icon} name="chevron-down" className="w-4 h-4 text-slate-500" />
                     </button>
                     ${menu && html`<div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50" onClick=${() => setMenu(false)}>
                         <div className="px-3 py-2.5 border-b border-slate-800 mb-1">
-                            <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || 'Signed in'}</p>
+                            <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || t('Signed in')}</p>
                             <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</p>
                         </div>
-                        <a href="#airlines" className="menu-item"><${Icon} name="building-2" /> My airlines</a>
-                        <a href="#orders" className="menu-item"><${Icon} name="package" /> My orders</a>
-                        <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
-                        <button onClick=${onRules} className="menu-item w-full"><${Icon} name="scroll-text" /> Market rules</button>
-                        <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> Welcome walkthrough</a>
-                        ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> Seller dashboard</a>`}
-                        <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
+                        <a href="#airlines" className="menu-item"><${Icon} name="building-2" /> ${t('My airlines')}</a>
+                        <a href="#orders" className="menu-item"><${Icon} name="package" /> ${t('My orders')}</a>
+                        <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
+                        <button onClick=${onRules} className="menu-item w-full"><${Icon} name="scroll-text" /> ${t('Market rules')}</button>
+                        <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Welcome walkthrough')}</a>
+                        ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> ${t('Seller dashboard')}</a>`}
+                        <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
                     </div>`}
                 </div>
-            ` : html`<${Button} variant="discord" size="md" onClick=${signInWithDiscord}><${DiscordLogo} className="w-4 h-4" /> Sign in<//>`}
+            ` : html`<${Button} variant="discord" size="md" onClick=${signInWithDiscord}><${DiscordLogo} className="w-4 h-4" /> ${t('Sign in')}<//>`}
         </div>
     </header>`;
 }
@@ -582,10 +594,10 @@ function BottomNav({ view, cartCount, activeCount, onCart }) {
                 ${v.id === 'orders' && activeCount > 0 && html`<span className="absolute -top-1 -right-2 w-4 h-4 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${activeCount}</span>`}
             </span>${v.label}
         </a>`)}
-        <button onClick=${onCart} className=${item(false)} aria-label="Buy: open your order" data-tour="cart">
+        <button onClick=${onCart} className=${item(false)} aria-label=${t('Buy: open your order')} data-tour="cart">
             <span className="relative"><${Icon} name="shopping-cart" className="w-5 h-5" />
                 ${cartCount > 0 && html`<span className="absolute -top-1 -right-2 min-w-4 h-4 px-0.5 rounded-full bg-sky-400 text-slate-950 text-[9px] flex items-center justify-center">${cartCount}</span>`}
-            </span>Buy
+            </span>${t('Buy')}
         </button>
     </nav>`;
 }
@@ -595,12 +607,12 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
     if (!session) {
         return html`<section className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 md:p-10">
             <p className="label text-sky-300">Echo UA Airliner Market</p>
-            <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white mt-3 leading-[1.05]">Order aircraft for your airline<br className="hidden md:block" /> <span className="text-slate-500">in three steps.</span></h1>
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white mt-3 leading-[1.05]">${t('Order aircraft for your airline')}<br className="hidden md:block" /> <span className="text-slate-500">${t('in three steps.')}</span></h1>
             <ol className="grid md:grid-cols-3 gap-3 mt-7">
                 ${[
-                    ['1', 'Sign in with Discord', 'One market account per Discord user. Everything is saved to it.'],
-                    ['2', 'Create your airline', 'Up to 20 airline profiles, each with its alliance.'],
-                    ['3', 'Pick aircraft & send', 'A seller takes your order and delivers in-game. You can follow every step here.']
+                    ['1', t('Sign in with Discord'), t('One market account per Discord user. Everything is saved to it.')],
+                    ['2', t('Create your airline'), t('Up to 20 airline profiles, each with its alliance.')],
+                    ['3', t('Pick aircraft & send'), t('A seller takes your order and delivers in-game. You can follow every step here.')]
                 ].map(([n, t, d]) => html`<li key=${n} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800">
                     <span className="w-7 h-7 rounded-full bg-slate-800 text-sky-300 text-sm font-black flex items-center justify-center">${n}</span>
                     <p className="font-bold text-white mt-3">${t}</p>
@@ -608,8 +620,8 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
                 </li>`)}
             </ol>
             <div className="mt-7 flex flex-wrap items-center gap-3">
-                <${Button} variant="discord" size="lg" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in with Discord<//>
-                <span className="text-xs text-slate-500">Browsing the catalog doesn't need an account.</span>
+                <${Button} variant="discord" size="lg" onClick=${signInWithDiscord}><${DiscordLogo} /> ${t('Sign in with Discord')}<//>
+                <span className="text-xs text-slate-500">${t("Browsing the catalog doesn't need an account.")}</span>
             </div>
         </section>`;
     }
@@ -617,22 +629,22 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 
     let step = null;
     if (!airlines.length) {
-        step = { n: 2, title: 'Create your first airline profile', text: 'Orders are placed on behalf of an airline. It takes 10 seconds.', action: html`<${Button} icon="plus" onClick=${onCreateAirline}>Create airline<//>` };
+        step = { n: 2, title: t('Create your first airline profile'), text: t('Orders are placed on behalf of an airline. It takes 10 seconds.'), action: html`<${Button} icon="plus" onClick=${onCreateAirline}>${t('Create airline')}<//>` };
     } else if (cart.length) {
-        step = { n: 3, title: `Review and send your order (${plural(cart.reduce((s, c) => s + c.qty, 0), 'aircraft')})`, text: 'Nothing is sent to sellers until you press "Send order".', action: html`<${Button} icon="arrow-right" onClick=${onOpenCart}>Review order<//>` };
+        step = { n: 3, title: t('Review and send your order ({count})', { count: plural(cart.reduce((s, c) => s + c.qty, 0), 'aircraft') }), text: t('Nothing is sent to sellers until you press "Send order".'), action: html`<${Button} icon="arrow-right" onClick=${onOpenCart}>${t('Review order')}<//>` };
     } else if (!orders.length && view !== 'shop') {
-        step = { n: 3, title: 'Pick aircraft from the catalog', text: 'Choose a model, quantity and price level, then send the order.', action: html`<${Button} icon="plane" onClick=${() => go('shop')}>Open catalog<//>` };
+        step = { n: 3, title: t('Pick aircraft from the catalog'), text: t('Choose a model, quantity and price level, then send the order.'), action: html`<${Button} icon="plane" onClick=${() => go('shop')}>${t('Open catalog')}<//>` };
     } else if (!orders.length) {
-        step = { n: 3, title: 'Pick aircraft below', text: 'Tap "Add" on any aircraft. When you are done, review and send your order.' };
+        step = { n: 3, title: t('Pick aircraft below'), text: t('Tap "Add" on any aircraft. When you are done, review and send your order.') };
     } else if (activeOrders.length && view !== 'orders' && view !== 'home') {
-        step = { n: null, title: `${plural(activeOrders.length, 'order')} in progress`, text: 'See which seller took them and how many aircraft were delivered.', action: html`<${Button} variant="secondary" icon="package" onClick=${() => go('orders')}>Track orders<//>` };
+        step = { n: null, title: t('{count} in progress', { count: plural(activeOrders.length, 'order') }), text: t('See which seller took them and how many aircraft were delivered.'), action: html`<${Button} variant="secondary" icon="package" onClick=${() => go('orders')}>${t('Track orders')}<//>` };
     }
     if (!step) return null;
 
     return html`<section className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 md:p-5 rounded-3xl border border-sky-500/25 bg-sky-500/[0.06]">
         <div className="flex items-start gap-3.5 flex-1 min-w-0">
             ${step.n ? html`<div className="shrink-0">
-                <p className="label text-sky-300">Step ${step.n} of 3</p>
+                <p className="label text-sky-300">${t('Step {n} of {total}', { n: step.n, total: 3 })}</p>
                 <div className="flex gap-1 mt-1.5">${[1, 2, 3].map((i) => html`<span key=${i} className=${`h-1.5 w-5 rounded-full ${i <= step.n ? 'bg-sky-400' : 'bg-slate-700'}`}></span>`)}</div>
             </div>` : html`<${Icon} name="radar" className="w-6 h-6 text-sky-300 mt-0.5" />`}
             <div className="min-w-0">
@@ -658,7 +670,7 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
         return html`<section className="space-y-4">
             ${guide}
             <div className="flex flex-wrap gap-2">
-                <${Button} variant="secondary" icon="plane" onClick=${() => go('shop')}>Browse the catalog<//>
+                <${Button} variant="secondary" icon="plane" onClick=${() => go('shop')}>${t('Browse the catalog')}<//>
             </div>
         </section>`;
     }
@@ -690,61 +702,61 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
             <div className="min-w-0">
                 <p className="label text-sky-300 flex items-center gap-2"><${Icon} name=${g.icon} className="w-4 h-4" />${date} · ${clock}</p>
-                <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
-                <p className="text-sm text-slate-400 mt-1">${!dataReady ? 'Loading your fleet…'
-                    : activeOrders.length ? `You have ${plural(activeOrders.length, 'order')} in progress.`
-                    : orders.length ? 'No orders in progress right now.' : 'Welcome to Echo Market.'}</p>
+                <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${greetingLine(g, name)}</h1>
+                <p className="text-sm text-slate-400 mt-1">${!dataReady ? t('Loading your fleet…')
+                    : activeOrders.length ? t('You have {count} in progress.', { count: plural(activeOrders.length, 'order') })
+                    : orders.length ? t('No orders in progress right now.') : t('Welcome to Echo Market.')}</p>
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
-                ${cartCount > 0 && html`<${Button} icon="shopping-cart" onClick=${onOpenCart}>Review order (${cartCount})<//>`}
-                <${Button} variant=${cartCount > 0 ? 'secondary' : 'primary'} icon="plane" onClick=${() => go('shop')}>Buy aircraft<//>
+                ${cartCount > 0 && html`<${Button} icon="shopping-cart" onClick=${onOpenCart}>${t('Review order ({n})', { n: cartCount })}<//>`}
+                <${Button} variant=${cartCount > 0 ? 'secondary' : 'primary'} icon="plane" onClick=${() => go('shop')}>${t('Buy aircraft')}<//>
             </div>
         </header>
 
         ${announcements.map((a) => html`<div key=${'an' + a.id} className="flex gap-3 p-4 rounded-3xl border border-sky-500/30 bg-sky-500/[0.06]">
             <${Icon} name="megaphone" className="w-5 h-5 mt-0.5 text-sky-300" />
             <div className="min-w-0">
-                <p className="font-extrabold text-white">${a.title || 'Notice from the Market Admins'}</p>
+                <p className="font-extrabold text-white">${a.title || t('Notice from the Market Admins')}</p>
                 <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${a.body}</p>
-                <p className="text-[11px] text-slate-500 mt-1">${a.created_by_name || 'Market Admins'} · ${timeAgo(a.created_at)}</p>
+                <p className="text-[11px] text-slate-500 mt-1">${a.created_by_name || t('Market Admins')} · ${timeAgo(a.created_at)}</p>
             </div>
         </div>`)}
         ${adminNotices.map((m) => html`<div key=${m.id} className=${`flex gap-3 p-4 rounded-3xl border ${m.kind === 'warning' ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-sky-500/30 bg-sky-500/[0.06]'}`}>
             <${Icon} name=${m.kind === 'warning' ? 'triangle-alert' : 'megaphone'} className=${`w-5 h-5 mt-0.5 ${m.kind === 'warning' ? 'text-rose-300' : 'text-sky-300'}`} />
             <div className="min-w-0">
-                <p className="font-extrabold text-white">${m.kind === 'warning' ? 'Warning from the Market Admins' : 'Message from the Market Admins'}</p>
+                <p className="font-extrabold text-white">${m.kind === 'warning' ? t('Warning from the Market Admins') : t('Message from the Market Admins')}</p>
                 <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${m.body}</p>
-                <p className="text-[11px] text-slate-500 mt-1">${m.sent_by_name || 'Market Admins'} · ${timeAgo(m.created_at)} · also in your notifications 🔔</p>
+                <p className="text-[11px] text-slate-500 mt-1">${m.sent_by_name || t('Market Admins')} · ${timeAgo(m.created_at)} · ${t('also in your notifications 🔔')}</p>
             </div>
         </div>`)}
 
         ${guide}
 
         ${dataReady && orders.length > 0 && html`<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            ${tile('package', 'Active orders', activeOrders.length, `${waiting} waiting · ${inDelivery} with a seller`)}
-            ${tile('circle-check', 'Delivered orders', fulfilled.length, `${plural(received, 'aircraft')} received in total`)}
-            ${tile('plane-landing', 'Active progress', activeQty ? `${activePct}%` : '–',
-                activeQty ? `${activeFilled} of ${plural(activeQty, 'aircraft')} delivered` : 'nothing in delivery',
+            ${tile('package', t('Active orders'), activeOrders.length, t('{waiting} waiting · {withSeller} with a seller', { waiting, withSeller: inDelivery }))}
+            ${tile('circle-check', t('Delivered orders'), fulfilled.length, t('{count} received in total', { count: plural(received, 'aircraft') }))}
+            ${tile('plane-landing', t('Active progress'), activeQty ? `${activePct}%` : '–',
+                activeQty ? t('{filled} of {count} delivered', { filled: activeFilled, count: plural(activeQty, 'aircraft') }) : t('nothing in delivery'),
                 activeQty > 0 && html`<div className="mt-2"><${ProgressBar} value=${activeFilled} max=${activeQty} /></div>`)}
-            ${tile('wallet', BUDGET_TIER ? `24-hour limit · Tier ${BUDGET_TIER}` : '24-hour limit', `${budgetPct}%`, `${fmtUSDShort(spent24h)} of ${fmtUSDShort(DAILY_LIMIT_USD)} used, at list price`,
+            ${tile('wallet', BUDGET_TIER ? t('24-hour limit · Tier {n}', { n: BUDGET_TIER }) : t('24-hour limit'), `${budgetPct}%`, t('{used} of {limit} used, at list price', { used: fmtUSDShort(spent24h), limit: fmtUSDShort(DAILY_LIMIT_USD) }),
                 html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} usage=${true} /></div>`)}
         </div>`}
 
         ${dataReady && orders.length > 0 && html`<div className="grid lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3 space-y-3 min-w-0">
                 <div className="flex items-center justify-between">
-                    <h2 className="font-extrabold text-white">Orders in progress</h2>
-                    <a href="#orders" className="text-xs font-bold text-slate-400 hover:text-white">All orders →</a>
+                    <h2 className="font-extrabold text-white">${t('Orders in progress')}</h2>
+                    <a href="#orders" className="text-xs font-bold text-slate-400 hover:text-white">${t('All orders →')}</a>
                 </div>
-                ${!activeOrders.length ? html`<div className="card p-5 text-sm text-slate-400">Nothing in progress. Your delivered orders are under <a href="#orders" className="underline">Orders</a>.</div>`
+                ${!activeOrders.length ? html`<div className="card p-5 text-sm text-slate-400">${tj('Nothing in progress. Your delivered orders are under {link}.', { link: html`<a href="#orders" className="underline">${t('Orders')}</a>` })}</div>`
                 : activeOrders.slice(0, 4).map((o) => html`<button key=${o.id} onClick=${() => onOpenOrder(o.id)}
                     className="card w-full text-left p-4 hover:border-slate-600 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                             <p className="font-bold text-white truncate">${airlineNames(o)}</p>
                             <${OrderCode} order=${o} className="text-[11px]" />
-                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? `Seller: ${[o.seller_airline_name, ...orderHelpers(o).map((h) => h.seller_airline_name)].join(' + ')}`
-                                : o.filled > 0 ? 'Partly delivered · waiting for a new seller' : 'Waiting for a seller to take it'} · ${plural(o.total_qty, 'aircraft')}</p>
+                            <p className="text-xs text-slate-400 truncate">${o.seller_airline_name ? t('Seller: {names}', { names: [o.seller_airline_name, ...orderHelpers(o).map((h) => h.seller_airline_name)].join(' + ') })
+                                : o.filled > 0 ? t('Partly delivered · waiting for a new seller') : t('Waiting for a seller to take it')} · ${plural(o.total_qty, 'aircraft')}</p>
                         </div>
                         <${StatusBadge} status=${displayStatus(o)} />
                     </div>
@@ -754,12 +766,12 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                     </div>
                     ${orderLines(o).length > 1 && html`<${ItemProgress} order=${o} compact=${true} />`}
                 </button>`)}
-                ${activeOrders.length > 4 && html`<a href="#orders" className="block text-center text-xs font-bold text-slate-400 hover:text-white">+ ${activeOrders.length - 4} more in progress</a>`}
+                ${activeOrders.length > 4 && html`<a href="#orders" className="block text-center text-xs font-bold text-slate-400 hover:text-white">${t('+ {n} more in progress', { n: activeOrders.length - 4 })}</a>`}
             </div>
             <div className="lg:col-span-2 space-y-3 min-w-0">
-                <h2 className="font-extrabold text-white">Latest updates</h2>
+                <h2 className="font-extrabold text-white">${t('Latest updates')}</h2>
                 <div className="card p-2">
-                    ${!inbox.length ? html`<p className="text-sm text-slate-400 p-3">No updates yet. You'll see here when a seller takes or delivers your order.</p>`
+                    ${!inbox.length ? html`<p className="text-sm text-slate-400 p-3">${t("No updates yet. You'll see here when a seller takes or delivers your order.")}</p>`
                     : html`<ul className="divide-y divide-slate-800">${inbox.slice(0, 5).map((e) => html`<li key=${e.id}>
                         <button onClick=${() => onOpenOrder(e.order_id)} className="w-full text-left p-3 rounded-xl hover:bg-slate-800/40">
                             <span className="block text-sm text-slate-200">${describeEvent(e)}</span>
@@ -770,8 +782,8 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
                 <a href="#airlines" className="card flex items-center gap-3 p-4 hover:border-slate-600">
                     <span className="w-9 h-9 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name="building-2" /></span>
                     <span className="flex-1 min-w-0">
-                        <span className="block font-bold text-white text-sm">Your airlines</span>
-                        <span className="block text-xs text-slate-400 truncate">${airlines.length ? airlines.map((a) => a.name).join(', ') : 'None yet'}</span>
+                        <span className="block font-bold text-white text-sm">${t('Your airlines')}</span>
+                        <span className="block text-xs text-slate-400 truncate">${airlines.length ? airlines.map((a) => a.name).join(', ') : t('None yet')}</span>
                     </span>
                     <span className="text-xs font-bold text-slate-400 tabular-nums">${airlines.length}/${MAX_AIRLINES}</span>
                 </a>
@@ -861,18 +873,18 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
                 <p className="label text-slate-500 flex items-center gap-1.5"><${MakerMark} maker=${a.category} size=${14} />${makerLabel(a.category)} · ${a.code}</p>
                 <h3 className="font-extrabold text-white mt-1 leading-tight">${a.model}</h3>
             </div>
-            ${inCart[a.model] && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${inCart[a.model]} in order</span>`}
+            ${inCart[a.model] && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${t('{n} in order', { n: inCart[a.model] })}</span>`}
         </div>
         <div className="flex gap-4 mt-3 text-xs text-slate-400">
-            <span className="flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />${a.seats} seats</span>
+            <span className="flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />${t('{n} seats', { n: a.seats })}</span>
             <span className="flex items-center gap-1.5"><${Icon} name="route" className="w-3.5 h-3.5" />${a.range.toLocaleString()} km</span>
         </div>
         <div className="flex items-end justify-between mt-4 pt-3 border-t border-slate-800">
             <div>
                 <p className="text-lg font-black text-white">${fmtUSDShort(a.price * priceLevel / 100)}</p>
-                <p className="text-[11px] text-slate-500">list ${fmtUSDShort(a.price)} · ${priceLevel}%</p>
+                <p className="text-[11px] text-slate-500">${t('list {price}', { price: fmtUSDShort(a.price) })} · ${priceLevel}%</p>
             </div>
-            <${Button} size="sm" icon="plus" onClick=${() => onPick(a.model)}>Add<//>
+            <${Button} size="sm" icon="plus" onClick=${() => onPick(a.model)}>${t('Add')}<//>
         </div>
     </article>`;
     const grid = (models) => html`<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">${models.map(card)}</div>`;
@@ -880,11 +892,11 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
     return html`<section className="space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-end gap-4 justify-between">
             <div>
-                <h2 className="text-2xl font-black tracking-tight text-white">Aircraft catalog</h2>
-                <p className="text-sm text-slate-400">${pricelist.length} models. The <b className="text-slate-200">price level</b> is the % of the in-game list price you offer: a seller sells you the aircraft in-game at that price. Lower is cheaper, but sellers might be slower to accept it.</p>
+                <h2 className="text-2xl font-black tracking-tight text-white">${t('Aircraft catalog')}</h2>
+                <p className="text-sm text-slate-400">${tj('{n} models. The {priceLevel} is the % of the in-game list price you offer: a seller sells you the aircraft in-game at that price. Lower is cheaper, but sellers might be slower to accept it.', { n: pricelist.length, priceLevel: html`<b className="text-slate-200">${t('price level')}</b>` })}</p>
             </div>
             <div>
-                <p className="label text-slate-500 mb-1.5">Price level · % of list price you pay</p>
+                <p className="label text-slate-500 mb-1.5">${t('Price level · % of list price you pay')}</p>
                 <div className="inline-flex p-1 rounded-full bg-slate-900 border border-slate-800">
                     ${PRICE_LEVELS.map((p) => html`<button key=${p} onClick=${() => setPriceLevel(p)}
                         className=${`px-3.5 py-1.5 rounded-full text-xs font-black transition-colors ${priceLevel === p ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${p}%</button>`)}
@@ -895,20 +907,20 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
         <div className="flex flex-col md:flex-row gap-2">
             <label className="relative flex-1">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
-                <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search model, family or ICAO code…" className="input pl-10" />
+                <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder=${t('Search model, family or ICAO code…')} className="input pl-10" />
             </label>
             <select value=${sort} onChange=${(e) => setSort(e.target.value)} className="input md:!w-52">
-                <option value="family">Group: by family</option>
-                <option value="price-asc">Price: low to high</option>
-                <option value="price-desc">Price: high to low</option>
-                <option value="seats">Most seats</option>
-                <option value="range">Longest range</option>
+                <option value="family">${t('Group: by family')}</option>
+                <option value="price-asc">${t('Price: low to high')}</option>
+                <option value="price-desc">${t('Price: high to low')}</option>
+                <option value="seats">${t('Most seats')}</option>
+                <option value="range">${t('Longest range')}</option>
             </select>
         </div>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
             ${categories.map((c) => html`<button key=${c} onClick=${() => setCategory(c)}
                 className=${`shrink-0 px-3.5 py-1.5 rounded-full border text-xs font-bold ${category === c ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
-                <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? 'All makers' : makerLabel(c)}</span></button>`)}
+                <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? t('All makers') : makerLabel(c)}</span></button>`)}
         </div>
 
         ${!pricelist.length ? html`<${EchoLoader} className="py-16" />`
@@ -917,7 +929,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
             ${!query.trim() && groups.length > 1 && html`<div className="flex justify-end -mb-2">
                 <button type="button" className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1"
                     onClick=${() => setCollapsed(collapsed.size ? new Set() : new Set(groups.map((g) => g.family)))}>
-                    <${Icon} name=${collapsed.size ? 'chevrons-up-down' : 'chevrons-down-up'} className="w-3.5 h-3.5" />${collapsed.size ? 'Expand all' : 'Collapse all'}
+                    <${Icon} name=${collapsed.size ? 'chevrons-up-down' : 'chevrons-down-up'} className="w-3.5 h-3.5" />${collapsed.size ? t('Expand all') : t('Collapse all')}
                 </button>
             </div>`}
             ${groups.map((g) => {
@@ -930,7 +942,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
                             <span className="text-slate-300"><${MakerMark} maker=${g.maker} /></span>
                             <span className="min-w-0 truncate">${g.family}</span>
                             <span className="shrink-0 text-xs font-semibold text-slate-500">· ${plural(g.models.length, 'model')}</span>
-                            ${!open && ordered > 0 && html`<span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-400/15 text-sky-300">${ordered} in order</span>`}
+                            ${!open && ordered > 0 && html`<span className="shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-400/15 text-sky-300">${t('{n} in order', { n: ordered })}</span>`}
                             <span className="ml-auto shrink-0 text-slate-500 group-hover:text-white">
                                 <${Icon} name="chevron-down" className=${`w-4 h-4 transition-transform ${open ? '' : '-rotate-90'}`} />
                             </span>
@@ -954,27 +966,27 @@ function AircraftSheet({ aircraft, priceLevel, inCart, onClose, onAdd }) {
     const setQ = (v) => setQty(Math.max(1, Math.min(MAX_QTY, Math.floor(Number(v) || 1))));
 
     return html`<${Modal} open=${true} onClose=${onClose} title=${aircraft.model}
-        subtitle=${`${aircraft.family} · ${aircraft.code} · ${aircraft.seats} seats · ${aircraft.range.toLocaleString()} km`}
+        subtitle=${`${aircraft.family} · ${aircraft.code} · ${t('{n} seats', { n: aircraft.seats })} · ${aircraft.range.toLocaleString()} km`}
         footer=${html`<div className="flex-1 text-left">
                 <p className="text-xs text-slate-400">${qty} × ${fmtUSD(unit)}</p>
                 <p className="text-lg font-black text-white">${fmtUSD(unit * qty)}</p>
             </div>
-            <${Button} icon="plus" onClick=${() => onAdd({ model: aircraft.model, qty, pricePercent: level, note: note.trim() })}>Add to order<//>`}>
+            <${Button} icon="plus" onClick=${() => onAdd({ model: aircraft.model, qty, pricePercent: level, note: note.trim() })}>${t('Add to order')}<//>`}>
         <div className="space-y-5">
             <div>
-                <p className="field-label">Quantity</p>
+                <p className="field-label">${t('Quantity')}</p>
                 <div className="flex items-center gap-2">
-                    <button className="stepper" onClick=${() => setQ(qty - 1)} aria-label="Less"><${Icon} name="minus" /></button>
+                    <button className="stepper" onClick=${() => setQ(qty - 1)} aria-label=${t('Less')}><${Icon} name="minus" /></button>
                     <input type="number" min="1" max=${MAX_QTY} value=${qty} onChange=${(e) => setQ(e.target.value)} className="input !w-24 text-center font-bold" />
-                    <button className="stepper" onClick=${() => setQ(qty + 1)} aria-label="More"><${Icon} name="plus" /></button>
+                    <button className="stepper" onClick=${() => setQ(qty + 1)} aria-label=${t('More')}><${Icon} name="plus" /></button>
                     ${[5, 10, 25].map((n) => html`<button key=${n} onClick=${() => setQ(n)} className="px-3 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800">${n}</button>`)}
                 </div>
-                ${inCart > 0 && html`<p className="text-xs text-sky-300 mt-2">You already have ${inCart} of these in your order.</p>`}
+                ${inCart > 0 && html`<p className="text-xs text-sky-300 mt-2">${t('You already have {n} of these in your order.', { n: inCart })}</p>`}
             </div>
             <div>
-                <p className="field-label">Price level <span className="font-medium text-slate-500">· you pay this % of the in-game list price</span></p>
+                <p className="field-label">${t('Price level')} <span className="font-medium text-slate-500">· ${t('you pay this % of the in-game list price')}</span></p>
                 <div className="grid grid-cols-5 gap-1.5">
-                    ${PRICE_LEVELS.map((p) => html`<button key=${p} aria-label=${p + "% of list price"} aria-pressed=${level === p} onClick=${() => setLevel(p)}
+                    ${PRICE_LEVELS.map((p) => html`<button key=${p} aria-label=${t('{n}% of list price', { n: p })} aria-pressed=${level === p} onClick=${() => setLevel(p)}
                         className=${`py-2.5 rounded-xl border text-center ${level === p ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>
                         <span className="block text-sm font-black">${p}%</span>
                         <span className="block text-[10px] opacity-70">${fmtUSDShort(aircraft.price * p / 100)}</span>
@@ -982,8 +994,8 @@ function AircraftSheet({ aircraft, priceLevel, inCart, onClose, onAdd }) {
                 </div>
             </div>
             <label className="block">
-                <span className="field-label">Note for the seller (optional)</span>
-                <input value=${note} maxLength="200" onChange=${(e) => setNote(e.target.value)} placeholder="e.g. livery, delivery hub…" className="input" />
+                <span className="field-label">${t('Note for the seller (optional)')}</span>
+                <input value=${note} maxLength="200" onChange=${(e) => setNote(e.target.value)} placeholder=${t('e.g. livery, delivery hub…')} className="input" />
             </label>
         </div>
     <//>`;
@@ -1021,11 +1033,11 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
     const remove = (i) => setCart((c) => c.filter((_, j) => j !== i));
 
     const problems = [];
-    if (!session) problems.push('Sign in to send orders.');
-    else if (!airlines.length) problems.push('Create an airline profile first.');
-    else if (!airlineIds.length) problems.push('Choose at least one airline to receive the aircraft.');
-    if (!cart.length) problems.push('Your order is empty.');
-    if (overLimit) problems.push(`Over your 24-hour limit: this order is ${fmtUSDShort(listTotal)} at list price, and ${fmtUSDShort(left)} of your limit is left today.`);
+    if (!session) problems.push(t('Sign in to send orders.'));
+    else if (!airlines.length) problems.push(t('Create an airline profile first.'));
+    else if (!airlineIds.length) problems.push(t('Choose at least one airline to receive the aircraft.'));
+    if (!cart.length) problems.push(t('Your order is empty.'));
+    if (overLimit) problems.push(t('Over your 24-hour limit: this order is {total} at list price, and {left} of your limit is left today.', { total: fmtUSDShort(listTotal), left: fmtUSDShort(left) }));
 
     const submit = async () => {
         setBusy(true);
@@ -1039,7 +1051,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
             setNote('');
             onPlaced(order);
         } catch (err) {
-            toast('Order not sent: ' + err.message, 'error');
+            toast(t('Order not sent: {msg}', { msg: err.message }), 'error');
         } finally {
             setBusy(false);
         }
@@ -1050,24 +1062,24 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
         <aside className="relative w-full md:max-w-md h-full bg-slate-950 border-l border-slate-800 flex flex-col animate-slide-in">
             <div className="flex items-center justify-between p-5 border-b border-slate-800">
                 <div>
-                    <h2 className="text-lg font-extrabold text-white">Your order</h2>
-                    <p className="text-xs text-slate-400">Review, pick which of your airlines can receive it, then send it to the sellers.</p>
+                    <h2 className="text-lg font-extrabold text-white">${t('Your order')}</h2>
+                    <p className="text-xs text-slate-400">${t('Review, pick which of your airlines can receive it, then send it to the sellers.')}</p>
                 </div>
-                <button onClick=${onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Close"><${Icon} name="x" className="w-5 h-5" /></button>
+                <button onClick=${onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white" aria-label=${t('Close')}><${Icon} name="x" className="w-5 h-5" /></button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
                 ${!cart.length ? html`<${EmptyState} icon="shopping-cart" title="Nothing here yet" text="Add aircraft from the catalog."
-                    action=${html`<${Button} variant="secondary" onClick=${() => { onClose(); go('shop'); }}>Browse catalog<//>`} />`
+                    action=${html`<${Button} variant="secondary" onClick=${() => { onClose(); go('shop'); }}>${t('Browse catalog')}<//>`} />`
                 : html`<ul className="space-y-2">
                     ${lines.map((l) => html`<li key=${l.i} className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
                         <div className="flex justify-between gap-3">
                             <div className="min-w-0">
                                 <p className="font-bold text-sm text-white truncate">${l.model}</p>
-                                <p className="text-xs text-slate-400">${fmtUSD(l.unit)} each${l.note ? ` · “${l.note}”` : ''}</p>
-                                ${!l.aircraft && html`<p className="text-xs text-rose-300">No longer in the catalog — remove it.</p>`}
+                                <p className="text-xs text-slate-400">${t('{price} each', { price: fmtUSD(l.unit) })}${l.note ? ` · “${l.note}”` : ''}</p>
+                                ${!l.aircraft && html`<p className="text-xs text-rose-300">${t('No longer in the catalog — remove it.')}</p>`}
                             </div>
-                            <button onClick=${() => remove(l.i)} className="p-1.5 -m-1 h-fit rounded-lg text-slate-500 hover:text-rose-300" aria-label="Remove"><${Icon} name="trash-2" /></button>
+                            <button onClick=${() => remove(l.i)} className="p-1.5 -m-1 h-fit rounded-lg text-slate-500 hover:text-rose-300" aria-label=${t('Remove')}><${Icon} name="trash-2" /></button>
                         </div>
                         <div className="flex items-center gap-2 mt-3">
                             <button className="stepper !w-8 !h-8" onClick=${() => update(l.i, { qty: Math.max(1, l.qty - 1) })}><${Icon} name="minus" className="w-3.5 h-3.5" /></button>
@@ -1083,7 +1095,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                 </ul>`}
 
                 ${session && html`<div>
-                    <p className="field-label">Deliver to <span className="font-medium text-slate-500">· pick one or more of your airlines</span></p>
+                    <p className="field-label">${t('Deliver to')} <span className="font-medium text-slate-500">· ${t('pick one or more of your airlines')}</span></p>
                     ${airlines.length ? html`<div className="grid grid-cols-2 gap-1.5">
                         ${airlines.map((a) => {
                             const on = airlineIds.includes(a.id);
@@ -1096,30 +1108,30 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                         })}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-2">${airlineIds.length > 1
-                        ? `Any seller in ${[...new Set(airlines.filter((a) => airlineIds.includes(a.id)).map((a) => a.alliance))].join(', ')} can deliver. The number of aircraft stays the same.`
-                        : 'Pick more airlines to let sellers from more alliances deliver. The number of aircraft stays the same.'}</p>`
-                    : html`<${Button} variant="secondary" icon="plus" className="w-full" onClick=${onCreateAirline}>Create an airline profile<//>`}
+                        ? t('Any seller in {alliances} can deliver. The number of aircraft stays the same.', { alliances: [...new Set(airlines.filter((a) => airlineIds.includes(a.id)).map((a) => a.alliance))].join(', ') })
+                        : t('Pick more airlines to let sellers from more alliances deliver. The number of aircraft stays the same.')}</p>`
+                    : html`<${Button} variant="secondary" icon="plus" className="w-full" onClick=${onCreateAirline}>${t('Create an airline profile')}<//>`}
                 </div>`}
 
                 ${cart.length > 0 && html`<label className="block">
-                    <span className="field-label">Note for the sellers (optional)</span>
-                    <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input" placeholder="Anything the seller should know"></textarea>
+                    <span className="field-label">${t('Note for the sellers (optional)')}</span>
+                    <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input" placeholder=${t('Anything the seller should know')}></textarea>
                 </label>`}
             </div>
 
             <div className="p-5 border-t border-slate-800 space-y-3 bg-slate-950">
                 <div className="flex justify-between items-end">
-                    <span className="text-sm text-slate-400">Total · ${plural(cart.reduce((s, c) => s + c.qty, 0), 'aircraft')}</span>
+                    <span className="text-sm text-slate-400">${t('Total')} · ${plural(cart.reduce((s, c) => s + c.qty, 0), 'aircraft')}</span>
                     <span className="text-2xl font-black text-white">${fmtUSD(total)}</span>
                 </div>
                 ${session && html`<div>
-                    <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>24-hour limit, at list price</span><span>${fmtUSDShort(spent24h + listTotal)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
+                    <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>${t('24-hour limit, at list price')}</span><span>${fmtUSDShort(spent24h + listTotal)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
                     <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} usage=${true} />
                 </div>`}
                 ${problems.length > 0 && cart.length > 0 && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="info" className="w-3.5 h-3.5 mt-px" />${problems[0]}</p>`}
-                ${session && cart.length > 0 && isSeaNight() && html`<p className="text-xs text-indigo-200 flex gap-1.5 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-400/20"><${Icon} name="moon" className="w-3.5 h-3.5 mt-px shrink-0" />${SEA_NIGHT_TEXT}</p>`}
-                ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in to send<//>`
-                : html`<${Button} size="lg" className="w-full" icon="send" busy=${busy} disabled=${problems.length > 0} onClick=${submit}>Send order to sellers<//>`}
+                ${session && cart.length > 0 && isSeaNight() && html`<p className="text-xs text-indigo-200 flex gap-1.5 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-400/20"><${Icon} name="moon" className="w-3.5 h-3.5 mt-px shrink-0" />${t(SEA_NIGHT_TEXT)}</p>`}
+                ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> ${t('Sign in to send')}<//>`
+                : html`<${Button} size="lg" className="w-full" icon="send" busy=${busy} disabled=${problems.length > 0} onClick=${submit}>${t('Send order to sellers')}<//>`}
             </div>
         </aside>
     </div>`;
@@ -1138,7 +1150,7 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
         setTimeout(() => document.getElementById('order-' + highlight)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
     }, [highlight]);
 
-    if (!session) return html`<${SignInPrompt} what="see your orders" />`;
+    if (!session) return html`<${SignInPrompt} what=${t('Sign in with Discord to see your orders.')} />`;
     if (!dataReady) return html`<${EchoLoader} className="py-16" />`;
 
     const tabs = {
@@ -1154,23 +1166,23 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
     return html`<section className="space-y-4">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
             <div>
-                <h2 className="text-2xl font-black tracking-tight text-white">Your orders</h2>
-                <p className="text-sm text-slate-400">Updates appear here live as sellers work on them.</p>
+                <h2 className="text-2xl font-black tracking-tight text-white">${t('Your orders')}</h2>
+                <p className="text-sm text-slate-400">${t('Updates appear here live as sellers work on them.')}</p>
             </div>
             ${allNames.length > 1 && html`<select value=${airlineFilter} onChange=${(e) => setAirlineFilter(e.target.value)} className="input md:!w-60">
-                <option value="ALL">All airlines</option>
+                <option value="ALL">${t('All airlines')}</option>
                 ${allNames.map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
             </select>`}
         </div>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-            ${[['active', 'In progress'], ['done', 'Delivered'], ['closed', 'Cancelled / declined'], ['all', 'All']].map(([k, label]) => html`
+            ${[['active', t('In progress')], ['done', t('Delivered')], ['closed', t('Cancelled / declined')], ['all', t('All')]].map(([k, label]) => html`
                 <button key=${k} onClick=${() => setTab(k)} className=${`shrink-0 px-3.5 py-1.5 rounded-full border text-xs font-bold ${tab === k ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
                     ${label} <span className="opacity-60">${counts[k]}</span>
                 </button>`)}
         </div>
         ${!list.length ? html`<${EmptyState} icon="package" title=${orders.length ? 'Nothing in this list' : 'No orders yet'}
             text=${orders.length ? 'Try another tab.' : airlines.length ? 'Pick aircraft from the catalog and send your first order.' : 'Create an airline profile, then pick aircraft from the catalog.'}
-            action=${!orders.length && html`<${Button} icon="plane" onClick=${() => go('shop')}>Open catalog<//>`} />`
+            action=${!orders.length && html`<${Button} icon="plane" onClick=${() => go('shop')}>${t('Open catalog')}<//>`} />`
         : html`<div className="space-y-3">${list.map((o) => html`<${OrderCard} key=${o.id} order=${o} highlight=${o.id === highlight}
             events=${events.filter((e) => e.order_id === o.id)} onChanged=${onOrderChanged}
             messages=${orderMessages.filter((m) => m.order_id === o.id)} onMessage=${onMessage}
@@ -1187,13 +1199,13 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
     const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
 
     const cancel = async () => {
-        const ok = await ask({ title: `Cancel order ${orderRef(order)}?`, message: 'Sellers will no longer see this order. You can only cancel while no seller has taken it.', confirmLabel: 'Cancel order', danger: true });
+        const ok = await ask({ title: t('Cancel order {ref}?', { ref: orderRef(order) }), message: 'Sellers will no longer see this order. You can only cancel while no seller has taken it.', confirmLabel: 'Cancel order', danger: true });
         if (!ok) return;
         setBusy(true);
         try {
             const { order: updated } = await api(`/api/orders/${order.id}`, { action: 'cancel' });
             onChanged(updated);
-            toast(`Order ${orderRef(order)} cancelled.`);
+            toast(t('Order {ref} cancelled.', { ref: orderRef(order) }));
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
 
@@ -1211,55 +1223,55 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
 
         ${handoff && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
             <${Icon} name="repeat" className="w-4 h-4 text-amber-300" />
-            <span className="flex-1">${order.filled} of ${plural(order.total_qty, 'aircraft')} are already delivered. Your seller couldn't finish, so the remaining ${order.total_qty - order.filled} went back to the seller team. Waiting for a new seller.</span>
+            <span className="flex-1">${t("{filled} of {count} are already delivered. Your seller couldn't finish, so the remaining {rest} went back to the seller team. Waiting for a new seller.", { filled: order.filled, count: plural(order.total_qty, 'aircraft'), rest: order.total_qty - order.filled })}</span>
         </div>`}
 
         ${order.status === 'PENDING' && !handoff && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-sm text-amber-100">
             <${Icon} name="hourglass" className="w-4 h-4 text-amber-300" />
-            <span className="flex-1">Sent to the seller team. Waiting for one of them to take it.</span>
-            <${Button} variant="ghost" size="sm" busy=${busy} onClick=${cancel}>Cancel<//>
+            <span className="flex-1">${t('Sent to the seller team. Waiting for one of them to take it.')}</span>
+            <${Button} variant="ghost" size="sm" busy=${busy} onClick=${cancel}>${t('Cancel')}<//>
         </div>`}
 
         ${order.seller_airline_name && !closed && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-800">
             <div className="w-9 h-9 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name="store" /></div>
             <div className="min-w-0 flex-1">
-                <p className="label text-slate-500">Your seller</p>
+                <p className="label text-slate-500">${t('Your seller')}</p>
                 <p className="font-bold text-white truncate">${order.seller_airline_name} <span className="text-slate-400 font-medium text-sm">${order.seller_alliance ? `· ${order.seller_alliance}` : ''}</span></p>
                 <p className="text-xs text-slate-400 flex items-center gap-1"><${DiscordLogo} className="w-3 h-3" /> ${order.seller_name}</p>
-                ${orderAirlines(order).length > 1 && deliverableTo(order, order.seller_alliance).length > 0 && html`<p className="text-xs text-sky-300 mt-0.5">Delivers to ${deliverableTo(order, order.seller_alliance).map((a) => a.name).join(' or ')} (same alliance)</p>`}
+                ${orderAirlines(order).length > 1 && deliverableTo(order, order.seller_alliance).length > 0 && html`<p className="text-xs text-sky-300 mt-0.5">${t('Delivers to {names} (same alliance)', { names: deliverableTo(order, order.seller_alliance).map((a) => a.name).join(' / ') })}</p>`}
             </div>
         </div>`}
 
         ${orderHelpers(order).length > 0 && !closed && html`<div className="space-y-1.5">
             ${orderHelpers(order).map((h) => html`<p key=${h.seller_id} className="flex items-center gap-2 text-sm text-sky-200">
-                <${Icon} name="users" className="w-4 h-4 text-sky-300" /><span><b className="text-white">${h.seller_airline_name}</b>${h.seller_alliance ? ` (${h.seller_alliance})` : ''} will also be delivering.</span></p>`)}
+                <${Icon} name="users" className="w-4 h-4 text-sky-300" /><span>${tj('{airline} will also be delivering.', { airline: html`<span><b className="text-white">${h.seller_airline_name}</b>${h.seller_alliance ? ` (${h.seller_alliance})` : ''}</span>` })}</span></p>`)}
         </div>`}
 
         ${deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0).length > 1 && order.status !== 'CANCELLED' && html`<div className="space-y-1.5">
             <${SellerShares} order=${order} />
-            ${!closed && html`<p className="text-xs text-slate-400">Several sellers are delivering this order. In-game, buy from each seller exactly the aircraft they listed for you (above).</p>`}
+            ${!closed && html`<p className="text-xs text-slate-400">${t('Several sellers are delivering this order. In-game, buy from each seller exactly the aircraft they listed for you (above).')}</p>`}
         </div>`}
 
         ${previous.length > 0 && !closed && deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0).length < 2 && html`<p className="text-xs text-slate-400 flex items-start gap-1.5">
             <${Icon} name="history" className="w-3.5 h-3.5 mt-px" />
-            <span>Earlier: ${previous.map((p) => `${p.seller_airline_name} delivered ${p.delivered}`).join(' · ')}</span>
+            <span>${t('Earlier: {list}', { list: previous.map((p) => t('{airline} delivered {n}', { airline: p.seller_airline_name, n: p.delivered })).join(' · ') })}</span>
         </p>`}
 
         ${(['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) || handoff) && html`<div className="space-y-3">
             <div>
-                <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">Delivered in-game</span><span className="font-bold text-white">${order.filled} / ${order.total_qty}</span></div>
+                <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">${t('Delivered in-game')}</span><span className="font-bold text-white">${order.filled} / ${order.total_qty}</span></div>
                 <${ProgressBar} value=${order.filled} max=${order.total_qty} />
             </div>
             ${items.length > 1 && html`<div className="pl-3 border-l-2 border-slate-800"><${ItemProgress} order=${order} /></div>`}
         </div>`}
 
         ${closed && html`<div className=${`p-3 rounded-2xl border text-sm ${order.status === 'DECLINED' ? 'bg-rose-500/5 border-rose-500/20 text-rose-100' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
-            <p className="font-bold">${order.status === 'DECLINED' ? 'Declined by the seller team' : 'You cancelled this order'}</p>
-            ${order.closed_reason && html`<p className="text-xs mt-0.5 opacity-80">${order.closed_reason}</p>`}
+            <p className="font-bold">${order.status === 'DECLINED' ? t('Declined by the seller team') : t('You cancelled this order')}</p>
+            ${order.closed_reason && html`<p className="text-xs mt-0.5 opacity-80">${tx(order.closed_reason)}</p>`}
         </div>`}
 
         ${order.seller_note && html`<div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-            <p className="label text-slate-500 mb-1">Note from seller</p><p className="text-sm text-slate-200">${order.seller_note}</p>
+            <p className="label text-slate-500 mb-1">${t('Note from seller')}</p><p className="text-sm text-slate-200">${order.seller_note}</p>
         </div>`}
 
         <${OrderThread} order=${order} messages=${messages} onMessage=${onMessage} />
@@ -1267,30 +1279,30 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
         <${MissingPlanes} order=${order} reports=${reports} onReported=${onReported} />
 
         <button onClick=${() => setOpen(!open)} className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-white">
-            <span>${open ? 'Hide details' : `Show details · ${plural(items.length, 'line')}`}</span>
+            <span>${open ? t('Hide details') : t('Show details · {count}', { count: plural(items.length, 'line') })}</span>
             <${Icon} name=${open ? 'chevron-up' : 'chevron-down'} />
         </button>
         ${open && html`<div className="grid md:grid-cols-2 gap-4 pt-1">
             <div>
-                <p className="label text-slate-500 mb-2">Aircraft</p>
+                <p className="label text-slate-500 mb-2">${t('Aircraft')}</p>
                 <ul className="space-y-1.5 text-sm">
                     ${items.map((it, i) => html`<li key=${i} className="flex justify-between gap-3">
-                        <span className="text-slate-200 min-w-0"><b>${it.qty}×</b> ${it.model} <span className="text-slate-500">@ ${it.pricePercent}% · ${it.filled}/${it.qty} delivered</span>
+                        <span className="text-slate-200 min-w-0"><b>${it.qty}×</b> ${it.model} <span className="text-slate-500">@ ${it.pricePercent}% · ${t('{done}/{total} delivered', { done: it.filled, total: it.qty })}</span>
                             ${it.note && html`<span className="block text-xs text-slate-500">“${it.note}”</span>`}</span>
                         <span className="text-slate-400 shrink-0">${fmtUSDShort(it.totalUSD)}</span>
                     </li>`)}
                 </ul>
-                ${order.buyer_note && html`<p className="text-xs text-slate-400 mt-3"><span className="text-slate-500">Your note:</span> ${order.buyer_note}</p>`}
+                ${order.buyer_note && html`<p className="text-xs text-slate-400 mt-3"><span className="text-slate-500">${t('Your note:')}</span> ${order.buyer_note}</p>`}
             </div>
             <div>
-                <p className="label text-slate-500 mb-2">Timeline</p>
+                <p className="label text-slate-500 mb-2">${t('Timeline')}</p>
                 <ol className="space-y-2.5 border-l border-slate-800 pl-4">
                     ${[...events].sort((a, b) => a.created_at.localeCompare(b.created_at)).map((e) => html`<li key=${e.id} className="relative">
                         <span className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-slate-600"></span>
-                        <p className="text-sm text-slate-200">${e.message || e.kind}</p>
+                        <p className="text-sm text-slate-200">${e.message ? tx(e.message) : e.kind}</p>
                         <p className="text-[11px] text-slate-500">${e.actor_name} · ${timeAgo(e.created_at)}</p>
                     </li>`)}
-                    ${!events.length && html`<li className="text-xs text-slate-500">No updates yet.</li>`}
+                    ${!events.length && html`<li className="text-xs text-slate-500">${t('No updates yet.')}</li>`}
                 </ol>
             </div>
         </div>`}
@@ -1301,36 +1313,36 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
 //  Airlines
 // =========================================================================
 function AirlinesView({ session, airlines, orders, dataReady, defaultAirline, setDefaultAirlineId, onCreate, onEdit, setAirlines, alliances }) {
-    if (!session) return html`<${SignInPrompt} what="create and manage your airline profiles" />`;
+    if (!session) return html`<${SignInPrompt} what=${t('Sign in with Discord to create and manage your airline profiles.')} />`;
     if (!dataReady) return html`<${EchoLoader} className="py-16" />`;
     const full = airlines.length >= MAX_AIRLINES;
 
     const remove = async (a) => {
         const used = orders.filter((o) => o.airline_id === a.id).length;
         const ok = await ask({
-            title: `Delete ${a.name}?`,
-            message: used ? `Its ${plural(used, 'order')} will stay in your order history.` : 'This airline has no orders.',
-            confirmLabel: 'Delete airline', danger: true
+            title: t('Delete {name}?', { name: a.name }),
+            message: used ? t('Its {count} will stay in your order history.', { count: plural(used, 'order') }) : t('This airline has no orders.'),
+            confirmLabel: t('Delete airline'), danger: true
         });
         if (!ok) return;
         const { error } = await sb.from('airlines').delete().eq('id', a.id);
         if (error) return toast(dbError(error), 'error');
         setAirlines((list) => list.filter((x) => x.id !== a.id));
-        toast(`${a.name} deleted.`);
+        toast(t('{name} deleted.', { name: a.name }));
     };
 
     return html`<section className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
             <div>
-                <h2 className="text-2xl font-black tracking-tight text-white">Your airlines</h2>
-                <p className="text-sm text-slate-400">Saved to your account, so they're on every device you sign in from. ${airlines.length} of ${MAX_AIRLINES} used.</p>
+                <h2 className="text-2xl font-black tracking-tight text-white">${t('Your airlines')}</h2>
+                <p className="text-sm text-slate-400">${t("Saved to your account, so they're on every device you sign in from. {n} of {max} used.", { n: airlines.length, max: MAX_AIRLINES })}</p>
             </div>
-            <${Button} icon="plus" disabled=${full} onClick=${onCreate}>${full ? 'Limit reached' : 'New airline'}<//>
+            <${Button} icon="plus" disabled=${full} onClick=${onCreate}>${full ? t('Limit reached') : t('New airline')}<//>
         </div>
 
         ${!airlines.length ? html`<${EmptyState} icon="building-2" title="No airline profiles yet"
             text="Create one for each airline you run in the game. You'll pick which one an order is for at checkout."
-            action=${html`<${Button} icon="plus" onClick=${onCreate}>Create your first airline<//>`} />`
+            action=${html`<${Button} icon="plus" onClick=${onCreate}>${t('Create your first airline')}<//>`} />`
         : html`<div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             ${airlines.map((a) => {
                 const count = orders.filter((o) => o.airline_id === a.id).length;
@@ -1339,14 +1351,14 @@ function AirlinesView({ session, airlines, orders, dataReady, defaultAirline, se
                     <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                             <h3 className="font-extrabold text-white truncate">${a.name}</h3>
-                            <p className="text-sm text-slate-400">${a.alliance} alliance · ${plural(count, 'order')}</p>
+                            <p className="text-sm text-slate-400">${t('{alliance} alliance', { alliance: a.alliance })} · ${plural(count, 'order')}</p>
                         </div>
-                        ${isDefault && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">DEFAULT</span>`}
+                        ${isDefault && html`<span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-full bg-sky-400/15 text-sky-300">${t('DEFAULT')}</span>`}
                     </div>
                     <div className="flex gap-1 mt-4">
-                        ${!isDefault && html`<${Button} size="sm" variant="secondary" onClick=${() => { setDefaultAirlineId(a.id); toast(`${a.name} is now your default airline.`); }}>Make default<//>`}
-                        <${Button} size="sm" variant="ghost" icon="pencil" onClick=${() => onEdit(a)}>Rename / edit<//>
-                        <${Button} size="sm" variant="ghost" icon="trash-2" className="ml-auto !text-slate-500 hover:!text-rose-300" onClick=${() => remove(a)} aria-label=${'Delete ' + a.name} />
+                        ${!isDefault && html`<${Button} size="sm" variant="secondary" onClick=${() => { setDefaultAirlineId(a.id); toast(t('{name} is now your default airline.', { name: a.name })); }}>${t('Make default')}<//>`}
+                        <${Button} size="sm" variant="ghost" icon="pencil" onClick=${() => onEdit(a)}>${t('Rename / edit')}<//>
+                        <${Button} size="sm" variant="ghost" icon="trash-2" className="ml-auto !text-slate-500 hover:!text-rose-300" onClick=${() => remove(a)} aria-label=${t('Delete {name}', { name: a.name })} />
                     </div>
                 </article>`;
             })}
@@ -1376,16 +1388,16 @@ function AirlineForm({ state, alliances, count, userId, onClose, onSaved }) {
         onSaved(res.data, !editing);
     };
 
-    return html`<${Modal} open=${true} onClose=${onClose} title=${editing ? 'Rename or edit airline' : 'New airline profile'} size="sm"
-        subtitle=${editing ? 'Your open orders for this airline will show the new name too.' : `${count} of ${MAX_AIRLINES} used`}
-        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//><${Button} busy=${busy} disabled=${!valid} onClick=${save}>${editing ? 'Save' : 'Create airline'}<//>`}>
+    return html`<${Modal} open=${true} onClose=${onClose} title=${editing ? t('Rename or edit airline') : t('New airline profile')} size="sm"
+        subtitle=${editing ? t('Your open orders for this airline will show the new name too.') : t('{n} of {max} used', { n: count, max: MAX_AIRLINES })}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//><${Button} busy=${busy} disabled=${!valid} onClick=${save}>${editing ? t('Save') : t('Create airline')}<//>`}>
         <form onSubmit=${save} className="space-y-4">
             <label className="block">
-                <span className="field-label">Airline name</span>
-                <input autoFocus value=${name} maxLength="60" onChange=${(e) => setName(e.target.value)} placeholder="e.g. Garuda Echo" className="input" />
+                <span className="field-label">${t('Airline name')}</span>
+                <input autoFocus value=${name} maxLength="60" onChange=${(e) => setName(e.target.value)} placeholder=${t('e.g. Garuda Echo')} className="input" />
             </label>
             <div>
-                <p className="field-label">Alliance</p>
+                <p className="field-label">${t('Alliance')}</p>
                 <div className="grid grid-cols-3 gap-1.5">
                     ${alliances.map((al) => html`<button type="button" key=${al} onClick=${() => setAlliance(al)}
                         className=${`py-2.5 rounded-xl border text-sm font-bold ${alliance === al ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${al}</button>`)}
@@ -1408,8 +1420,8 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
     const togglePush = async () => {
         setPushBusy(true);
         try {
-            if (pushOn) { await disablePush(); setPushOn(false); toast('Alerts turned off on this device.'); }
-            else { await enablePush(); setPushOn(true); setPerm('granted'); toast("Alerts are on for this device. You'll get one when an order is fully delivered.", 'success'); }
+            if (pushOn) { await disablePush(); setPushOn(false); toast(t('Alerts turned off on this device.')); }
+            else { await enablePush(); setPushOn(true); setPerm('granted'); toast(t("Alerts are on for this device. You'll get one when an order is fully delivered."), 'success'); }
         } catch (err) { toast(err.message, 'error'); } finally { setPushBusy(false); }
     };
     const testPush = async () => {
@@ -1436,39 +1448,39 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
             toast(err.message, 'error');
         } finally { setTesting(false); }
     };
-    return html`<${Modal} open=${true} onClose=${onClose} title="Notifications" subtitle="Updates from sellers on your orders">
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Notifications')} subtitle=${t('Updates from sellers on your orders')}>
         ${CONFIG.DM_AVAILABLE && account && html`<div className="p-3 mb-3 rounded-2xl bg-slate-950 border border-slate-800 text-sm space-y-3">
             <div className="flex items-center gap-3">
                 <span className="text-[#8b93ff]"><${DiscordLogo} /></span>
-                <span className="flex-1 text-slate-300"><b className="text-white">Discord DMs</b><br />A DM from the Echo Market bot when your order is taken, delivered or declined.</span>
-                <button role="switch" aria-checked=${dmOn} aria-label="Discord DMs" onClick=${toggleDM}
+                <span className="flex-1 text-slate-300"><b className="text-white">${t('Discord DMs')}</b><br />${t('A DM from the Echo Market bot when your order is taken, delivered or declined.')}</span>
+                <button role="switch" aria-checked=${dmOn} aria-label=${t('Discord DMs')} onClick=${toggleDM}
                     className=${`w-11 h-6 shrink-0 rounded-full relative transition-colors ${dmOn ? 'bg-sky-400' : 'bg-slate-700'}`}>
                     <span className=${`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${dmOn ? 'left-[22px]' : 'left-0.5'}`}></span>
                 </button>
             </div>
             ${dmOn && account.dm_status === 'blocked' && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px" />
-                The bot couldn't DM you last time. Join the Echo Discord server and allow Direct Messages from that server (Server menu → Privacy Settings).</p>`}
-            ${dmOn && html`<${Button} size="sm" variant="secondary" busy=${testing} onClick=${testDM}>Send me a test DM<//>`}
+                ${t("The bot couldn't DM you last time. Join the Echo Discord server and allow Direct Messages from that server (Server menu → Privacy Settings).")}</p>`}
+            ${dmOn && html`<${Button} size="sm" variant="secondary" busy=${testing} onClick=${testDM}>${t('Send me a test DM')}<//>`}
         </div>`}
         ${CONFIG.PUSH_AVAILABLE && html`<div className="p-3 mb-3 rounded-2xl bg-slate-950 border border-slate-800 text-sm space-y-3">
             <div className="flex items-center gap-3">
                 <span className="text-sky-300"><${Icon} name="smartphone" className="w-5 h-5" /></span>
-                <span className="flex-1 text-slate-300"><b className="text-white">Phone & browser alerts</b><br />An alert on this device when an order is fully delivered, even with Echo Market closed.</span>
-                <button role="switch" aria-checked=${pushOn} aria-label="Phone and browser alerts" onClick=${togglePush} disabled=${pushBusy}
+                <span className="flex-1 text-slate-300"><b className="text-white">${t('Phone & browser alerts')}</b><br />${t('An alert on this device when an order is fully delivered, even with Echo Market closed.')}</span>
+                <button role="switch" aria-checked=${pushOn} aria-label=${t('Phone & browser alerts')} onClick=${togglePush} disabled=${pushBusy}
                     className=${`w-11 h-6 shrink-0 rounded-full relative transition-colors disabled:opacity-50 ${pushOn ? 'bg-sky-400' : 'bg-slate-700'}`}>
                     <span className=${`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${pushOn ? 'left-[22px]' : 'left-0.5'}`}></span>
                 </button>
             </div>
-            ${!pushSupported() && needsHomeScreen() && html`<p className="text-xs text-amber-300">On iPhone: tap Share → <b>Add to Home Screen</b>, open Echo Market from your Home Screen, then turn this on there.</p>`}
-            ${perm === 'denied' && html`<p className="text-xs text-amber-300">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>`}
-            ${pushOn && html`<${Button} size="sm" variant="secondary" busy=${pushBusy} onClick=${testPush}>Send me a test alert<//>`}
+            ${!pushSupported() && needsHomeScreen() && html`<p className="text-xs text-amber-300">${t('On iPhone: tap Share → Add to Home Screen, open Echo Market from your Home Screen, then turn this on there.')}</p>`}
+            ${perm === 'denied' && html`<p className="text-xs text-amber-300">${t("Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.")}</p>`}
+            ${pushOn && html`<${Button} size="sm" variant="secondary" busy=${pushBusy} onClick=${testPush}>${t('Send me a test alert')}<//>`}
         </div>`}
         ${!CONFIG.PUSH_AVAILABLE && perm === 'default' && html`<div className="flex items-center gap-3 p-3 mb-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm">
             <${Icon} name="bell-ring" className="w-5 h-5 text-sky-300" />
-            <span className="flex-1 text-slate-300">Get a browser alert when a seller updates your order (while Echo Market is open in a tab).</span>
-            <${Button} size="sm" onClick=${enable}>Enable<//>
+            <span className="flex-1 text-slate-300">${t('Get a browser alert when a seller updates your order (while Echo Market is open in a tab).')}</span>
+            <${Button} size="sm" onClick=${enable}>${t('Enable')}<//>
         </div>`}
-        ${!inbox.length ? html`<p className="text-sm text-slate-400 text-center py-8">No updates yet. You'll be notified here when a seller takes or delivers your order.</p>`
+        ${!inbox.length ? html`<p className="text-sm text-slate-400 text-center py-8">${t("No updates yet. You'll be notified here when a seller takes or delivers your order.")}</p>`
         : html`<ul className="divide-y divide-slate-800 -my-2">
             ${inbox.slice(0, 50).map((e) => html`<li key=${e.id}>
                 <button onClick=${() => onOpenOrder(e.order_id)} className="w-full text-left py-3 flex gap-3 hover:bg-slate-800/40 rounded-xl px-2">
@@ -1488,14 +1500,15 @@ function NotificationsPanel({ open, inbox, lastSeen, account, setAccount, onClos
 //  could take them. Available once anything was delivered (most visible when the order is complete).
 //  The sellers on the order and the admins are DMed; a seller checks in-game and answers here.
 // =========================================================================
+const reportLabel = (text, cls, icon) => ({ get text() { return t(text); }, cls, icon });
 const REPORT_LABEL = {
-    OPEN: { text: 'Reported · the sellers are checking', cls: 'text-amber-200 border-amber-500/30 bg-amber-500/5', icon: 'search' },
+    OPEN: reportLabel('Reported · the sellers are checking', 'text-amber-200 border-amber-500/30 bg-amber-500/5', 'search'),
     // Same colours as the seller desk: red while the thief is unknown, yellow once identified, green when re-listed.
-    CONFIRMED: { text: 'Theft confirmed · the thief was identified', cls: 'text-amber-100 border-amber-400/40 bg-amber-400/5', icon: 'shield-alert' },
-    INVESTIGATING: { text: 'Theft confirmed · finding out who took them', cls: 'text-rose-200 border-rose-500/30 bg-rose-500/5', icon: 'shield-alert' },
-    UNIDENTIFIED: { text: 'Theft confirmed', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'shield-alert' },
-    NOT_THEFT: { text: 'Checked · not a theft', cls: 'text-slate-200 border-slate-700 bg-slate-950', icon: 'circle-check' },
-    CLEARED: { text: 'Re-listed for you · buy them in-game', cls: 'text-emerald-200 border-emerald-500/30 bg-emerald-500/5', icon: 'shield-check' }
+    CONFIRMED: reportLabel('Theft confirmed · the thief was identified', 'text-amber-100 border-amber-400/40 bg-amber-400/5', 'shield-alert'),
+    INVESTIGATING: reportLabel('Theft confirmed · finding out who took them', 'text-rose-200 border-rose-500/30 bg-rose-500/5', 'shield-alert'),
+    UNIDENTIFIED: reportLabel('Theft confirmed', 'text-slate-200 border-slate-700 bg-slate-950', 'shield-alert'),
+    NOT_THEFT: reportLabel('Checked · not a theft', 'text-slate-200 border-slate-700 bg-slate-950', 'circle-check'),
+    CLEARED: reportLabel('Re-listed for you · buy them in-game', 'text-emerald-200 border-emerald-500/30 bg-emerald-500/5', 'shield-check')
 };
 function MissingPlanes({ order, reports, onReported }) {
     const [open, setOpen] = useState(false);
@@ -1504,13 +1517,13 @@ function MissingPlanes({ order, reports, onReported }) {
     if (!(order.filled > 0) || ['CANCELLED', 'DECLINED'].includes(order.status)) return null;
     const pending = reports.some((r) => r.status === 'OPEN');
     const send = async () => {
-        if (details.trim().length < 3) return toast('Say how many planes are missing and of which type.', 'error');
+        if (details.trim().length < 3) return toast(t('Say how many planes are missing and of which type.'), 'error');
         setBusy(true);
         try {
             const r = await api(`/api/orders/${order.id}`, { action: 'report-missing', details: details.trim() });
             onReported?.(r.report);
             setOpen(false); setDetails('');
-            toast('Report sent. The sellers on this order and the Market Admins have been alerted.', 'success');
+            toast(t('Report sent. The sellers on this order and the Market Admins have been alerted.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     return html`<div className="space-y-2">
@@ -1519,24 +1532,24 @@ function MissingPlanes({ order, reports, onReported }) {
             const key = r.status !== 'CONFIRMED' ? r.status : r.investigating ? 'INVESTIGATING' : r.warning_id ? 'CONFIRMED' : 'UNIDENTIFIED';
             const l = REPORT_LABEL[key] || REPORT_LABEL.OPEN;
             return html`<div key=${r.id} className=${`p-3 rounded-2xl border text-sm space-y-1 ${l.cls}`}>
-                <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />Missing planes · ${l.text}</p>
-                ${key === 'CONFIRMED' && html`<p className="text-xs">The sellers will ask them to re-list your planes. You'll be told when they're back on the market.</p>`}
-                <p className="text-xs opacity-80">You wrote: “${r.details}” · ${timeAgo(r.created_at)}</p>
-                ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || 'Seller'}: “${r.resolution_note}”</p>`}
-                ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || 'Seller'}: “${r.cleared_note}”</p>`}
+                <p className="font-bold flex items-center gap-1.5"><${Icon} name=${l.icon} className="w-4 h-4" />${t('Missing planes')} · ${l.text}</p>
+                ${key === 'CONFIRMED' && html`<p className="text-xs">${t("The sellers will ask them to re-list your planes. You'll be told when they're back on the market.")}</p>`}
+                <p className="text-xs opacity-80">${t('You wrote: “{text}”', { text: r.details })} · ${timeAgo(r.created_at)}</p>
+                ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || t('Seller')}: “${r.resolution_note}”</p>`}
+                ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || t('Seller')}: “${r.cleared_note}”</p>`}
             </div>`;
         })}
         ${!pending && html`<div className="flex justify-end">
-            <${Button} size="sm" variant=${order.status === 'FULFILLED' ? 'secondary' : 'ghost'} icon="triangle-alert" onClick=${() => setOpen(true)}>Report missing planes<//>
+            <${Button} size="sm" variant=${order.status === 'FULFILLED' ? 'secondary' : 'ghost'} icon="triangle-alert" onClick=${() => setOpen(true)}>${t('Report missing planes')}<//>
         </div>`}
-        ${open && html`<${Modal} open=${true} onClose=${() => setOpen(false)} title="Report missing planes" size="sm"
-            subtitle=${`${orderRef(order)} · ${order.filled} of ${plural(order.total_qty, 'aircraft')} delivered`}
-            footer=${html`<${Button} variant="ghost" onClick=${() => setOpen(false)}>Cancel<//>
-                <${Button} icon="send" busy=${busy} disabled=${details.trim().length < 3} onClick=${send}>Send report<//>`}>
-            <p className="text-sm text-slate-300">Planes listed for you on the in-game market were bought by someone else before you could take them? Tell the sellers <b className="text-white">how many</b> are missing and <b className="text-white">which type</b>. Only they can see in-game who bought them.</p>
+        ${open && html`<${Modal} open=${true} onClose=${() => setOpen(false)} title=${t('Report missing planes')} size="sm"
+            subtitle=${`${orderRef(order)} · ${t('{filled} of {count} delivered', { filled: order.filled, count: plural(order.total_qty, 'aircraft') })}`}
+            footer=${html`<${Button} variant="ghost" onClick=${() => setOpen(false)}>${t('Cancel')}<//>
+                <${Button} icon="send" busy=${busy} disabled=${details.trim().length < 3} onClick=${send}>${t('Send report')}<//>`}>
+            <p className="text-sm text-slate-300">${tj('Planes listed for you on the in-game market were bought by someone else before you could take them? Tell the sellers {howMany} are missing and {whichType}. Only they can see in-game who bought them.', { howMany: html`<b className="text-white">${t('how many')}</b>`, whichType: html`<b className="text-white">${t('which type')}</b>` })}</p>
             <textarea autoFocus value=${details} maxLength="1000" rows="4" onChange=${(e) => setDetails(e.target.value)} className="input mt-3"
-                placeholder="e.g. 2× A320neo from Dave Air were gone from the market when I logged in"></textarea>
-            <p className="text-xs text-slate-500 mt-2">The sellers on this order and the Market Admins get a DM right away. You'll be told what they find.</p>
+                placeholder=${t('e.g. 2× A320neo from Dave Air were gone from the market when I logged in')}></textarea>
+            <p className="text-xs text-slate-500 mt-2">${t("The sellers on this order and the Market Admins get a DM right away. You'll be told what they find.")}</p>
         <//>`}
     </div>`;
 }
@@ -1563,26 +1576,26 @@ function OrderThread({ order, messages, onMessage }) {
             const r = await api(`/api/orders/${order.id}`, { action: 'message', body: text.trim() });
             onMessage?.(r.message);
             setText('');
-            toast('Sent to the seller team. You will be notified when they answer.', 'success');
+            toast(t('Sent to the seller team. You will be notified when they answer.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     if (!messages.length && !open) {
         return html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20">
-            <span className="flex-1 text-sm text-amber-100">This order has waited over ${CONTACT_AFTER_HOURS} hours without being fully delivered. You can contact the seller team about it.</span>
-            <${Button} size="sm" variant="secondary" icon="message-circle" onClick=${() => setOpen(true)}>Contact the seller team<//>
+            <span className="flex-1 text-sm text-amber-100">${t('This order has waited over {n} hours without being fully delivered. You can contact the seller team about it.', { n: CONTACT_AFTER_HOURS })}</span>
+            <${Button} size="sm" variant="secondary" icon="message-circle" onClick=${() => setOpen(true)}>${t('Contact the seller team')}<//>
         </div>`;
     }
     return html`<div className="space-y-2 p-3 rounded-2xl bg-slate-950 border border-slate-800">
-        <p className="label text-slate-500">Messages with the seller team</p>
+        <p className="label text-slate-500">${t('Messages with the seller team')}</p>
         ${messages.map((m) => html`<div key=${m.id} className=${`p-2.5 rounded-xl text-sm ${m.from_role === 'buyer' ? 'ml-8 bg-slate-800/70' : 'mr-8 bg-sky-500/10 border border-sky-500/20'}`}>
-            <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? 'You' : `${m.author_name} · seller team`} · ${timeAgo(m.created_at)}</p>
+            <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? t('You') : `${m.author_name} · ${t('seller team')}`} · ${timeAgo(m.created_at)}</p>
             <p className="text-slate-100 whitespace-pre-line break-words">${m.body}</p>
         </div>`)}
         ${canWrite ? html`<div className="flex gap-2 items-end">
             <textarea value=${text} maxLength="1000" rows="2" onChange=${(e) => setText(e.target.value)} className="input flex-1"
-                placeholder="What do you need from the seller team?"></textarea>
-            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>Send<//>
-        </div>` : html`<p className="text-[11px] text-slate-500">This order is finished, so the conversation is closed.</p>`}
+                placeholder=${t('What do you need from the seller team?')}></textarea>
+            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>${t('Send')}<//>
+        </div>` : html`<p className="text-[11px] text-slate-500">${t('This order is finished, so the conversation is closed.')}</p>`}
     </div>`;
 }
 
@@ -1597,26 +1610,28 @@ function MarketGate({ standing, account, onSignOut }) {
             <div className=${`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border ${banned ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
                 <${Icon} name=${banned ? 'ban' : 'users-round'} className="w-6 h-6" /></div>
             ${banned ? html`
-                <h1 className="text-xl font-black text-white mt-5">You're banned from Echo Market</h1>
-                <p className="text-sm text-slate-300 mt-2">${ban ? (ban.ends_at ? `Until ${fmtDate(ban.ends_at)}.` : 'This ban is permanent.') : 'You have the Market Banned role on the Echo Discord server.'}</p>
-                ${ban?.reason && html`<p className="text-sm text-slate-200 mt-3 p-3 rounded-2xl bg-slate-900 border border-slate-800 text-left"><b>Reason:</b> ${ban.reason}</p>`}
-                <p className="text-xs text-slate-400 mt-4">If you think this is a mistake, contact a Market Admin on the Echo Discord server.</p>`
+                <h1 className="text-xl font-black text-white mt-5">${t("You're banned from Echo Market")}</h1>
+                <p className="text-sm text-slate-300 mt-2">${ban ? (ban.ends_at ? t('Until {date}.', { date: fmtDate(ban.ends_at) }) : t('This ban is permanent.')) : t('You have the Market Banned role on the Echo Discord server.')}</p>
+                ${ban?.reason && html`<p className="text-sm text-slate-200 mt-3 p-3 rounded-2xl bg-slate-900 border border-slate-800 text-left"><b>${t('Reason:')}</b> ${ban.reason}</p>`}
+                <p className="text-xs text-slate-400 mt-4">${t('If you think this is a mistake, contact a Market Admin on the Echo Discord server.')}</p>`
             : html`
-                <h1 className="text-xl font-black text-white mt-5">Echo Market is for Echo Alliances members</h1>
-                <p className="text-sm text-slate-400 mt-2">${account?.display_name ? `${account.display_name}, your` : 'Your'} Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.</p>`}
+                <h1 className="text-xl font-black text-white mt-5">${t('Echo Market is for Echo Alliances members')}</h1>
+                <p className="text-sm text-slate-400 mt-2">${account?.display_name ? t("{name}, your Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.", { name: account.display_name }) : t("Your Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.")}</p>`}
             <div className="mt-7 flex flex-wrap justify-center gap-2">
-                ${!banned && html`<${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>Check again<//>`}
-                <${Button} variant="secondary" icon="log-out" onClick=${onSignOut}>Sign out<//>
+                ${!banned && html`<${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>${t('Check again')}<//>`}
+                <${Button} variant="secondary" icon="log-out" onClick=${onSignOut}>${t('Sign out')}<//>
             </div>
         </div>
         <${Toasts} />
     </div>`;
 }
 
+// what: the whole sentence, e.g. t('Sign in with Discord to see your orders.')
 function SignInPrompt({ what }) {
-    return html`<${EmptyState} icon="lock" title="Sign in to continue" text=${`Sign in with Discord to ${what}.`}
-        action=${html`<${Button} variant="discord" onClick=${signInWithDiscord}><${DiscordLogo} className="w-4 h-4" /> Sign in with Discord<//>`} />`;
+    return html`<${EmptyState} icon="lock" title="Sign in to continue" text=${what}
+        action=${html`<${Button} variant="discord" onClick=${signInWithDiscord}><${DiscordLogo} className="w-4 h-4" /> ${t('Sign in with Discord')}<//>`} />`;
 }
 
 // =========================================================================
+await setLang(savedLang(), ['app'], false).catch(() => {});
 ReactDOM.createRoot(document.getElementById('root')).render(isConfigured ? html`<${App} />` : html`<${NotConfigured} />`);

@@ -4,6 +4,7 @@
 // The layout borrows the feel of ThreeUI's free Kibori page; all code here is our own.
 // Finishing it: POST /api/welcome { pledges: { check, serve } } (records sellers.welcome_done_at).
 import { pickQuality, lowerThan, rememberQuality, pixelRatioFor, frameWatch, mixHex, inkFor, qualitySwitch } from './welcome-perf.js';
+import { t, tx, setLang, savedLang, languageMenu, translatePage, onLangChange } from './i18n.js';
 // three.js is loaded only when the device shows the 3D hangar (not at the 'lite' graphics level).
 let THREE = null;
 // Graphics level (js/welcome-perf.js): 'high', 'low' or 'lite'; lowered automatically if frames drop.
@@ -39,140 +40,164 @@ async function api(path, payload) {
 }
 
 // ------------------------------------------------------------------ the eight exhibits (cards + close-ups)
-const EXHIBITS = [
+// A function, so the texts follow the language (re-read when it changes).
+const exhibits = () => [
     {
-        kind: 'Prop · Order ticket', title: 'Taking an order', short: 'Selling as, alliance, list value',
+        kind: t('Prop · Order ticket'), title: t('Taking an order'), short: t('Selling as, alliance, list value'),
         lines: [
-            'Pick the airline you sell as (<b>Selling as</b>, top right). Buyers see it on their order.',
-            'Prefer orders from your own alliance: your matching airline is offered first.',
-            'The amber <b>list value</b> is your estimated cost of buying those aircraft new.'
+            t('Pick the airline you sell as (<b>Selling as</b>, top right). Buyers see it on their order.'),
+            t('Prefer orders from your own alliance: your matching airline is offered first.'),
+            t('The amber <b>list value</b> is your estimated cost of buying those aircraft new.')
         ],
         detail: [
-            ['Where', 'The <b>Open queue</b> lists orders waiting for a seller, the longest-waiting first. Press <b>Take order</b> and choose the airline you deliver from.'],
-            ['Your airline', 'You need an airline profile on the market site (same Discord login). The buyer sees it on their order and searches for it in-game.'],
-            ['The cost', 'List value = the in-game price of each aircraft new × the quantity: roughly what you pay before reselling at the buyer\'s level.'],
-            ["Can't do it?", 'Pass on it with a reason. It stays open for the other sellers; the buyer is only told once every seller has passed.']
+            [t('Where'), t('The <b>Open queue</b> lists orders waiting for a seller, the longest-waiting first. Press <b>Take order</b> and choose the airline you deliver from.')],
+            [t('Your airline'), t('You need an airline profile on the market site (same Discord login). The buyer sees it on their order and searches for it in-game.')],
+            [t('The cost'), t('List value = the in-game price of each aircraft new × the quantity: roughly what you pay before reselling at the buyer\'s level.')],
+            [t("Can't do it?"), t('Pass on it with a reason. It stays open for the other sellers; the buyer is only told once every seller has passed.')]
         ]
     },
     {
-        kind: 'Aircraft · A320neo', title: 'Buy new, list in public', short: 'Exact model, exact quantity, your airline',
+        kind: t('Aircraft · A320neo'), title: t('Buy new, list in public'), short: t('Exact model, exact quantity, your airline'),
         lines: [
-            'Buy the aircraft <b>new</b> in-game.',
-            'List them on the <b>public</b> in-game market under <b>your airline</b>, at the buyer\'s price level.',
-            'Exact model, exact quantity: nothing more, nothing less.'
+            t('Buy the aircraft <b>new</b> in-game.'),
+            t('List them on the <b>public</b> in-game market under <b>your airline</b>, at the buyer\'s price level.'),
+            t('Exact model, exact quantity: nothing more, nothing less.')
         ],
         detail: [
-            ['Why it matters', 'The in-game market is public: anyone browsing can see your listings. That is why buyers buy straight away, and why you check who bought (exhibit 04).'],
-            ['Price level', 'Each order line shows its level, e.g. 70% of the list price. List every aircraft at that level.'],
-            ['Several types', 'List each aircraft type for its own count, so the buyer can match it to their order.'],
-            ['Spare planes', 'Never mix spares into someone\'s order. Free-for-all sales are announced in #ffa-listings.']
+            [t('Why it matters'), t('The in-game market is public: anyone browsing can see your listings. That is why buyers buy straight away, and why you check who bought (exhibit 04).')],
+            [t('Price level'), t('Each order line shows its level, e.g. 70% of the list price. List every aircraft at that level.')],
+            [t('Several types'), t('List each aircraft type for its own count, so the buyer can match it to their order.')],
+            [t('Spare planes'), t('Never mix spares into someone\'s order. Free-for-all sales are announced in #ffa-listings.')]
         ]
     },
     {
-        kind: 'Prop · Departures board', title: 'Update progress straight away', short: 'Per type, the moment you list',
+        kind: t('Prop · Departures board'), title: t('Update progress straight away'), short: t('Per type, the moment you list'),
         lines: [
-            'As soon as you list, record what you listed, per aircraft type.',
-            'The buyer gets a DM and sees which airline listed what.',
-            'The order completes when everything is listed.'
+            t('As soon as you list, record what you listed, per aircraft type.'),
+            t('The buyer gets a DM and sees which airline listed what.'),
+            t('The order completes when everything is listed.')
         ],
         detail: [
-            ['How', 'My orders → <b>Update progress</b> → the number you listed for each type. Add a note the buyer can see if it helps (e.g. where it is listed).'],
-            ['Why fast', 'Buyers search after your update. The sooner they buy, the less time anyone else has to take the planes.'],
-            ['Several sellers', 'Each seller records only what they listed themselves; the buyer sees the split per airline.']
+            [t('How'), t('My orders → <b>Update progress</b> → the number you listed for each type. Add a note the buyer can see if it helps (e.g. where it is listed).')],
+            [t('Why fast'), t('Buyers search after your update. The sooner they buy, the less time anyone else has to take the planes.')],
+            [t('Several sellers'), t('Each seller records only what they listed themselves; the buyer sees the split per airline.')]
         ]
     },
     {
         key: true,
-        kind: 'Prop · Sold listing + magnifier', title: 'Check who bought, before you claim the money', short: 'The key habit',
+        kind: t('Prop · Sold listing + magnifier'), title: t('Check who bought, before you claim the money'), short: t('The key habit'),
         lines: [
-            'Every sold listing in-game shows the <b>buyer\'s airline</b>.',
-            'Before claiming the money, check it is an airline on the order.',
-            'Wrong buyer? Note their airline and keep it. <b>Don\'t act yet.</b>',
-            'When the buyer reports missing planes, you already know the culprit.'
+            t('Every sold listing in-game shows the <b>buyer\'s airline</b>.'),
+            t('Before claiming the money, check it is an airline on the order.'),
+            t('Wrong buyer? Note their airline and keep it. <b>Don\'t act yet.</b>'),
+            t('When the buyer reports missing planes, you already know the culprit.')
         ],
         detail: [
-            ['Every sale', 'Open your sold listings. Compare each buyer\'s airline with the order\'s airline(s), shown on the order on the desk. Only then claim the sale money.'],
-            ['Wrong buyer', 'Write down their airline (and Discord name if you know it) and which order it was. Don\'t chase them yet: you serve many orders and run FFA events, so the buyer\'s missing-plane report is what confirms a theft.'],
-            ['When the report comes', 'You get a DM. Open the order and confirm the theft with the culprit\'s Discord ID (exhibit 06): they are warned automatically.'],
-            ['Why it matters', 'This one check is how thieves get caught. Without it, a theft can\'t be traced back to anyone.']
+            [t('Every sale'), t('Open your sold listings. Compare each buyer\'s airline with the order\'s airline(s), shown on the order on the desk. Only then claim the sale money.')],
+            [t('Wrong buyer'), t('Write down their airline (and Discord name if you know it) and which order it was. Don\'t chase them yet: you serve many orders and run FFA events, so the buyer\'s missing-plane report is what confirms a theft.')],
+            [t('When the report comes'), t('You get a DM. Open the order and confirm the theft with the culprit\'s Discord ID (exhibit 06): they are warned automatically.')],
+            [t('Why it matters'), t('This one check is how thieves get caught. Without it, a theft can\'t be traced back to anyone.')]
         ]
     },
     {
-        kind: 'Aircraft · 737 MAX + E-Jet', title: 'Take-over and passing on', short: '12 hours, shares, releasing',
+        kind: t('Aircraft · 737 MAX + E-Jet'), title: t('Take-over and passing on'), short: t('12 hours, shares, releasing'),
         lines: [
-            'Taken but not finished after <b>12 hours</b>? Another seller can take it over.',
-            'The buyer sees how many each airline listed, and buys that many from each.',
-            'Can\'t finish? Pass on the rest, or release it to the queue.'
+            t('Taken but not finished after <b>12 hours</b>? Another seller can take it over.'),
+            t('The buyer sees how many each airline listed, and buys that many from each.'),
+            t('Can\'t finish? Pass on the rest, or release it to the queue.')
         ],
         detail: [
-            ['Taking over', '<b>Take over</b> appears on orders taken more than 12 hours ago and not complete. Up to three sellers can join; the original seller stays on it.'],
-            ['Your share', 'Update progress records what you listed. The buyer is shown each airline\'s share so they buy the right amount from each.'],
-            ['Passing on', 'Release an order you can\'t finish: what you listed stays counted, the rest goes back to the queue (or to the seller who joined).'],
-            ['Declining', 'Pass on an open order with a reason. Admins can decline it for everyone.']
+            [t('Taking over'), t('<b>Take over</b> appears on orders taken more than 12 hours ago and not complete. Up to three sellers can join; the original seller stays on it.')],
+            [t('Your share'), t('Update progress records what you listed. The buyer is shown each airline\'s share so they buy the right amount from each.')],
+            [t('Passing on'), t('Release an order you can\'t finish: what you listed stays counted, the rest goes back to the queue (or to the seller who joined).')],
+            [t('Declining'), t('Pass on an open order with a reason. Admins can decline it for everyone.')]
         ]
     },
     {
-        kind: 'Prop · Shield', title: 'Theft reports', short: 'Confirm, warn every culprit, clear',
+        kind: t('Prop · Shield'), title: t('Theft reports'), short: t('Confirm, warn every culprit, clear'),
         lines: [
-            'A buyer reports missing planes: the sellers on the order and the admins get a DM.',
-            'Check in-game, then confirm the theft with every culprit\'s Discord ID, or <b>Under investigation</b>.',
-            'Any seller can warn culprits later from <b>Theft reports</b> on the front page.'
+            t('A buyer reports missing planes: the sellers on the order and the admins get a DM.'),
+            t('Check in-game, then confirm the theft with every culprit\'s Discord ID, or <b>Under investigation</b>.'),
+            t('Any seller can warn culprits later from <b>Theft reports</b> on the front page.')
         ],
         detail: [
-            ['Confirm', '<b>Theft confirmed</b> → I know who: add one or more Discord IDs (right-click the user → Copy User ID). Each gets an automatic warning: DM, moderation log, disciplinary record. The buyer never learns who.'],
-            ['Not sure yet', 'Choose <b>Under investigation</b>. Found them later? <b>Identify & warn culprits</b>. Never found? Close the investigation.'],
-            ['Not a theft', 'Tell the buyer what you found, e.g. the planes are still listed.'],
-            ['Clear theft', 'Once the culprits re-listed the planes for the buyer (checked in-game), clear it: the buyer is told to buy them.']
+            [t('Confirm'), t('<b>Theft confirmed</b> → I know who: add one or more Discord IDs (right-click the user → Copy User ID). Each gets an automatic warning: DM, moderation log, disciplinary record. The buyer never learns who.')],
+            [t('Not sure yet'), t('Choose <b>Under investigation</b>. Found them later? <b>Identify & warn culprits</b>. Never found? Close the investigation.')],
+            [t('Not a theft'), t('Tell the buyer what you found, e.g. the planes are still listed.')],
+            [t('Clear theft'), t('Once the culprits re-listed the planes for the buyer (checked in-game), clear it: the buyer is told to buy them.')]
         ]
     },
     {
-        kind: 'Prop · Warning beacon', title: 'Caution and the alert list', short: 'Badges, records, flags',
+        kind: t('Prop · Warning beacon'), title: t('Caution and the alert list'), short: t('Badges, records, flags'),
         lines: [
-            'A <b>caution</b> badge marks orders from buyers on the alert list: deliver with extra care.',
-            'Every order shows the buyer\'s disciplinary record in one line.',
-            'Flag suspicious or blacklisted orders for the other sellers.'
+            t('A <b>caution</b> badge marks orders from buyers on the alert list: deliver with extra care.'),
+            t('Every order shows the buyer\'s disciplinary record in one line.'),
+            t('Flag suspicious or blacklisted orders for the other sellers.')
         ],
         detail: [
-            ['Alert list', 'Admins add buyers to it. Their orders carry a caution badge and banner; admins also see why.'],
-            ['Record', '"Buyer has N warnings on record", with <b>Show details</b> for the warnings and bans.'],
-            ['Flags', 'Seller-only: buyers never see them. Use them to warn the team about an order.']
+            [t('Alert list'), t('Admins add buyers to it. Their orders carry a caution badge and banner; admins also see why.')],
+            [t('Record'), t('"Buyer has N warnings on record", with <b>Show details</b> for the warnings and bans.')],
+            [t('Flags'), t('Seller-only: buyers never see them. Use them to warn the team about an order.')]
         ]
     },
     {
-        kind: 'Aircraft · A350', title: 'Your desk', short: 'Queues, filters, messages',
+        kind: t('Aircraft · A350'), title: t('Your desk'), short: t('Queues, filters, messages'),
         lines: [
-            'Open queue, My orders, All orders, and Theft reports on the front page.',
-            'Sort and filter by price, alliance, types, aircraft count, list value, or orders you delivered on.',
-            'Tap <b>💬 new buyer messages</b> in the greeting to see those orders.'
+            t('Open queue, My orders, All orders, and Theft reports on the front page.'),
+            t('Sort and filter by price, alliance, types, aircraft count, list value, or orders you delivered on.'),
+            t('Tap <b>💬 new buyer messages</b> in the greeting to see those orders.')
         ],
         detail: [
-            ['Messages', 'Buyers can write once an order has waited 24 hours. Answer from the order; keep it short (no full conversations in tickets).'],
-            ['Paging', 'Every list shows the latest 5 first, then 10 / 25 / 50 / All.'],
-            ['Next', 'A short tour of the desk follows this welcome. You can replay both from the account menu.']
+            [t('Messages'), t('Buyers can write once an order has waited 24 hours. Answer from the order; keep it short (no full conversations in tickets).')],
+            [t('Paging'), t('Every list shows the latest 5 first, then 10 / 25 / 50 / All.')],
+            [t('Next'), t('A short tour of the desk follows this welcome. You can replay both from the account menu.')]
         ]
     }
 ];
+let EXHIBITS = exhibits();
 
 // Build the exhibit pages and the index from EXHIBITS.
-$('exhibits').outerHTML = EXHIBITS.map((x, i) => `
-    <section class="page${x.key ? ' key' : ''}" id="p${i + 1}" data-page="${i + 1}">
-        <div class="card">
-            ${x.key ? '<p class="key-badge">The key habit</p>' : ''}
+const cardHtml = (x, i) => `
+            ${x.key ? `<p class="key-badge">${t('The key habit')}</p>` : ''}
             <p class="num">${String(i + 1).padStart(2, '0')} / 08</p>
             <p class="kind">${esc(x.kind)}</p>
             <h2>${esc(x.title)}</h2>
             <ul class="lines">${x.lines.map((l) => `<li>${l}</li>`).join('')}</ul>
-            <div class="row"><button type="button" class="ghost" data-open="${i}">Open the close-up</button><span class="hint"><span class="hint-mouse">Drag the exhibit to turn it</span><span class="hint-touch">Swipe the exhibit sideways to turn it</span></span></div>
+            <div class="row"><button type="button" class="ghost" data-open="${i}">${t('Open the close-up')}</button><span class="hint"><span class="hint-mouse">${t('Drag the exhibit to turn it')}</span><span class="hint-touch">${t('Swipe the exhibit sideways to turn it')}</span></span></div>`;
+const indexHtml = () => EXHIBITS.map((x, i) => `<li><a href="#p${i + 1}"><span class="n">${String(i + 1).padStart(2, '0')}</span>
+    <span class="t">${esc(x.title)}</span><span class="s">${esc(x.short)}</span></a></li>`).join('');
+$('exhibits').outerHTML = EXHIBITS.map((x, i) => `
+    <section class="page${x.key ? ' key' : ''}" id="p${i + 1}" data-page="${i + 1}">
+        <div class="card">${cardHtml(x, i)}
         </div>
     </section>`).join('');
-$('index-list').innerHTML = EXHIBITS.map((x, i) => `<li><a href="#p${i + 1}"><span class="n">${String(i + 1).padStart(2, '0')}</span>
-    <span class="t">${esc(x.title)}</span><span class="s">${esc(x.short)}</span></a></li>`).join('');
+$('index-list').innerHTML = indexHtml();
 
 const PAGES = [...document.querySelectorAll('.page')];   // hero, index, 8 exhibits, pledge
 const LAST = PAGES.length - 1;
 // Which view and colour each page uses: 0 = opening, 1–8 = exhibit stands, 9 = finale.
 const VIEW_OF = PAGES.map((p) => (p.id === 'p0' || p.id === 'index' ? 0 : p.id === 'pledge' ? 9 : Number(p.dataset.page)));
 const colourOfView = (v) => COLOURS[Math.min(v, 8)];
+
+// ------------------------------------------------------------------ language
+// The menu sits in the top bar. Text in welcome.html is marked data-i18n; the exhibits are rebuilt, and the
+// script's own messages go through say(), so they change too when the language does.
+const PACKS = ['app', 'welcome-seller'];
+const said = new Map();   // element → English text
+function say(el, text) {
+    said.set(el, text);
+    el.textContent = text ? tx(text) : '';
+}
+function paintLanguage() {
+    translatePage();
+    document.title = t('A new era begins · Echo Market sellers');
+    EXHIBITS = exhibits();
+    EXHIBITS.forEach((x, i) => { document.querySelector(`#p${i + 1} .card`).innerHTML = cardHtml(x, i); });
+    $('index-list').innerHTML = indexHtml();
+    if (closeUp >= 0) fillDetail(closeUp);
+    said.forEach((text, el) => { el.textContent = text ? tx(text) : ''; });
+}
+document.querySelector('.nav').insertBefore(languageMenu(PACKS), document.querySelector('.nav-progress'));
 
 // ------------------------------------------------------------------ who is this?
 let gated = true;
@@ -189,7 +214,7 @@ function setReplay() {
     $('replay-note').hidden = false;
     $('nav-exit').hidden = false;
     $('enter').disabled = false;
-    $('enter').textContent = 'Back to the desk';
+    say($('enter'), 'Back to the desk');
 }
 
 // ------------------------------------------------------------------ textures (canvas, no image files)
@@ -522,7 +547,7 @@ function readScroll() {
     const docH = document.documentElement.scrollHeight - window.innerHeight;
     $('nav-progress-bar').style.width = `${docH > 0 ? Math.min(100, (window.scrollY / docH) * 100) : 0}%`;
     const idx = Math.round(target), v = VIEW_OF[idx];
-    $('nav-step').textContent = v >= 1 && v <= 8 ? `${String(v).padStart(2, '0')} / 08` : v === 9 ? 'PLEDGE' : '00 / 08';
+    $('nav-step').textContent = v >= 1 && v <= 8 ? `${String(v).padStart(2, '0')} / 08` : v === 9 ? t('PLEDGE') : '00 / 08';
     const id = PAGES[idx].id;
     document.querySelectorAll('.nav-links a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#${id}`));
     exhaustOn(v);
@@ -598,11 +623,14 @@ function onMove(e) {
 }
 function onUp() { drag = null; world?.renderer.domElement.classList.remove('dragging'); }
 
-function openDetail(i) {
+function fillDetail(i) {
     const x = EXHIBITS[i];
     $('detail-kind').textContent = `${String(i + 1).padStart(2, '0')} / 08 · ${x.kind}`;
     $('detail-title').textContent = x.title;
     $('detail-body').innerHTML = x.detail.map(([h, p]) => `<h3>${esc(h)}</h3><p>${p}</p>`).join('');
+}
+function openDetail(i) {
+    fillDetail(i);
     $('detail').hidden = false;
     closeUp = i;
     $('detail-close').focus();
@@ -772,14 +800,14 @@ $('enter').addEventListener('click', async () => {
     if (gated) {
         if (!pledgesTicked()) return;
         button.disabled = true;
-        out.textContent = 'Opening your desk…';
+        say(out, 'Opening your desk…');
         try {
             await api('/api/welcome', { pledges: { check: true, serve: true } });
         } catch (err) {
-            out.textContent = err.message; out.classList.add('bad'); button.disabled = false;
+            say(out, err.message); out.classList.add('bad'); button.disabled = false;
             return;
         }
-        out.textContent = 'Welcome to the new era.';
+        say(out, 'Welcome to the new era.');
     }
     button.disabled = true;
     leave();
@@ -792,3 +820,7 @@ function leave() {
     setTimeout(() => $('fade').classList.add('on'), Math.max(0, wait - 900));
     setTimeout(() => window.location.replace('/'), wait);
 }
+
+// Language last: paintLanguage uses the state above.
+onLangChange(paintLanguage);
+setLang(savedLang(), PACKS, false).catch(() => {});

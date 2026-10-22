@@ -8,9 +8,29 @@
 // no build step: edit, push, Vercel deploys. Syntax cheat-sheet:
 //   html`<div className="x" onClick=${fn}>${value}</div>`
 //   html`<${Component} prop=${value} />`      (components need ${} around the name)
+import { t, tj, tx, plural, currentLang, onLangChange, setLang, savedLang, languageMenu } from './i18n.js';
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 export { useState, useEffect, useMemo, useRef, useCallback };
+export { t, tj, tx, plural, currentLang, setLang, savedLang };
 export const html = htm.bind(React.createElement);
+
+// ------------------------------------------------------------------ language
+// Re-renders the component (use it in each app's root) whenever the language changes.
+export function useLang() {
+    const [l, setL] = useState(currentLang());
+    useEffect(() => onLangChange(setL), []);
+    return l;
+}
+// The language drop-down for the top bar (js/i18n.js; styles in css/lang-menu.css).
+export function LanguageMenu({ packs = ['app'], up = false, className = '' }) {
+    const ref = useRef(null);
+    useEffect(() => {
+        const el = languageMenu(packs, null, { up });
+        ref.current?.replaceChildren(el);
+        return () => el.dispose();
+    }, []);
+    return html`<span ref=${ref} className=${`inline-flex ${className}`}></span>`;
+}
 
 // ------------------------------------------------------------------ config
 export const CONFIG = window.ECHO_CONFIG || {};
@@ -39,18 +59,19 @@ export async function api(path, payload) {
     });
     let json = null;
     try { json = await res.json(); } catch { /* non-JSON error page */ }
-    if (!res.ok || !json?.ok) throw new Error(json?.error || `Request failed (HTTP ${res.status})`);
+    // Server messages are in English; tx() shows them in the chosen language when we have them.
+    if (!res.ok || !json?.ok) throw new Error(json?.error ? tx(json.error) : t('Request failed (HTTP {status})', { status: res.status }));
     return json;
 }
 
 export function dbError(err) {
-    if (!err) return 'Something went wrong.';
-    if (err.code === '23505') return 'You already have an airline with that name.';
-    if (err.code === '23514') return 'Airline names must be 2–60 characters, with no web addresses or invite links.';
-    if (err.code === 'P0001') return err.message;
+    if (!err) return t('Something went wrong.');
+    if (err.code === '23505') return t('You already have an airline with that name.');
+    if (err.code === '23514') return t('Airline names must be 2–60 characters, with no web addresses or invite links.');
+    if (err.code === 'P0001') return tx(err.message);
     // Row level security refused the change: not an Echo server member, or market-banned.
-    if (err.code === '42501') return "You can't create or edit airlines right now: Echo Market is only for members of the Echo Alliances Discord server who aren't market-banned. Reload the page to see why.";
-    return err.message || String(err);
+    if (err.code === '42501') return t("You can't create or edit airlines right now: Echo Market is only for members of the Echo Alliances Discord server who aren't market-banned. Reload the page to see why.");
+    return tx(err.message) || String(err);
 }
 
 // --------------------------------------------------------------- storage
@@ -88,21 +109,22 @@ export function fmtDuration(ms) {
 }
 export function timeAgo(iso) {
     const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-    if (s < 60) return 'just now';
-    const m = Math.round(s / 60); if (m < 60) return `${m} min ago`;
-    const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
-    const d = Math.round(h / 24); if (d < 30) return `${d} d ago`;
+    if (s < 60) return t('just now');
+    const m = Math.round(s / 60); if (m < 60) return t('{n} min ago', { n: m });
+    const h = Math.round(m / 60); if (h < 24) return t('{n} h ago', { n: h });
+    const d = Math.round(h / 24); if (d < 30) return t('{n} d ago', { n: d });
     return new Date(iso).toLocaleDateString();
 }
 // Local-time greeting (used on the buyer home page and the seller desk).
 export function greetingFor(date) {
     const h = date.getHours();
-    if (h < 5) return { text: 'Up late', icon: 'moon' };
-    if (h < 12) return { text: 'Good morning', icon: 'sunrise' };
-    if (h < 17) return { text: 'Good afternoon', icon: 'sun' };
-    return { text: 'Good evening', icon: 'sunset' };
+    if (h < 5) return { text: t('Up late'), icon: 'moon' };
+    if (h < 12) return { text: t('Good morning'), icon: 'sunrise' };
+    if (h < 17) return { text: t('Good afternoon'), icon: 'sun' };
+    return { text: t('Good evening'), icon: 'sunset' };
 }
-export const plural = (n, word) => `${n} ${word}${n === 1 || word === 'aircraft' ? '' : 's'}`;
+// The greeting with the person's name ("Good morning, Dave."): languages put the name in different places.
+export const greetingLine = (g, name) => (name ? t('{greeting}, {name}.', { greeting: g.text, name }) : t('{greeting}.', { greeting: g.text }));
 
 // ------------------------------------------------------------ order status
 // Orders have a serial number (#1, #2, … in the order they were placed) and a code (ECH-1A2B3C4D).
@@ -120,16 +142,18 @@ export function OrderCode({ order, className = '' }) {
     return html`<span className=${`inline-flex items-baseline gap-1.5 font-mono text-xs whitespace-nowrap ${className}`}>
         ${order.serial && html`<b className="text-slate-100 font-bold">#${order.serial}</b>`}<span className="text-slate-500">${order.id}</span></span>`;
 }
+// label / short are getters, so they are always in the chosen language.
+const status = (label, short, tone, icon) => ({ get label() { return t(label); }, get short() { return t(short); }, tone, icon });
 export const STATUS = {
-    PENDING:   { label: 'Waiting for seller', short: 'Waiting',    tone: 'amber',   icon: 'hourglass' },
-    CLAIMED:   { label: 'Seller assigned',    short: 'Taken',      tone: 'cyan',     icon: 'handshake' },
-    PARTIAL:   { label: 'Delivering',         short: 'Delivering', tone: 'violet',  icon: 'truck' },
-    FULFILLED: { label: 'Delivered',          short: 'Delivered',  tone: 'emerald', icon: 'circle-check' },
-    CANCELLED: { label: 'Cancelled',          short: 'Cancelled',  tone: 'slate',   icon: 'circle-x' },
-    DECLINED:  { label: 'Declined',           short: 'Declined',   tone: 'rose',    icon: 'ban' },
+    PENDING:   status('Waiting for seller', 'Waiting', 'amber', 'hourglass'),
+    CLAIMED:   status('Seller assigned', 'Taken', 'cyan', 'handshake'),
+    PARTIAL:   status('Delivering', 'Delivering', 'violet', 'truck'),
+    FULFILLED: status('Delivered', 'Delivered', 'emerald', 'circle-check'),
+    CANCELLED: status('Cancelled', 'Cancelled', 'slate', 'circle-x'),
+    DECLINED:  status('Declined', 'Declined', 'rose', 'ban'),
     // Not stored in the database: an open (PENDING) order with aircraft already delivered,
     // i.e. a seller passed on the rest. See displayStatus().
-    HANDOFF:   { label: 'Partly delivered · needs seller', short: 'Needs seller', tone: 'amber', icon: 'repeat' }
+    HANDOFF:   status('Partly delivered · needs seller', 'Needs seller', 'amber', 'repeat')
 };
 // What an order counts against the 24h limit: its aircraft at 100% list price (see buyer/lib/pricing.js).
 export function orderListValue(order) {
@@ -193,16 +217,16 @@ export const takeoverIn = (order, now = Date.now()) =>
 export function SellerShares({ order, userId = null, compact = false }) {
     const shares = deliveryShares(order).filter((sh) => sh.role !== 'earlier' || sh.total > 0);
     if (shares.length < 2) return null;
-    const label = { earlier: 'earlier seller', seller: 'seller', helper: 'also delivering' };
+    const label = { earlier: t('earlier seller'), seller: t('seller'), helper: t('also delivering') };
     return html`<div className=${`rounded-2xl border border-slate-800 bg-slate-950 ${compact ? 'p-2.5' : 'p-3'} space-y-2`}>
-        <p className="label text-slate-500">Listed by each seller</p>
+        <p className="label text-slate-500">${t('Listed by each seller')}</p>
         <ul className="space-y-2">
             ${shares.map((sh, i) => html`<li key=${i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
                 <span className="font-bold text-white">${sh.airline || sh.name}</span>
-                <span className="text-xs text-slate-500">${sh.alliance ? `${sh.alliance} · ` : ''}${sh.name}${sh.sellerId && sh.sellerId === userId ? ' (you)' : ''} · ${label[sh.role]}</span>
+                <span className="text-xs text-slate-500">${sh.alliance ? `${sh.alliance} · ` : ''}${sh.name}${sh.sellerId && sh.sellerId === userId ? ` ${t('(you)')}` : ''} · ${label[sh.role]}</span>
                 <span className="basis-full text-slate-200">${sh.items
-                    ? (shareLines(order, sh).map((x) => `${x.n}× ${x.model}`).join(', ') || html`<span className="text-slate-500">nothing listed yet</span>`)
-                    : `${sh.total} aircraft`}</span>
+                    ? (shareLines(order, sh).map((x) => `${x.n}× ${x.model}`).join(', ') || html`<span className="text-slate-500">${t('nothing listed yet')}</span>`)
+                    : plural(sh.total, 'aircraft')}</span>
             </li>`)}
         </ul>
     </div>`;
@@ -230,7 +254,7 @@ export function StatusBadge({ status }) {
 
 // Sent → Taken → Delivering → Delivered
 export function OrderStepper({ order }) {
-    const steps = ['Sent', 'Seller assigned', 'Delivering', 'Delivered'];
+    const steps = [t('Sent'), t('Seller assigned'), t('Delivering'), t('Delivered')];
     const reached = { PENDING: order.filled > 0 ? 2 : 0, CLAIMED: 1, PARTIAL: 2, FULFILLED: 3 }[order.status];
     if (reached === undefined) return null;
     // Accent colour while in progress, green once everything is delivered.
@@ -297,15 +321,15 @@ export function Icon({ name, className = 'w-4 h-4' }) {
 const toastListeners = new Set();
 let toastId = 0;
 export function toast(message, kind = 'info') {
-    const t = { id: ++toastId, message, kind };
-    toastListeners.forEach((fn) => fn(t));
+    const item = { id: ++toastId, message: tx(message), kind };
+    toastListeners.forEach((fn) => fn(item));
 }
 export function Toasts() {
     const [items, setItems] = useState([]);
     useEffect(() => {
-        const add = (t) => {
-            setItems((list) => [...list, t]);
-            setTimeout(() => setItems((list) => list.filter((x) => x.id !== t.id)), t.kind === 'error' ? 7000 : 4500);
+        const add = (item) => {
+            setItems((list) => [...list, item]);
+            setTimeout(() => setItems((list) => list.filter((x) => x.id !== item.id)), item.kind === 'error' ? 7000 : 4500);
         };
         toastListeners.add(add);
         return () => toastListeners.delete(add);
@@ -317,9 +341,9 @@ export function Toasts() {
     };
     const icon = { info: 'info', success: 'circle-check', error: 'circle-alert' };
     return html`<div className="fixed z-[80] bottom-24 md:bottom-6 right-4 left-4 md:left-auto md:w-96 space-y-2 pointer-events-none" aria-live="polite">
-        ${items.map((t) => html`<div key=${t.id} className=${`pointer-events-auto flex gap-3 items-start p-3.5 rounded-2xl border shadow-2xl animate-pop ${style[t.kind]}`}>
-            <${Icon} name=${icon[t.kind]} className="w-5 h-5 mt-0.5" />
-            <p className="text-sm font-medium leading-snug">${t.message}</p>
+        ${items.map((it) => html`<div key=${it.id} className=${`pointer-events-auto flex gap-3 items-start p-3.5 rounded-2xl border shadow-2xl animate-pop ${style[it.kind]}`}>
+            <${Icon} name=${icon[it.kind]} className="w-5 h-5 mt-0.5" />
+            <p className="text-sm font-medium leading-snug">${it.message}</p>
         </div>`)}
     </div>`;
 }
@@ -341,10 +365,10 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
         <div role="dialog" aria-modal="true" className=${`relative w-full ${width} max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-t-3xl md:rounded-3xl shadow-2xl animate-pop`}>
             <div className="flex items-start justify-between gap-4 p-4 md:p-5 border-b border-slate-800">
                 <div className="min-w-0">
-                    <h2 className="text-lg font-extrabold text-white">${title}</h2>
-                    ${subtitle && html`<p className="text-xs text-slate-400 mt-0.5">${subtitle}</p>`}
+                    <h2 className="text-lg font-extrabold text-white">${tx(title)}</h2>
+                    ${subtitle && html`<p className="text-xs text-slate-400 mt-0.5">${tx(subtitle)}</p>`}
                 </div>
-                <button onClick=${onClose} className="p-2 -m-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800" aria-label="Close">
+                <button onClick=${onClose} className="p-2 -m-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800" aria-label=${t('Close')}>
                     <${Icon} name="x" className="w-5 h-5" />
                 </button>
             </div>
@@ -368,12 +392,12 @@ export function DialogHost() {
     const needsText = d.input?.required && !text.trim();
     return html`<${Modal} open=${true} onClose=${() => close(false)} title=${d.title} size="sm"
         footer=${html`
-            <${Button} variant="ghost" onClick=${() => close(false)}>Back<//>
+            <${Button} variant="ghost" onClick=${() => close(false)}>${t('Back')}<//>
             <${Button} variant=${d.danger ? 'danger' : 'primary'} disabled=${needsText}
-                onClick=${() => close(d.input ? text.trim() : true)}>${d.confirmLabel}<//>`}>
-        <p className="text-sm text-slate-300 leading-relaxed">${d.message}</p>
+                onClick=${() => close(d.input ? text.trim() : true)}>${tx(d.confirmLabel)}<//>`}>
+        <p className="text-sm text-slate-300 leading-relaxed">${tx(d.message)}</p>
         ${d.input && html`<textarea autoFocus value=${text} onChange=${(e) => setText(e.target.value)} rows="3"
-            placeholder=${d.input.placeholder || ''} className="mt-4 w-full input"></textarea>`}
+            placeholder=${tx(d.input.placeholder || '')} className="mt-4 w-full input"></textarea>`}
     <//>`;
 }
 
@@ -408,14 +432,14 @@ export function EchoLoader({ label = 'Loading', full = false, size = '', classNa
     return html`<div role="status" aria-live="polite"
         className=${full ? 'echo-loading-screen' : `flex flex-col items-center justify-center gap-3 ${className}`}>
         <span className=${`echo-loader ${size ? 'echo-loader-' + size : ''}`} aria-hidden="true"></span>
-        ${label && html`<span className="echo-loader-text">${label}…</span>`}
+        ${label && html`<span className="echo-loader-text">${tx(label)}…</span>`}
     </div>`;
 }
 
 // Busy buttons: a tiny Echo winglet with the division colours swiping through it, on a small dark chip so it
 // reads on every button colour (white, purple, red…). width: the winglet's width in px.
 export function Spinner({ width = 15 }) {
-    return html`<span className="inline-flex items-center justify-center shrink-0 rounded-md bg-slate-950/85 px-[3px] py-[3px]" role="status" aria-label="Working">
+    return html`<span className="inline-flex items-center justify-center shrink-0 rounded-md bg-slate-950/85 px-[3px] py-[3px]" role="status" aria-label=${t('Working')}>
         <span className="echo-loader" style=${{ width: `${width}px` }} aria-hidden="true"></span>
     </span>`;
 }
@@ -432,8 +456,8 @@ export function EmptyState({ icon, title, text, action }) {
         <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-4">
             <${Icon} name=${icon} className="w-6 h-6 text-slate-400" />
         </div>
-        <h3 className="font-extrabold text-white">${title}</h3>
-        ${text && html`<p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">${text}</p>`}
+        <h3 className="font-extrabold text-white">${tx(title)}</h3>
+        ${text && html`<p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">${tx(text)}</p>`}
         ${action && html`<div className="mt-5">${action}</div>`}
     </div>`;
 }
@@ -479,11 +503,11 @@ export async function pushSubscription() {
 // Asks permission, subscribes this device and saves it on the server. Throws a readable error.
 export async function enablePush() {
     if (!pushSupported()) throw new Error(needsHomeScreen()
-        ? 'On iPhone, first add Echo Market to your Home Screen (Share → Add to Home Screen), then open it from there.'
-        : "This browser doesn't support alerts.");
-    if (!CONFIG.VAPID_PUBLIC_KEY) throw new Error('Phone alerts are not set up on this site yet.');
+        ? t('On iPhone, first add Echo Market to your Home Screen (Share → Add to Home Screen), then open it from there.')
+        : t("This browser doesn't support alerts."));
+    if (!CONFIG.VAPID_PUBLIC_KEY) throw new Error(t('Phone alerts are not set up on this site yet.'));
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') throw new Error('Alerts are blocked. Allow notifications for this site in your browser settings, then try again.');
+    if (perm !== 'granted') throw new Error(t('Alerts are blocked. Allow notifications for this site in your browser settings, then try again.'));
     const reg = await navigator.serviceWorker.register('/sw.js');
     await navigator.serviceWorker.ready;
     const sub = (await reg.pushManager.getSubscription()) ||
@@ -512,6 +536,7 @@ function tourTarget(key) {
 
 // A short first-time walkthrough that spotlights real buttons (elements with data-tour="<target>").
 // steps: [{ target, icon, title(name), text }]. onDone(true) after the last step, onDone(false) when skipped.
+// The first card also holds the language menu: it is the first thing a newcomer sees.
 export function GuidedTour({ steps, name, onDone, finishLabel = 'Done', finishIcon = 'check', label = 'Tour' }) {
     const [i, setI] = useState(0);
     const [rect, setRect] = useState(null);
@@ -551,7 +576,7 @@ export function GuidedTour({ steps, name, onDone, finishLabel = 'Done', finishIc
             : { ...cardStyle, left: left + 'px', top: (rect.bottom + pad + 10) + 'px' };
     }
 
-    return html`<div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label=${label}>
+    return html`<div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label=${tx(label)}>
         ${rect ? html`<div className="absolute rounded-2xl ring-2 ring-sky-300 transition-all duration-300 pointer-events-none"
             style=${{ left: rect.left - pad + 'px', top: rect.top - pad + 'px', width: rect.width + pad * 2 + 'px', height: rect.height + pad * 2 + 'px',
                 boxShadow: '0 0 0 9999px rgba(3, 6, 20, 0.72)' }}></div>`
@@ -561,18 +586,19 @@ export function GuidedTour({ steps, name, onDone, finishLabel = 'Done', finishIc
                 <span className="w-10 h-10 shrink-0 rounded-xl bg-sky-400/15 text-sky-300 flex items-center justify-center"><${Icon} name=${step.icon} className="w-5 h-5" /></span>
                 <div className="min-w-0">
                     <h2 className="font-extrabold text-white leading-snug">${step.title(name)}</h2>
-                    <p className="text-sm text-slate-300 mt-1 leading-relaxed">${step.text}</p>
+                    <p className="text-sm text-slate-300 mt-1 leading-relaxed">${tx(step.text)}</p>
                 </div>
             </div>
             <div className="flex items-center gap-2 mt-4">
-                <div className="flex gap-1 mr-auto" aria-label=${`Step ${i + 1} of ${steps.length}`}>
+                <div className="flex gap-1 mr-auto" aria-label=${t('Step {n} of {total}', { n: i + 1, total: steps.length })}>
                     ${steps.map((_, j) => html`<span key=${j} className=${`h-1.5 rounded-full transition-all ${j === i ? 'w-5 bg-sky-400' : 'w-1.5 bg-slate-700'}`}></span>`)}
                 </div>
-                ${!last && html`<${Button} variant="ghost" size="sm" onClick=${() => onDone(false)}>Skip<//>`}
-                ${i > 0 && html`<${Button} variant="secondary" size="sm" onClick=${() => setI(i - 1)}>Back<//>`}
+                ${i === 0 && html`<${LanguageMenu} />`}
+                ${!last && html`<${Button} variant="ghost" size="sm" onClick=${() => onDone(false)}>${t('Skip')}<//>`}
+                ${i > 0 && html`<${Button} variant="secondary" size="sm" onClick=${() => setI(i - 1)}>${t('Back')}<//>`}
                 ${last
-                    ? html`<${Button} size="sm" icon=${finishIcon} onClick=${() => onDone(true)}>${finishLabel}<//>`
-                    : html`<${Button} size="sm" onClick=${() => setI(i + 1)}>${i === 0 ? 'Show me' : 'Next'}<//>`}
+                    ? html`<${Button} size="sm" icon=${finishIcon} onClick=${() => onDone(true)}>${tx(finishLabel)}<//>`
+                    : html`<${Button} size="sm" onClick=${() => setI(i + 1)}>${i === 0 ? t('Show me') : t('Next')}<//>`}
             </div>
         </div>
     </div>`;

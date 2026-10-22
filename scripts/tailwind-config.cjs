@@ -27,6 +27,8 @@ module.exports = function configFor(app) {
     const shared = run('shared/js/tailwind-config.js', { ECHO_THEME: theme }).tailwind.config;
     return {
         ...shared,
-        content: [`${app}/${app === 'buyer' ? 'index' : 'seller'}.html`, `${app}/js/**/*.js`, 'shared/js/**/*.js']
+        // The translation files hold only words, no class names.
+        content: [`${app}/${app === 'buyer' ? 'index' : 'seller'}.html`, `${app}/js/**/*.js`, 'shared/js/**/*.js',
+            `!${app}/js/i18n/**`, '!shared/js/i18n/**']
     };
 };

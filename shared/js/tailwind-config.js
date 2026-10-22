@@ -5,7 +5,11 @@ tailwind.config = {
     theme: {
         extend: {
             colors: window.ECHO_THEME,
-            fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'], mono: ['"JetBrains Mono"', 'monospace'] },
+            // Noto fonts: loaded only with Chinese, Korean, Bengali or Hindi (js/i18n.js), for the letters ours lack.
+            fontFamily: {
+                sans: ['"Plus Jakarta Sans"', '"Noto Sans SC"', '"Noto Sans KR"', '"Noto Sans Bengali"', '"Noto Sans Devanagari"', 'sans-serif'],
+                mono: ['"JetBrains Mono"', '"Noto Sans SC"', '"Noto Sans KR"', '"Noto Sans Bengali"', '"Noto Sans Devanagari"', 'monospace']
+            },
             minWidth: { 4: '1rem', 5: '1.25rem' },
             animation: {
                 pop: 'pop .25s cubic-bezier(.175,.885,.32,1.275)',

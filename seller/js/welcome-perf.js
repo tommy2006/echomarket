@@ -5,6 +5,7 @@
 // Picked from what the device reports, then lowered automatically while the page runs if it can't keep a smooth
 // frame rate. A lowered level is remembered on this device. ?quality=high|low|lite forces one (support / testing).
 // Source of truth: shared/js/welcome-perf.js. Run "npm run sync" at the repo root after editing.
+import { t, onLangChange } from './i18n.js';
 const KEY = 'echo_welcome_quality_v1';
 export const LEVELS = ['lite', 'low', 'high'];
 const rank = (l) => Math.max(0, LEVELS.indexOf(l));
@@ -91,7 +92,9 @@ export function inkFor(hex) {
 export function qualitySwitch(button, level) {
     if (!button) return;
     button.hidden = false;
-    button.textContent = level === 'lite' ? 'Switch back to full 3D' : 'Slow on this device? Use the lite version';
+    const paint = () => { button.textContent = level === 'lite' ? t('Switch back to full 3D') : t('Slow on this device? Use the lite version'); };
+    paint();
+    onLangChange(paint);
     button.addEventListener('click', () => {
         if (level === 'lite') forgetQuality(); else rememberQuality('lite');
         const url = new URL(location.href); url.searchParams.delete('quality');

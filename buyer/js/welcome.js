@@ -3,6 +3,7 @@
 // The layout borrows the feel of ThreeUI's free Kage page; all code here is our own.
 // Finishing it: POST /api/me { action: 'welcome-done', answers, understood } (the server checks the answers too).
 import { pickQuality, lowerThan, rememberQuality, pixelRatioFor, frameWatch, mixHex, inkFor, qualitySwitch } from './welcome-perf.js';
+import { t, tx, setLang, savedLang, currentLang, languageMenu, translatePage, onLangChange } from './i18n.js';
 // three.js is loaded only when the device shows the 3D airport (not at the 'lite' graphics level).
 let THREE = null;
 // Graphics level (js/welcome-perf.js): 'high', 'low' or 'lite'; lowered automatically if frames drop.
@@ -38,6 +39,25 @@ async function api(path, payload) {
     return json;
 }
 
+// ------------------------------------------------------------------ language
+// The menu sits in the top bar. Text in welcome.html is marked data-i18n; the script's own messages go
+// through say(), so they are rewritten too when the language changes. The market rules stay in English.
+const PACKS = ['app', 'welcome-buyer'];
+const said = new Map();   // element → [English text, values]
+function say(el, text, vars) {
+    said.set(el, [text, vars]);
+    el.textContent = text ? (vars ? t(text, vars) : tx(text)) : '';
+}
+function paintLanguage() {
+    translatePage();
+    document.title = t('Cleared for takeoff · Echo Market');
+    $('rules-note').hidden = currentLang() === 'en';
+    said.forEach(([text, vars], el) => { el.textContent = text ? (vars ? t(text, vars) : tx(text)) : ''; });
+}
+document.querySelector('.nav').insertBefore(languageMenu(PACKS), document.querySelector('.nav-progress'));
+onLangChange(paintLanguage);
+setLang(savedLang(), PACKS, false).catch(() => {});
+
 // ------------------------------------------------------------------ who is this?
 // gated: true = first time, the quiz + "I understand" must be done. false = replay (or an older database).
 let gated = true;
@@ -58,7 +78,7 @@ function setReplay() {
     $('final').hidden = false;
     $('understand').closest('label').hidden = true;
     $('enter').disabled = false;
-    $('enter').textContent = 'Back to the market';
+    say($('enter'), 'Back to the market');
 }
 
 // ------------------------------------------------------------------ helpers for the 3D world
@@ -542,7 +562,7 @@ quiz.addEventListener('submit', (e) => {
     const form = new FormData(quiz);
     const given = Object.fromEntries(Object.keys(ANSWERS).map((k) => [k, form.get(k)]));
     msg.classList.remove('bad');
-    if (Object.values(given).some((x) => !x)) { msg.textContent = 'Answer all 3 questions first.'; msg.classList.add('bad'); return; }
+    if (Object.values(given).some((x) => !x)) { say(msg, 'Answer all 3 questions first.'); msg.classList.add('bad'); return; }
     const wrong = Object.keys(ANSWERS).filter((k) => given[k] !== ANSWERS[k]);
     quiz.querySelectorAll('fieldset').forEach((fs) => {
         fs.classList.toggle('wrong', wrong.includes(fs.dataset.q));
@@ -555,9 +575,9 @@ quiz.addEventListener('submit', (e) => {
         quiz.reset();
         const fs = quiz.querySelector(`fieldset[data-q="${wrong[0]}"]`);
         const chapter = Number(fs.dataset.chapter);
-        msg.textContent = `${wrong.length} of 3 not right yet. Reread, then try all three again.`;
+        say(msg, '{n} of 3 not right yet. Reread, then try all three again.', { n: wrong.length });
         msg.classList.add('bad');
-        $('reread-text').textContent = REREAD[wrong[0]];
+        say($('reread-text'), REREAD[wrong[0]]);
         rereadFrom = chapter;
         $('reread').hidden = false;
         if (gated) $('final').hidden = true;
@@ -566,7 +586,7 @@ quiz.addEventListener('submit', (e) => {
         return;
     }
     passed = true;
-    msg.textContent = 'All three right. Nice flying.';
+    say(msg, 'All three right. Nice flying.');
     $('reread').hidden = true;
     $('final').hidden = false;
     updateEnter();
@@ -587,16 +607,16 @@ $('enter').addEventListener('click', async () => {
     if (gated) {
         if (!passed || !$('understand').checked) return;
         button.disabled = true;
-        out.textContent = 'Requesting takeoff clearance…';
+        say(out, 'Requesting takeoff clearance…');
         try {
             await api('/api/me', { action: 'welcome-done', answers: ANSWERS, understood: true });
         } catch (err) {
-            out.textContent = err.message;
+            say(out, err.message);
             out.classList.add('bad');
             button.disabled = false;
             return;
         }
-        out.textContent = 'Cleared for takeoff. Welcome aboard!';
+        say(out, 'Cleared for takeoff. Welcome aboard!');
     }
     button.disabled = true;
     takeOff();
@@ -606,7 +626,7 @@ $('nav-exit').addEventListener('click', (e) => { e.preventDefault(); takeOff(); 
 function takeOff() {
     if (takeoff) return;
     takeoff = { start: performance.now() / 1000 };
-    $('nav-step').textContent = 'TAKEOFF';
+    say($('nav-step'), 'TAKEOFF');
     const wait = REDUCED || !world ? 300 : 3600;
     setTimeout(() => $('fade').classList.add('on'), Math.max(0, wait - 900));
     setTimeout(() => window.location.replace('/'), wait);

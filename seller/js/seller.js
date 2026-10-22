@@ -8,8 +8,11 @@ import {
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo, fmtDuration, toneClass,
     Spinner, EchoLoader, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderLines, ItemProgress,
     orderRef, OrderCode, greetingFor, orderAirlines, airlineNames, orderAlliances, deliverableTo,
-    orderListValue, orderHelpers, deliveryShares, SellerShares, takeoverIn, TAKEOVER_HOURS, GuidedTour
+    orderListValue, orderHelpers, deliveryShares, SellerShares, takeoverIn, TAKEOVER_HOURS, GuidedTour,
+    t, tj, tx, useLang, LanguageMenu, greetingLine, setLang, savedLang
 } from './ui.js';
+// Languages: the seller screens follow the language menu; admin-only screens (Sellers, Moderation, Community)
+// stay in English, like the Echo Alliances site's admin pages.
 
 // "Helping": this seller joined the order (take over) without being its main seller.
 const isHelping = (order, userId) => orderHelpers(order).some((h) => h.seller_id === userId);
@@ -25,18 +28,19 @@ const CAUTION_TEXT = 'This buyer is on the alert list. Be cautious and check wit
 const LS_SELLER_TOUR = 'echo_seller_tour_done_v1:';   // + user id
 
 // First-time walkthrough of the seller desk (same look as the buyer site's). Targets: data-tour="…".
+// Step texts are English keys: GuidedTour shows them in the chosen language (tx).
 const SELLER_TOUR = [
-    { target: null, icon: 'store', title: (n) => `Welcome to the seller desk${n ? `, ${n}` : ''}!`,
+    { target: null, icon: 'store', title: (n) => (n ? t('Welcome to the seller desk, {name}!', { name: n }) : t('Welcome to the seller desk!')),
       text: 'A 30-second tour of how selling works. You can skip it any time.' },
-    { target: 'tab-open', icon: 'inbox', title: () => '1 · Open queue',
+    { target: 'tab-open', icon: 'inbox', title: () => t('1 · Open queue'),
       text: 'New orders land here (and ping the seller role on Discord). Use Sort and Filters to find the ones you want, then Take one, or Decline to leave it to the other sellers.' },
-    { target: 'sellas', icon: 'building-2', title: () => '2 · Sell as',
+    { target: 'sellas', icon: 'building-2', title: () => t('2 · Sell as'),
       text: "Pick the airline you sell from. Sharing an alliance with the buyer's airline makes delivery easier." },
-    { target: 'tab-mine', icon: 'truck', title: () => '3 · Deliver',
+    { target: 'tab-mine', icon: 'truck', title: () => t('3 · Deliver'),
       text: 'List the aircraft in-game, then press Update delivery and record what you listed. Each order shows its list value: roughly what buying those aircraft new costs you.' },
-    { target: 'tab-all', icon: 'users', title: () => '4 · Help out',
-      text: `If an order is still unfinished ${TAKEOVER_HOURS} hours after it was taken, other sellers can Take over part of it. The buyer sees exactly who listed what.` },
-    { target: 'account', icon: 'circle-user', title: () => '5 · Your account',
+    { target: 'tab-all', icon: 'users', title: () => t('4 · Help out'),
+      get text() { return t('If an order is still unfinished {n} hours after it was taken, other sellers can Take over part of it. The buyer sees exactly who listed what.', { n: TAKEOVER_HOURS }); } },
+    { target: 'account', icon: 'circle-user', title: () => t('5 · Your account'),
       text: 'Replay this tour, open the market or sign out here.' }
 ];
 
@@ -67,18 +71,19 @@ const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
 const ORDER_TABS = ['open', 'mine', 'all'];
 const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false, unreadOnly: false };
 const typeCount = (o) => orderLines(o).length;
+const sort = (label, fn) => ({ get label() { return t(label); }, fn });
 const SORTS = {
-    default: { label: 'Default order' },   // open queue: longest waiting first; other tabs: newest first
-    'price-desc': { label: 'Price: high to low', fn: (a, b) => b.total_usd - a.total_usd },
-    'price-asc': { label: 'Price: low to high', fn: (a, b) => a.total_usd - b.total_usd },
-    'list-desc': { label: 'List value: high to low', fn: (a, b) => orderListValue(b) - orderListValue(a) },
-    'list-asc': { label: 'List value: low to high', fn: (a, b) => orderListValue(a) - orderListValue(b) },
-    'qty-desc': { label: 'Most aircraft', fn: (a, b) => b.total_qty - a.total_qty },
-    'qty-asc': { label: 'Fewest aircraft', fn: (a, b) => a.total_qty - b.total_qty },
-    'types-desc': { label: 'Most aircraft types', fn: (a, b) => typeCount(b) - typeCount(a) },
-    'types-asc': { label: 'Fewest aircraft types', fn: (a, b) => typeCount(a) - typeCount(b) },
-    newest: { label: 'Newest first', fn: (a, b) => ms(b.created_at) - ms(a.created_at) },
-    oldest: { label: 'Oldest first', fn: (a, b) => ms(a.created_at) - ms(b.created_at) }
+    default: sort('Default order'),   // open queue: longest waiting first; other tabs: newest first
+    'price-desc': sort('Price: high to low', (a, b) => b.total_usd - a.total_usd),
+    'price-asc': sort('Price: low to high', (a, b) => a.total_usd - b.total_usd),
+    'list-desc': sort('List value: high to low', (a, b) => orderListValue(b) - orderListValue(a)),
+    'list-asc': sort('List value: low to high', (a, b) => orderListValue(a) - orderListValue(b)),
+    'qty-desc': sort('Most aircraft', (a, b) => b.total_qty - a.total_qty),
+    'qty-asc': sort('Fewest aircraft', (a, b) => a.total_qty - b.total_qty),
+    'types-desc': sort('Most aircraft types', (a, b) => typeCount(b) - typeCount(a)),
+    'types-asc': sort('Fewest aircraft types', (a, b) => typeCount(a) - typeCount(b)),
+    newest: sort('Newest first', (a, b) => ms(b.created_at) - ms(a.created_at)),
+    oldest: sort('Oldest first', (a, b) => ms(a.created_at) - ms(b.created_at))
 };
 const num = (v) => (String(v).trim() === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 // Does an order pass the filters? List value is entered in $ millions.
@@ -112,32 +117,35 @@ function timing(o, now) {
     switch (o.status) {
         case 'PENDING': {
             const wait = now - queuedSince(o);
-            return { tone: wait > 24 * 36e5 ? 'rose' : wait > 6 * 36e5 ? 'amber' : 'slate', text: `Waiting ${fmtDuration(wait)}` };
+            return { tone: wait > 24 * 36e5 ? 'rose' : wait > 6 * 36e5 ? 'amber' : 'slate', text: t('Waiting {time}', { time: fmtDuration(wait) }) };
         }
         case 'CLAIMED':
         case 'PARTIAL': {
             const taken = ms(o.claimed_at);
             const waited = taken ? taken - queuedSince(o) : null;
-            return { tone: 'slate', text: `${waited != null ? `Taken after ${fmtDuration(waited)} · ` : ''}with seller ${fmtDuration(now - (taken || ms(o.status_changed_at) || now))}` };
+            const withSeller = t('with seller {time}', { time: fmtDuration(now - (taken || ms(o.status_changed_at) || now)) });
+            return { tone: 'slate', text: waited != null ? `${t('Taken after {time}', { time: fmtDuration(waited) })} · ${withSeller}` : withSeller };
         }
         case 'FULFILLED':
-            return { tone: 'emerald', text: `Done in ${fmtDuration((ms(o.fulfilled_at) || ms(o.status_changed_at) || now) - ms(o.created_at))}` };
+            return { tone: 'emerald', text: t('Done in {time}', { time: fmtDuration((ms(o.fulfilled_at) || ms(o.status_changed_at) || now) - ms(o.created_at)) }) };
         default:
-            return { tone: 'slate', text: `Closed after ${fmtDuration((ms(o.status_changed_at) || now) - ms(o.created_at))}` };
+            return { tone: 'slate', text: t('Closed after {time}', { time: fmtDuration((ms(o.status_changed_at) || now) - ms(o.created_at)) }) };
     }
 }
 function WaitChip({ order, now }) {
-    const t = timing(order, now);
-    return html`<span className=${`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${toneClass(t.tone)}`}>
-        <${Icon} name="timer" className="w-3 h-3" />${t.text}</span>`;
+    const tm = timing(order, now);
+    return html`<span className=${`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${toneClass(tm.tone)}`}>
+        <${Icon} name="timer" className="w-3 h-3" />${tm.text}</span>`;
 }
+const flagMeta = (label, cls, icon) => ({ get label() { return t(label); }, cls, icon });
 const FLAG_META = {
-    NORMAL: { label: 'Normal', cls: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10', icon: 'shield-check' },
-    SUSPICIOUS: { label: 'Suspicious', cls: 'text-amber-300 border-amber-500/30 bg-amber-500/10', icon: 'flag' },
-    BLACKLISTED: { label: 'Blacklisted', cls: 'text-rose-300 border-rose-500/30 bg-rose-500/10', icon: 'ban' }
+    NORMAL: flagMeta('Normal', 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10', 'shield-check'),
+    SUSPICIOUS: flagMeta('Suspicious', 'text-amber-300 border-amber-500/30 bg-amber-500/10', 'flag'),
+    BLACKLISTED: flagMeta('Blacklisted', 'text-rose-300 border-rose-500/30 bg-rose-500/10', 'ban')
 };
 
 function App() {
+    useLang();   // re-render everything when the language changes
     const [authReady, setAuthReady] = useState(false);
     const [session, setSession] = useState(null);
     const [account, setAccount] = useState(null);
@@ -204,7 +212,7 @@ function App() {
                 if (r?.changed && r.seller) {
                     const again = await sb.from('sellers').select('*').eq('user_id', userId).maybeSingle();
                     me = again.data?.active ? again.data : null;
-                    if (me) toast(`Welcome to the seller desk! You were added because you're a ${RANK_LABEL[rankOf(me)]} on Discord.`, 'success');
+                    if (me) toast(t("Welcome to the seller desk! You were added because you're a {rank} on Discord.", { rank: RANK_LABEL[rankOf(me)] }), 'success');
                 }
             } else {
                 // Once per visit (and every 30 minutes) the Discord role is checked again: rank (colour and title)
@@ -257,7 +265,7 @@ function App() {
         setReports(rep.data || []);   // (empty until schema.sql has the table)
         setDeclines(dec.data || []);
         setTeamSize(Math.max(1, (team.data || []).length));
-        if (ord.error) toast('Could not load orders: ' + ord.error.message, 'error');
+        if (ord.error) toast(t('Could not load orders: {msg}', { msg: ord.error.message }), 'error');
         setOrders(ord.data || []);
         setFlags(Object.fromEntries((fl.data || []).map((f) => [f.order_id, f])));
         setAirlines(air.data || []);
@@ -273,8 +281,8 @@ function App() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => {
                 if (p.eventType === 'DELETE') return setOrders((l) => l.filter((o) => o.id !== p.old.id));
                 if (p.eventType === 'INSERT') {
-                    toast(`New order ${orderRef(p.new)} from ${airlineNames(p.new)}`, 'success');
-                    notifyBrowser('New Echo Market order', `${airlineNames(p.new)}: ${plural(p.new.total_qty, 'aircraft')}`);
+                    toast(t('New order {ref} from {airline}', { ref: orderRef(p.new), airline: airlineNames(p.new) }), 'success');
+                    notifyBrowser(t('New Echo Market order'), `${airlineNames(p.new)}: ${plural(p.new.total_qty, 'aircraft')}`);
                 }
                 setOrders((l) => [p.new, ...l.filter((o) => o.id !== p.new.id)].sort((a, b) => b.created_at.localeCompare(a.created_at)));
             })
@@ -293,8 +301,8 @@ function App() {
                 if (!p.new?.id) return;
                 setReports((l) => [...l.filter((r) => r.id !== p.new.id), p.new]);
                 if (p.eventType === 'INSERT') {
-                    toast(`🚨 Missing planes reported on ${p.new.order_id}`, 'error');
-                    notifyBrowser('Missing planes reported', `${p.new.buyer_name || 'A buyer'}: ${p.new.details}`, p.new.order_id);
+                    toast(t('🚨 Missing planes reported on {ref}', { ref: p.new.order_id }), 'error');
+                    notifyBrowser(t('Missing planes reported'), `${p.new.buyer_name || t('A buyer')}: ${p.new.details}`, p.new.order_id);
                 }
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'missing_report_culprits' }, (p) => {
@@ -304,8 +312,8 @@ function App() {
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages' }, (p) => {
                 setMessages((l) => [...l.filter((m) => m.id !== p.new.id), p.new]);
                 if (p.new.from_role === 'buyer') {
-                    toast(`💬 New message from the buyer of ${p.new.order_id}`, 'info');
-                    notifyBrowser('Echo Market: buyer message', p.new.body.slice(0, 120), 'om' + p.new.id);
+                    toast(t('💬 New message from the buyer of {ref}', { ref: p.new.order_id }), 'info');
+                    notifyBrowser(t('Echo Market: buyer message'), p.new.body.slice(0, 120), 'om' + p.new.id);
                 }
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'order_flags' }, (p) => {
@@ -387,12 +395,12 @@ function App() {
 
     const actions = {
         claim: (order) => {
-            if (!airlines.length) return toast('Create an airline profile on the market\'s Airlines page first — buyers see which airline is selling to them.', 'error');
+            if (!airlines.length) return toast(t("Create an airline profile on the market's Airlines page first — buyers see which airline is selling to them."), 'error');
             setModal({ kind: 'claim', order });
         },
         progress: (order) => setModal({ kind: 'progress', order }),
         join: (order) => {
-            if (!airlines.length) return toast('Create an airline profile on the market\'s Airlines page first — buyers see which airline is selling to them.', 'error');
+            if (!airlines.length) return toast(t("Create an airline profile on the market's Airlines page first — buyers see which airline is selling to them."), 'error');
             setModal({ kind: 'join', order });
         },
         flag: (order) => setModal({ kind: 'flag', order }),
@@ -400,55 +408,55 @@ function App() {
             const left = order.total_qty - order.filled;
             if (order.seller_id !== userId && isHelping(order, userId)) {
                 const mineNow = deliveryShares(order).find((sh) => sh.role === 'helper' && sh.sellerId === userId)?.total || 0;
-                const ok = await ask({ title: `Stop delivering ${orderRef(order)}?`, confirmLabel: 'Stop delivering',
-                    message: `${mineNow ? `The ${mineNow} aircraft you listed stay counted as yours. ` : ''}The order's seller carries on with the rest.` });
-                if (ok) act(order, { action: 'release' }, `You stopped delivering ${orderRef(order)}.`);
+                const ok = await ask({ title: t('Stop delivering {ref}?', { ref: orderRef(order) }), confirmLabel: t('Stop delivering'),
+                    message: mineNow ? t("The {n} aircraft you listed stay counted as yours. The order's seller carries on with the rest.", { n: mineNow }) : t("The order's seller carries on with the rest.") });
+                if (ok) act(order, { action: 'release' }, t('You stopped delivering {ref}.', { ref: orderRef(order) }));
                 return;
             }
             if (orderHelpers(order).length) {
                 const next = orderHelpers(order)[0];
-                const ok = await ask({ title: `Hand ${orderRef(order)} to ${next.seller_airline_name}?`, confirmLabel: 'Hand over',
-                    message: `What you listed stays counted as yours. ${next.seller_airline_name} (who took over part of it) becomes the order's seller and carries on with the rest.` });
-                if (ok) act(order, { action: 'release' }, `${next.seller_airline_name} now handles ${orderRef(order)}.`);
+                const ok = await ask({ title: t('Hand {ref} to {airline}?', { ref: orderRef(order), airline: next.seller_airline_name }), confirmLabel: t('Hand over'),
+                    message: t("What you listed stays counted as yours. {airline} (who took over part of it) becomes the order's seller and carries on with the rest.", { airline: next.seller_airline_name }) });
+                if (ok) act(order, { action: 'release' }, t('{airline} now handles {ref}.', { airline: next.seller_airline_name, ref: orderRef(order) }));
                 return;
             }
             const ok = order.filled > 0
-                ? await ask({ title: `Pass on the rest of ${orderRef(order)}?`, confirmLabel: 'Pass on the rest',
-                    message: `${order.filled} of ${order.total_qty} aircraft are delivered and stay counted. The remaining ${left} go back to the open queue as "partly delivered" for another seller to finish. The buyer is told.` })
-                : await ask({ title: `Release ${orderRef(order)}?`, confirmLabel: 'Release order',
-                    message: 'It goes back to the open queue for another seller. The buyer is told it is waiting again.' });
-            if (ok) act(order, { action: 'release' }, order.filled > 0 ? `The remaining ${left} aircraft are back in the open queue.` : `${orderRef(order)} is back in the open queue.`);
+                ? await ask({ title: t('Pass on the rest of {ref}?', { ref: orderRef(order) }), confirmLabel: t('Pass on the rest'),
+                    message: t('{filled} of {total} aircraft are delivered and stay counted. The remaining {left} go back to the open queue as "partly delivered" for another seller to finish. The buyer is told.', { filled: order.filled, total: order.total_qty, left }) })
+                : await ask({ title: t('Release {ref}?', { ref: orderRef(order) }), confirmLabel: t('Release order'),
+                    message: t('It goes back to the open queue for another seller. The buyer is told it is waiting again.') });
+            if (ok) act(order, { action: 'release' }, order.filled > 0 ? t('The remaining {n} aircraft are back in the open queue.', { n: left }) : t('{ref} is back in the open queue.', { ref: orderRef(order) }));
         },
         decline: async (order) => {
             const left = othersLeft(order);
             if (left > 0) {
                 const note = await ask({
-                    title: `Pass on ${orderRef(order)}?`, confirmLabel: 'Pass',
-                    message: `It disappears from your open queue but stays open for the other ${plural(left, 'seller')}. The buyer is not told. The order is only declined if every seller passes.`,
-                    input: { required: false, placeholder: 'Optional note for the other sellers (e.g. price too low for me)' }
+                    title: t('Pass on {ref}?', { ref: orderRef(order) }), confirmLabel: t('Pass'),
+                    message: t('It disappears from your open queue but stays open for the other {count}. The buyer is not told. The order is only declined if every seller passes.', { count: plural(left, 'seller') }),
+                    input: { required: false, placeholder: t('Optional note for the other sellers (e.g. price too low for me)') }
                 });
                 if (note === false) return;
-                act(order, { action: 'decline', reason: note || '' }, (r) => r.declinedForEveryone ? `${orderRef(order)} declined.` : `You passed on ${orderRef(order)}. ${plural(r.sellersLeft, 'seller')} can still take it.`);
+                act(order, { action: 'decline', reason: note || '' }, (r) => r.declinedForEveryone ? t('{ref} declined.', { ref: orderRef(order) }) : t('You passed on {ref}. {count} can still take it.', { ref: orderRef(order), count: plural(r.sellersLeft, 'seller') }));
             } else {
                 const reason = await ask({
-                    title: `Decline ${orderRef(order)} for good?`, danger: true, confirmLabel: 'Decline order',
-                    message: 'Every other seller has already passed, so declining closes the order. The buyer will see your reason. This cannot be undone.',
-                    input: { required: true, placeholder: 'e.g. Price level too low for this type right now' }
+                    title: t('Decline {ref} for good?', { ref: orderRef(order) }), danger: true, confirmLabel: t('Decline order'),
+                    message: t('Every other seller has already passed, so declining closes the order. The buyer will see your reason. This cannot be undone.'),
+                    input: { required: true, placeholder: t('e.g. Price level too low for this type right now') }
                 });
-                if (reason) act(order, { action: 'decline', reason }, `${orderRef(order)} declined.`);
+                if (reason) act(order, { action: 'decline', reason }, t('{ref} declined.', { ref: orderRef(order) }));
             }
         },
         forceDecline: async (order) => {
             const reason = await ask({
-                title: `Decline ${orderRef(order)} for everyone?`, danger: true, confirmLabel: 'Decline for everyone',
-                message: 'Admin action: closes the order for the whole seller team right away (for spam or rule breaks). The buyer will see your reason.',
-                input: { required: true, placeholder: 'Reason shown to the buyer' }
+                title: t('Decline {ref} for everyone?', { ref: orderRef(order) }), danger: true, confirmLabel: t('Decline for everyone'),
+                message: t('Admin action: closes the order for the whole seller team right away (for spam or rule breaks). The buyer will see your reason.'),
+                input: { required: true, placeholder: t('Reason shown to the buyer') }
             });
-            if (reason) act(order, { action: 'decline', reason, force: true }, `${orderRef(order)} declined for everyone.`);
+            if (reason) act(order, { action: 'decline', reason, force: true }, t('{ref} declined for everyone.', { ref: orderRef(order) }));
         },
         remove: async (order) => {
-            if (await ask({ title: `Delete ${orderRef(order)}?`, message: 'This permanently removes the order and its history for everyone, including the buyer. Prefer "Decline" unless this is spam.', confirmLabel: 'Delete forever', danger: true })) {
-                act(order, { action: 'delete' }, `${orderRef(order)} deleted.`);
+            if (await ask({ title: t('Delete {ref}?', { ref: orderRef(order) }), message: t('This permanently removes the order and its history for everyone, including the buyer. Prefer "Decline" unless this is spam.'), confirmLabel: t('Delete forever'), danger: true })) {
+                act(order, { action: 'delete' }, t('{ref} deleted.', { ref: orderRef(order) }));
             }
         }
     };
@@ -468,10 +476,10 @@ function App() {
     const matches = (o) => !q || [o.id, o.serial ? '#' + o.serial : '', ...orderAirlines(o).flatMap((a) => [a.name, a.alliance]), o.buyer_name, o.seller_airline_name, o.buyer_note, o.seller_note,
         ...(o.items || []).map((i) => i.model)].join(' ').toLowerCase().includes(q);
     const tabs = {
-        open: { label: 'Open queue', icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
-        mine: { label: 'My orders', icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
-        all: { label: 'All orders', icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
-        thefts: { label: 'Theft reports', icon: 'shield-alert', fn: () => false },   // every seller
+        open: { label: t('Open queue'), icon: 'inbox', fn: (o) => o.status === 'PENDING' && !iPassed(o) },
+        mine: { label: t('My orders'), icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
+        all: { label: t('All orders'), icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
+        thefts: { label: t('Theft reports'), icon: 'shield-alert', fn: () => false },   // every seller
         // Admins only: seller performance (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
                                 mod: { label: 'Moderation', icon: 'shield', fn: () => false },
@@ -500,12 +508,13 @@ function App() {
             <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                 <div className="leading-tight">
-                    <p className="font-extrabold text-white">Seller desk</p>
+                    <p className="font-extrabold text-white">${t('Seller desk')}</p>
                     <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${adminSuffix(seller)}</p>
                 </div>
                 <div className="flex-1"></div>
                 <${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />
-                <a href=${CONFIG.BUYER_URL || "#"} className="hidden sm:flex p-2.5 rounded-full text-slate-400 hover:bg-slate-800 hover:text-white" title="Open the market"><${Icon} name="shopping-bag" className="w-5 h-5" /></a>
+                <${LanguageMenu} packs=${['app']} />
+                <a href=${CONFIG.BUYER_URL || "#"} className="hidden sm:flex p-2.5 rounded-full text-slate-400 hover:bg-slate-800 hover:text-white" title=${t('Open the market')}><${Icon} name="shopping-bag" className="w-5 h-5" /></a>
                 <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId} onTour=${() => setTourOpen(true)} />
             </div>
         </header>
@@ -515,10 +524,10 @@ function App() {
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} onShowUnread=${showUnread} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
             <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin}
-                theftHint=${investigating.length ? `${investigating.length} under investigation` : reportsToCheck.length ? `${reportsToCheck.length} to check` : ''} />
+                theftHint=${investigating.length ? t('{n} under investigation', { n: investigating.length }) : reportsToCheck.length ? t('{n} to check', { n: reportsToCheck.length }) : ''} />
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
-                    ${plural(reportsToCheck.length, 'missing-plane report')} to check in-game</p>
+                    ${t('{count} to check in-game', { count: plural(reportsToCheck.length, 'missing-plane report') })}</p>
                 <ul className="space-y-1.5">${reportsToCheck.map(({ r, o }) => html`<li key=${r.id}>
                     <button onClick=${() => openDetail(o.id)} className="w-full text-left text-sm text-rose-100 hover:text-white flex flex-wrap gap-x-2">
                         <b>${orderRef(o)}</b><span className="opacity-80">${r.buyer_name}: “${r.details}”</span><span className="text-xs opacity-60">${timeAgo(r.created_at)}</span>
@@ -526,15 +535,15 @@ function App() {
             </div>`}
             ${!airlines.length && html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5">
                 <${Icon} name="triangle-alert" className="w-5 h-5 text-amber-300" />
-                <p className="flex-1 text-sm text-amber-100"><b>You need an airline profile to take orders.</b> Buyers see which airline is selling to them. Create one on the market site's Airlines page (same Discord login), then come back.</p>
-                <a href=${(CONFIG.BUYER_URL || "") + "/#airlines"}><${Button} size="sm" variant="white">Create airline<//></a>
+                <p className="flex-1 text-sm text-amber-100"><b>${t('You need an airline profile to take orders.')}</b> ${t("Buyers see which airline is selling to them. Create one on the market site's Airlines page (same Discord login), then come back.")}</p>
+                <a href=${(CONFIG.BUYER_URL || "") + "/#airlines"}><${Button} size="sm" variant="white">${t('Create airline')}<//></a>
             </div>`}
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-                <${Stat} label="Waiting for a seller" value=${counts.open} icon="inbox" tone="text-amber-300" />
-                <${Stat} label="My active orders" value=${counts.mine} icon="briefcase" tone="text-sky-400" />
-                <${Stat} label="In delivery (all sellers)" value=${orders.filter((o) => ['CLAIMED', 'PARTIAL'].includes(o.status)).length} icon="truck" tone="text-violet-300" />
-                <${Stat} label="Delivered" value=${orders.filter((o) => o.status === 'FULFILLED').length} icon="circle-check" tone="text-emerald-300" />
+                <${Stat} label=${t('Waiting for a seller')} value=${counts.open} icon="inbox" tone="text-amber-300" />
+                <${Stat} label=${t('My active orders')} value=${counts.mine} icon="briefcase" tone="text-sky-400" />
+                <${Stat} label=${t('In delivery (all sellers)')} value=${orders.filter((o) => ['CLAIMED', 'PARTIAL'].includes(o.status)).length} icon="truck" tone="text-violet-300" />
+                <${Stat} label=${t('Delivered')} value=${orders.filter((o) => o.status === 'FULFILLED').length} icon="circle-check" tone="text-emerald-300" />
             </div>
 
             <div id="order-list" className="flex flex-col lg:flex-row gap-2 lg:items-center scroll-mt-20">
@@ -547,13 +556,13 @@ function App() {
                 ${orderTab && html`<div className="flex flex-1 flex-wrap sm:flex-nowrap gap-2">
                     <label className="relative flex-1 min-w-[12rem]">
                         <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"><${Icon} name="search" /></span>
-                        <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder="Search order, airline, buyer, aircraft…" className="input pl-10" />
+                        <input value=${query} onChange=${(e) => setQuery(e.target.value)} placeholder=${t('Search order, airline, buyer, aircraft…')} className="input pl-10" />
                     </label>
-                    <select value=${view.sort} onChange=${(e) => setView((v) => ({ ...v, sort: e.target.value }))} className="input !w-auto" aria-label="Sort orders">
-                        ${Object.entries(SORTS).map(([k, s]) => html`<option key=${k} value=${k}>${k === 'default' ? (tab === 'open' ? 'Longest waiting first' : 'Newest first') : s.label}</option>`)}
+                    <select value=${view.sort} onChange=${(e) => setView((v) => ({ ...v, sort: e.target.value }))} className="input !w-auto" aria-label=${t('Sort orders')}>
+                        ${Object.entries(SORTS).map(([k, s]) => html`<option key=${k} value=${k}>${k === 'default' ? (tab === 'open' ? t('Longest waiting first') : t('Newest first')) : s.label}</option>`)}
                     </select>
                     <${Button} size="md" variant=${filterCount ? 'primary' : 'secondary'} icon="sliders-horizontal" onClick=${() => setFiltersOpen(!filtersOpen)}
-                        aria-expanded=${filtersOpen}>Filters${filterCount ? ` · ${filterCount}` : ''}<//>
+                        aria-expanded=${filtersOpen}>${t('Filters')}${filterCount ? ` · ${filterCount}` : ''}<//>
                 </div>`}
             </div>
             ${orderTab && (filtersOpen || filterCount > 0) && html`<${OrderFilters} filters=${view.filters} alliances=${allianceOptions} tab=${tab}
@@ -561,9 +570,9 @@ function App() {
                 onChange=${(filters) => setView((v) => ({ ...v, filters }))} onToggle=${() => setFiltersOpen(!filtersOpen)}
                 shown=${list.length} total=${inTab.length} />`}
             ${orderTab && tab === 'all' && !filtersOpen && html`<div className="flex items-center gap-2 -mt-1">
-                <span className="text-xs text-slate-500">Status</span>
+                <span className="text-xs text-slate-500">${t('Status')}</span>
                 <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
-                    <option value="ALL">Any status</option>
+                    <option value="ALL">${t('Any status')}</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select>
             </div>`}
@@ -576,7 +585,7 @@ function App() {
             : loading ? html`<${EchoLoader} className="py-16" />`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
-                text=${inTab.length && filterCount ? `${plural(inTab.length, 'order')} hidden by your filters. Change or clear them to see more.`
+                text=${inTab.length && filterCount ? t('{count} hidden by your filters. Change or clear them to see more.', { count: plural(inTab.length, 'order') })
                     : tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
             : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
                 passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} caution=${alerts[o.id]} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
@@ -594,21 +603,21 @@ function App() {
             actions=${actions} onClose=${closeDetail} />`}
         ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_admin} onClose=${() => setBuyerOf(null)}
             onOpenOrder=${(id) => { setBuyerOf(null); openDetail(id); }} />`}
-        ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title="Order not found" size="sm">
-            <p className="text-sm text-slate-400">${detailId} doesn't exist or was deleted.</p><//>`}
+        ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title=${t('Order not found')} size="sm">
+            <p className="text-sm text-slate-400">${t("{ref} doesn't exist or was deleted.", { ref: detailId })}</p><//>`}
 
         ${modal?.kind === 'claim' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} caution=${alerts[modal.order.id]}
             onClose=${() => setModal(null)}
             onConfirm=${async (airlineId) => {
                 setSellAsId(airlineId);
-                const ok = await act(modal.order, { action: 'claim', airlineId }, `You took ${orderRef(modal.order)}. The buyer has been notified.`);
+                const ok = await act(modal.order, { action: 'claim', airlineId }, t('You took {ref}. The buyer has been notified.', { ref: orderRef(modal.order) }));
                 if (ok) { setModal(null); setTab('mine'); }
             }} />`}
         ${modal?.kind === 'join' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} join=${true} caution=${alerts[modal.order.id]}
             onClose=${() => setModal(null)}
             onConfirm=${async (airlineId) => {
                 setSellAsId(airlineId);
-                const ok = await act(modal.order, { action: 'join', airlineId }, `You took over part of ${orderRef(modal.order)}. The buyer is told you will also be delivering.`);
+                const ok = await act(modal.order, { action: 'join', airlineId }, t('You took over part of {ref}. The buyer is told you will also be delivering.', { ref: orderRef(modal.order) }));
                 if (ok) { setModal(null); setTab('mine'); }
             }} />`}
         ${modal?.kind === 'progress' && html`<${ProgressModal} order=${modal.order} userId=${userId} onClose=${() => setModal(null)}
@@ -616,15 +625,15 @@ function App() {
                 let ok = true;
                 if (payload.changed || payload.note) ok = await act(modal.order, { action: 'progress', mine: payload.mine, note: payload.note });
                 if (ok && payload.sellerNote !== undefined && payload.sellerNote !== (modal.order.seller_note || '')) ok = await act(modal.order, { action: 'note', sellerNote: payload.sellerNote });
-                if (ok) { setModal(null); toast(`${orderRef(modal.order)} updated.`, 'success'); }
+                if (ok) { setModal(null); toast(t('{ref} updated.', { ref: orderRef(modal.order) }), 'success'); }
             }} />`}
         ${modal?.kind === 'flag' && html`<${FlagModal} order=${modal.order} flag=${flags[modal.order.id]} onClose=${() => setModal(null)}
             onSave=${async (flagStatus, flagReason) => {
-                if (await act(modal.order, { action: 'flag', flagStatus, flagReason }, 'Flag saved.')) setModal(null);
+                if (await act(modal.order, { action: 'flag', flagStatus, flagReason }, t('Flag saved.'))) setModal(null);
             }} />`}
 
-        ${tourOpen && html`<${GuidedTour} steps=${SELLER_TOUR} label="Seller desk tour" name=${account?.display_name || account?.discord_username || ''}
-            finishLabel="Start selling" finishIcon="check" onDone=${() => { endTour(); setTab('open'); }} />`}
+        ${tourOpen && html`<${GuidedTour} steps=${SELLER_TOUR} label=${t('Seller desk tour')} name=${account?.display_name || account?.discord_username || ''}
+            finishLabel=${t('Start selling')} finishIcon="check" onDone=${() => { endTour(); setTab('open'); }} />`}
         <${Toasts} />
         <${DialogHost} />
     </div>`;
@@ -635,30 +644,31 @@ function SignInScreen() {
     return html`<div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-sm text-center">
             <img src="echo_logo.png" alt="" className="w-14 h-14 rounded-2xl mx-auto" />
-            <h1 className="text-2xl font-black text-white mt-5">Echo Market seller desk</h1>
-            <p className="text-sm text-slate-400 mt-2">For Verified Sellers, Ambassadors and the Lead Ambassador. Sign in with your Discord account.</p>
-            <${Button} variant="discord" size="lg" className="w-full mt-7" onClick=${signInWithDiscord}><${DiscordLogo} /> Sign in with Discord<//>
-            <a href=${CONFIG.BUYER_URL || "#"} className="inline-block mt-6 text-xs font-bold text-slate-500 hover:text-slate-300">← Back to Echo Market</a>
+            <div className="flex justify-center mt-4"><${LanguageMenu} packs=${['app']} /></div>
+            <h1 className="text-2xl font-black text-white mt-5">${t('Echo Market seller desk')}</h1>
+            <p className="text-sm text-slate-400 mt-2">${t('For Verified Sellers, Ambassadors and the Lead Ambassador. Sign in with your Discord account.')}</p>
+            <${Button} variant="discord" size="lg" className="w-full mt-7" onClick=${signInWithDiscord}><${DiscordLogo} /> ${t('Sign in with Discord')}<//>
+            <a href=${CONFIG.BUYER_URL || "#"} className="inline-block mt-6 text-xs font-bold text-slate-500 hover:text-slate-300">${t('← Back to Echo Market')}</a>
         </div>
     </div>`;
 }
 
 function NotASeller({ account }) {
-    const copy = () => { navigator.clipboard?.writeText(account?.discord_id || ''); toast('Discord ID copied.'); };
+    const copy = () => { navigator.clipboard?.writeText(account?.discord_id || ''); toast(t('Discord ID copied.')); };
     return html`<div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
             <div className="w-14 h-14 rounded-2xl mx-auto bg-slate-900 border border-slate-800 flex items-center justify-center"><${Icon} name="lock" className="w-6 h-6 text-slate-400" /></div>
-            <h1 className="text-xl font-black text-white mt-5">You're not on the seller list yet</h1>
-            <p className="text-sm text-slate-400 mt-2">Signed in as <b className="text-slate-200">${account?.display_name || account?.discord_username}</b>.
-                <b className="text-slate-200">Verified Sellers</b>, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.
-                Otherwise, send your Discord ID to an Echo Market admin.</p>
+            <h1 className="text-xl font-black text-white mt-5">${t("You're not on the seller list yet")}</h1>
+            <p className="text-sm text-slate-400 mt-2">${tj('Signed in as {name}.', { name: html`<b className="text-slate-200">${account?.display_name || account?.discord_username}</b>` })}
+                ${t('Verified Sellers, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.')}
+                ${t('Otherwise, send your Discord ID to an Echo Market admin.')}</p>
             <button onClick=${copy} className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-sm hover:border-slate-600">
-                ${account?.discord_id || 'unknown'} <${Icon} name="copy" className="w-4 h-4 text-slate-500" />
+                ${account?.discord_id || t('unknown')} <${Icon} name="copy" className="w-4 h-4 text-slate-500" />
             </button>
             <div className="mt-7 flex flex-wrap justify-center gap-2">
-                <${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>Check again<//>
-                <a href=${CONFIG.BUYER_URL || "#"}><${Button} variant="secondary">Go to Echo Market<//></a>
-                <${Button} variant="ghost" onClick=${() => sb.auth.signOut()}>Sign out<//>
+                <${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>${t('Check again')}<//>
+                <a href=${CONFIG.BUYER_URL || "#"}><${Button} variant="secondary">${t('Go to Echo Market')}<//></a>
+                <${Button} variant="ghost" onClick=${() => sb.auth.signOut()}>${t('Sign out')}<//>
             </div>
         </div>
         <${Toasts} />
@@ -834,12 +844,12 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnre
         date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     return html`<section>
         <p className="label text-sky-300 flex items-center gap-2"><${Icon} name=${g.icon} className="w-4 h-4" />${when}</p>
-        <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${g.text}${name ? `, ${name}` : ''}.</h1>
+        <h1 className="text-2xl md:text-4xl font-black tracking-tight text-white mt-1.5 md:mt-2 truncate">${greetingLine(g, name)}</h1>
         <p className="text-sm text-slate-400 mt-1">${open.length
-            ? `${plural(open.length, 'order')} waiting for a seller · the longest for ${fmtDuration(now - oldest)}.`
-            : 'The open queue is empty.'}${mine ? ` You have ${plural(mine, 'active order')}.` : ''}
-            ${unreadOrders > 0 && html` <button type="button" onClick=${onShowUnread} title="Show these orders"
-                className="font-bold text-sky-300 hover:text-white underline decoration-dotted underline-offset-4">💬 ${plural(unreadOrders, 'order')} with new buyer messages</button>`}</p>
+            ? t('{count} waiting for a seller · the longest for {time}.', { count: plural(open.length, 'order'), time: fmtDuration(now - oldest) })
+            : t('The open queue is empty.')}${mine ? ` ${t('You have {count}.', { count: plural(mine, 'active order') })}` : ''}
+            ${unreadOrders > 0 && html` <button type="button" onClick=${onShowUnread} title=${t('Show these orders')}
+                className="font-bold text-sky-300 hover:text-white underline decoration-dotted underline-offset-4">💬 ${t('{count} with new buyer messages', { count: plural(unreadOrders, 'order') })}</button>`}</p>
     </section>`;
 }
 
@@ -848,10 +858,10 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
     const [open, setOpen] = useState(false);
     const signOut = async () => {
         setOpen(false);
-        if (await ask({ title: 'Sign out of the seller desk?', confirmLabel: 'Sign out', message: "You'll need to sign in with Discord again to take orders." })) sb.auth.signOut();
+        if (await ask({ title: t('Sign out of the seller desk?'), confirmLabel: t('Sign out'), message: t("You'll need to sign in with Discord again to take orders.") })) sb.auth.signOut();
     };
     return html`<div className="relative">
-        <button onClick=${() => setOpen(!open)} aria-label="Account menu" aria-expanded=${open} data-tour="account"
+        <button onClick=${() => setOpen(!open)} aria-label=${t('Account menu')} aria-expanded=${open} data-tour="account"
             className="flex items-center gap-1.5 h-10 pl-1 pr-2 rounded-full hover:bg-slate-800">
             <${Avatar} account=${account} /><${Icon} name="chevron-down" className="w-4 h-4 text-slate-500" />
         </button>
@@ -860,28 +870,28 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
             <div className="flex items-center gap-3 px-3 py-2.5 border-b border-slate-800 mb-1">
                 <${Avatar} account=${account} size="w-10 h-10" />
                 <div className="min-w-0">
-                    <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || 'Signed in'}</p>
+                    <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || t('Signed in')}</p>
                     <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</p>
                     <div className="mt-1.5"><${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} /></div>
                 </div>
             </div>
             ${airlines.length > 0 && html`<label className="sm:hidden block px-3 py-2">
-                <span className="block text-[11px] font-bold text-slate-500 mb-1">Selling as</span>
+                <span className="block text-[11px] font-bold text-slate-500 mb-1">${t('Selling as')}</span>
                 <select value=${sellAs?.id || ''} onChange=${(e) => onSellAs(e.target.value)} className="input !py-2">
                     ${airlines.map((a) => html`<option key=${a.id} value=${a.id}>${a.name} · ${a.alliance}</option>`)}
                 </select>
             </label>`}
-            <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> Open the market</a>
-            <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> Show me around</button>
-            <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> Seller welcome</a>
-            <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> Sign out</button>
+            <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> ${t('Open the market')}</a>
+            <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
+            <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Seller welcome')}</a>
+            <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
         </div>`}
     </div>`;
 }
 
 // The buyer airline's name, as a link to the buyer's Discord info.
 function BuyerLink({ order, onBuyer }) {
-    return html`<button type="button" title="See the buyer's Discord info"
+    return html`<button type="button" title=${t("See the buyer's Discord info")}
         onClick=${(e) => { e.stopPropagation(); onBuyer(order); }}
         className="font-[inherit] text-left underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-sky-300 hover:decoration-sky-400">${airlineNames(order)}</button>`;
 }
@@ -894,17 +904,17 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder, isAdmin }) {
         sb.from('accounts').select('*').eq('id', order.buyer_id).maybeSingle().then(({ data }) => setBuyer(data || null));
     }, [order.buyer_id]);
     const discordId = buyer?.discord_id || order.buyer_discord_id;
-    const name = buyer?.display_name || buyer?.discord_username || order.buyer_name || 'Unknown buyer';
+    const name = buyer?.display_name || buyer?.discord_username || order.buyer_name || t('Unknown buyer');
     const theirs = orders.filter((o) => (order.buyer_id ? o.buyer_id === order.buyer_id : o.buyer_discord_id === discordId))
         .sort((a, b) => ms(b.created_at) - ms(a.created_at));
     const [theirsShown, theirsBar] = usePaged(theirs);
     const count = (fn) => theirs.filter(fn).length;
     const airlines = [...new Map(theirs.flatMap(orderAirlines).map((a) => [a.name + '|' + a.alliance, a])).values()];
     const flagged = theirs.filter((o) => flags[o.id] && flags[o.id].status !== 'NORMAL');
-    const copy = (text, what) => { navigator.clipboard?.writeText(text); toast(`${what} copied.`); };
-    const dm = !buyer ? null : buyer.dm_enabled === false ? 'turned off' : buyer.dm_status === 'blocked' ? "can't reach them (DMs closed or not in the server)" : buyer.dm_status === 'ok' ? 'on' : 'on (not tried yet)';
+    const copy = (text, msg) => { navigator.clipboard?.writeText(text); toast(msg); };
+    const dm = !buyer ? null : buyer.dm_enabled === false ? t('turned off') : buyer.dm_status === 'blocked' ? t("can't reach them (DMs closed or not in the server)") : buyer.dm_status === 'ok' ? t('on') : t('on (not tried yet)');
 
-    return html`<${Modal} open=${true} onClose=${onClose} size="md" title="Buyer" subtitle=${`From ${orderRef(order)} · ${airlineNames(order)}`}>
+    return html`<${Modal} open=${true} onClose=${onClose} size="md" title=${t('Buyer')} subtitle=${t('From {ref} · {airline}', { ref: orderRef(order), airline: airlineNames(order) })}>
         <div className="space-y-5">
             <div className="flex items-center gap-4">
                 ${buyer === undefined ? html`<span className="w-14 h-14 rounded-full bg-slate-800 animate-pulse"></span>`
@@ -912,43 +922,43 @@ function BuyerModal({ order, orders, flags, onClose, onOpenOrder, isAdmin }) {
                 <div className="min-w-0">
                     <p className="text-lg font-extrabold text-white truncate">${name}</p>
                     ${buyer?.discord_username && html`<p className="text-sm text-slate-400 truncate">@${buyer.discord_username}</p>`}
-                    ${buyer?.created_at && html`<p className="text-xs text-slate-500">On Echo Market since ${new Date(buyer.created_at).toLocaleDateString()}</p>`}
-                    ${buyer === null && html`<p className="text-xs text-amber-300">This market account no longer exists.</p>`}
+                    ${buyer?.created_at && html`<p className="text-xs text-slate-500">${t('On Echo Market since {date}', { date: new Date(buyer.created_at).toLocaleDateString() })}</p>`}
+                    ${buyer === null && html`<p className="text-xs text-amber-300">${t('This market account no longer exists.')}</p>`}
                 </div>
             </div>
 
             ${discordId ? html`<div className="space-y-2">
                 <div className="flex items-center gap-2 p-3 rounded-2xl bg-slate-950 border border-slate-800">
                     <span className="text-[#8b93ff]"><${DiscordLogo} /></span>
-                    <span className="flex-1 min-w-0"><span className="block text-[11px] font-bold text-slate-500">Discord user ID</span>
+                    <span className="flex-1 min-w-0"><span className="block text-[11px] font-bold text-slate-500">${t('Discord user ID')}</span>
                         <span className="block font-mono text-sm text-slate-100 truncate">${discordId}</span></span>
-                    <${Button} size="sm" variant="secondary" icon="copy" onClick=${() => copy(discordId, 'Discord ID')}>Copy<//>
+                    <${Button} size="sm" variant="secondary" icon="copy" onClick=${() => copy(discordId, t('Discord ID copied.'))}>${t('Copy')}<//>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                     <a href=${`https://discord.com/users/${discordId}`} target="_blank" rel="noopener"
                         className="inline-flex items-center justify-center gap-2 rounded-full font-bold px-4 py-2.5 text-sm bg-[#5865F2] text-[#fff] hover:bg-[#4752C4]">
-                        <${DiscordLogo} className="w-4 h-4" /> Open profile</a>
-                    <${Button} variant="secondary" icon="at-sign" onClick=${() => copy(`<@${discordId}>`, 'Mention')}>Copy @mention<//>
+                        <${DiscordLogo} className="w-4 h-4" /> ${t('Open profile')}</a>
+                    <${Button} variant="secondary" icon="at-sign" onClick=${() => copy(`<@${discordId}>`, t('Mention copied.'))}>${t('Copy @mention')}<//>
                 </div>
-                <p className="text-[11px] text-slate-500">"Open profile" works when you share a Discord server with them. Paste the @mention in any Discord channel to ping them.</p>
-            </div>` : html`<p className="text-sm text-slate-400">No Discord ID was saved with this order.</p>`}
+                <p className="text-[11px] text-slate-500">${t('"Open profile" works when you share a Discord server with them. Paste the @mention in any Discord channel to ping them.')}</p>
+            </div>` : html`<p className="text-sm text-slate-400">${t('No Discord ID was saved with this order.')}</p>`}
 
-            ${dm && html`<p className="text-xs text-slate-400 flex items-center gap-1.5"><${Icon} name="bell" className="w-3.5 h-3.5" /> Bot DMs about their orders: <b className="text-slate-200">${dm}</b></p>`}
+            ${dm && html`<p className="text-xs text-slate-400 flex items-center gap-1.5"><${Icon} name="bell" className="w-3.5 h-3.5" /> ${t('Bot DMs about their orders:')} <b className="text-slate-200">${dm}</b></p>`}
 
             <div>
-                <p className="label text-slate-500 mb-2">Their orders</p>
+                <p className="label text-slate-500 mb-2">${t('Their orders')}</p>
                 <div className="grid grid-cols-4 gap-2 text-center">
-                    ${[['Total', theirs.length], ['Active', count((o) => ACTIVE_STATUSES.includes(o.status))],
-                        ['Delivered', count((o) => o.status === 'FULFILLED')], ['Closed', count((o) => ['CANCELLED', 'DECLINED'].includes(o.status))]]
+                    ${[[t('Total'), theirs.length], [t('Active'), count((o) => ACTIVE_STATUSES.includes(o.status))],
+                        [t('Delivered'), count((o) => o.status === 'FULFILLED')], [t('Closed'), count((o) => ['CANCELLED', 'DECLINED'].includes(o.status))]]
                         .map(([l, v]) => html`<div key=${l} className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                             <p className="text-lg font-black text-white">${v}</p><p className="text-[10px] font-bold text-slate-500">${l}</p></div>`)}
                 </div>
-                <p className="text-xs text-slate-400 mt-2">${plural(theirs.reduce((sum, o) => sum + (o.status === 'CANCELLED' || o.status === 'DECLINED' ? 0 : o.filled), 0), 'aircraft')} received so far.</p>
-                ${flagged.length > 0 && html`<p className="text-xs text-rose-300 mt-1 flex items-center gap-1.5"><${Icon} name="flag" className="w-3.5 h-3.5" />${plural(flagged.length, 'order')} flagged by sellers.</p>`}
+                <p className="text-xs text-slate-400 mt-2">${t('{count} received so far.', { count: plural(theirs.reduce((sum, o) => sum + (o.status === 'CANCELLED' || o.status === 'DECLINED' ? 0 : o.filled), 0), 'aircraft') })}</p>
+                ${flagged.length > 0 && html`<p className="text-xs text-rose-300 mt-1 flex items-center gap-1.5"><${Icon} name="flag" className="w-3.5 h-3.5" />${t('{count} flagged by sellers.', { count: plural(flagged.length, 'order') })}</p>`}
             </div>
 
             ${airlines.length > 0 && html`<div>
-                <p className="label text-slate-500 mb-2">Airlines they ordered for</p>
+                <p className="label text-slate-500 mb-2">${t('Airlines they ordered for')}</p>
                 <div className="flex flex-wrap gap-1.5">${airlines.map((a) => html`<span key=${a.name + a.alliance} className="px-2.5 py-1 rounded-full bg-slate-800 text-xs font-bold text-slate-200">${a.name} <span className="text-slate-500">${a.alliance}</span></span>`)}</div>
             </div>`}
 
@@ -978,18 +988,18 @@ function SellerThread({ order, messages, onMessage }) {
             const r = await api(`/api/orders/${order.id}`, { action: 'message', body: text.trim() });
             onMessage?.(r.message);
             setText('');
-            toast('Sent. The buyer gets a notification and a Discord DM.', 'success');
+            toast(t('Sent. The buyer gets a notification and a Discord DM.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     return html`<div className="space-y-2">
-        ${!messages.length && html`<p className="text-xs text-slate-500">No messages yet. Buyers can write once an order has waited 24 hours without being fully delivered; you can write to them any time.</p>`}
+        ${!messages.length && html`<p className="text-xs text-slate-500">${t('No messages yet. Buyers can write once an order has waited 24 hours without being fully delivered; you can write to them any time.')}</p>`}
         ${messages.map((m) => html`<div key=${m.id} className=${`p-2.5 rounded-xl text-sm ${m.from_role === 'buyer' ? 'mr-8 bg-slate-800/70' : 'ml-8 bg-sky-500/10 border border-sky-500/20'}`}>
-            <p className="text-[11px] text-slate-400">${m.from_role === 'buyer' ? `${m.author_name} · buyer` : `${m.author_name} · seller team`} · ${fmtDate(m.created_at)}</p>
+            <p className="text-[11px] text-slate-400">${m.author_name} · ${m.from_role === 'buyer' ? t('buyer') : t('seller team')} · ${fmtDate(m.created_at)}</p>
             <p className="text-slate-100 whitespace-pre-line break-words">${m.body}</p>
         </div>`)}
         <div className="flex gap-2 items-end">
-            <textarea value=${text} maxLength="1000" rows="2" onChange=${(e) => setText(e.target.value)} className="input flex-1" placeholder="Write to the buyer (they get a DM)"></textarea>
-            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>Send<//>
+            <textarea value=${text} maxLength="1000" rows="2" onChange=${(e) => setText(e.target.value)} className="input flex-1" placeholder=${t('Write to the buyer (they get a DM)')}></textarea>
+            <${Button} size="sm" icon="send" busy=${busy} disabled=${!text.trim()} onClick=${send}>${t('Send')}<//>
         </div>
     </div>`;
 }
@@ -1022,21 +1032,21 @@ function BuyerRecord({ discordId }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <${Icon} name=${clean ? 'shield-check' : 'shield-alert'} className=${`w-4 h-4 shrink-0 ${active ? 'text-rose-300' : n ? 'text-amber-300' : 'text-emerald-300'}`} />
             <span className="flex-1 min-w-0 text-slate-200">
-                ${clean ? 'No warnings or bans on record.' : html`Buyer has <b className="text-white">${plural(n, 'warning')}</b> on record${data.bans.length ? html` · ${active ? html`<b className="text-rose-200">market banned ${banUntil(active)}</b>` : plural(data.bans.length, 'earlier ban')}` : ''}.`}
+                ${clean ? t('No warnings or bans on record.') : html`${tj('Buyer has {count} on record.', { count: html`<b className="text-white">${plural(n, 'warning')}</b>` })}${data.bans.length ? html` · ${active ? html`<b className="text-rose-200">${active.ends_at ? t('market banned until {date}', { date: fmtDate(active.ends_at) }) : t('market banned permanently')}</b>` : plural(data.bans.length, 'earlier ban')}` : ''}`}
             </span>
             ${!clean && html`<button type="button" onClick=${() => setOpen(!open)} aria-expanded=${open} className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1">
-                ${open ? 'Hide details' : 'Show details'}<${Icon} name=${open ? 'chevron-up' : 'chevron-down'} className="w-3.5 h-3.5" /></button>`}
+                ${open ? t('Hide details') : t('Show details')}<${Icon} name=${open ? 'chevron-up' : 'chevron-down'} className="w-3.5 h-3.5" /></button>`}
         </div>
         ${open && html`<ul className="mt-2.5 pt-2.5 border-t border-slate-800 space-y-2">
             ${data.bans.map((b) => html`<li key=${'b' + b.id} className="text-xs">
-                <p className=${isActiveBan(b) ? 'font-bold text-rose-200' : 'font-bold text-slate-300'}>⛔ Market ban (${b.duration})${isActiveBan(b) ? ` · ${banUntil(b)}` : b.revoked_at ? ' · lifted' : ' · ended'}</p>
+                <p className=${isActiveBan(b) ? 'font-bold text-rose-200' : 'font-bold text-slate-300'}>⛔ ${t('Market ban ({length})', { length: t(b.duration) })}${isActiveBan(b) ? ` · ${b.ends_at ? t('until {date}', { date: fmtDate(b.ends_at) }) : t('permanent')}` : b.revoked_at ? ` · ${t('lifted')}` : ` · ${t('ended')}`}</p>
                 <p className="text-slate-300">${b.reason}</p>
-                <p className="text-slate-500">${b.issued_by_name || 'an admin'} · ${fmtDate(b.created_at)}</p>
+                <p className="text-slate-500">${b.issued_by_name || t('an admin')} · ${fmtDate(b.created_at)}</p>
             </li>`)}
             ${data.warnings.map((w) => html`<li key=${'w' + w.id} className="text-xs">
-                <p className="font-bold text-amber-200">⚠️ Warning</p>
+                <p className="font-bold text-amber-200">⚠️ ${t('Warning')}</p>
                 <p className="text-slate-300 whitespace-pre-line break-words">${w.body}</p>
-                <p className="text-slate-500">${w.sent_by_name || 'Market Admins'}${w.source === 'theft' ? ' · automatic (plane theft)' : w.source === 'bot' ? ' · via Discord' : ''} · ${fmtDate(w.created_at)}</p>
+                <p className="text-slate-500">${w.sent_by_name || t('Market Admins')}${w.source === 'theft' ? ` · ${t('automatic (plane theft)')}` : w.source === 'bot' ? ` · ${t('via Discord')}` : ''} · ${fmtDate(w.created_at)}</p>
             </li>`)}
         </ul>`}
     </div>`;
@@ -1388,7 +1398,8 @@ function RewardsCard({ data, run }) {
 
 // Admin tools, one tap away on the desk's front page (instead of at the end of a scrolling tab bar).
 // Every seller: the theft reports (identify and warn culprits). Admins also get their tools next to it.
-const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', label: 'Theft reports', hint: 'Identify and warn culprits' };
+const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', get label() { return t('Theft reports'); }, get hint() { return t('Identify and warn culprits'); } };
+// (The admin tools below stay in English, like the admin screens they open.)
 const ADMIN_TOOLS = [
     { tab: 'team', icon: 'trophy', label: 'Sellers', hint: 'Leaderboard and stats' },
     { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
@@ -1396,7 +1407,7 @@ const ADMIN_TOOLS = [
 ];
 // Phones: the order tabs as big buttons at the top, in the same style as the admin tools (desktop keeps the tab bar).
 function OrderTabButtons({ tab, setTab, tabs, counts }) {
-    return html`<nav aria-label="Orders" className="md:hidden grid grid-cols-3 gap-2">
+    return html`<nav aria-label=${t('Orders')} className="md:hidden grid grid-cols-3 gap-2">
         ${ORDER_TABS.map((k) => {
             const on = tab === k;
             return html`<button key=${k} onClick=${() => setTab(k)} aria-pressed=${on} data-tour=${'tab-' + k}
@@ -1413,17 +1424,17 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
 
 function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
     const tools = isAdmin ? [THEFT_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL];
-    return html`<nav aria-label=${isAdmin ? 'Theft reports and admin tools' : 'Theft reports'} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
-        ${tools.map((t) => {
-            const hint = t.tab === 'thefts' && theftHint ? theftHint : t.hint;
-            const alert = t.tab === 'thefts' && theftHint;
-            const on = tab === t.tab;
-            return html`<button key=${t.tab} onClick=${() => setTab(on ? 'open' : t.tab)} aria-pressed=${on}
+    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
+        ${tools.map((tool) => {
+            const hint = tool.tab === 'thefts' && theftHint ? theftHint : tool.hint;
+            const alert = tool.tab === 'thefts' && theftHint;
+            const on = tab === tool.tab;
+            return html`<button key=${tool.tab} onClick=${() => setTab(on ? 'open' : tool.tab)} aria-pressed=${on}
                 className=${`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 p-2.5 md:p-3 rounded-2xl border text-center sm:text-left transition-colors ${on ? 'bg-white text-slate-950 border-white' : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-600'}`}>
-                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : alert ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${t.icon} className="w-4 h-4" /></span>
+                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : alert ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${tool.icon} className="w-4 h-4" /></span>
                 <span className="min-w-0">
-                    <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${t.label}</span>
-                    <span className=${`${isAdmin ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? 'Open · tap to go back to orders' : hint}</span>
+                    <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${tool.label}</span>
+                    <span className=${`${isAdmin ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? t('Open · tap to go back to orders') : hint}</span>
                 </span>
             </button>`;
         })}
@@ -1437,46 +1448,46 @@ function OrderFilters({ filters, alliances, tab, statusFilter, setStatusFilter, 
     if (!open) {
         return html`<div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 -mt-1">
             <${Icon} name="sliders-horizontal" className="w-3.5 h-3.5" />
-            <span>${plural(count, 'filter')} on · showing ${shown} of ${total}</span>
-            <button onClick=${onToggle} className="font-bold text-slate-200 hover:text-white">Edit</button>
-            <button onClick=${() => onChange({ ...NO_FILTERS })} className="font-bold text-rose-300 hover:text-rose-200">Clear</button>
+            <span>${t('{count} on · showing {shown} of {total}', { count: plural(count, 'filter'), shown, total })}</span>
+            <button onClick=${onToggle} className="font-bold text-slate-200 hover:text-white">${t('Edit')}</button>
+            <button onClick=${() => onChange({ ...NO_FILTERS })} className="font-bold text-rose-300 hover:text-rose-200">${t('Clear')}</button>
         </div>`;
     }
     const range = (minKey, maxKey, unit, step) => html`<div className="flex items-center gap-1.5">
-        <input type="number" min="0" step=${step} value=${filters[minKey]} onChange=${(e) => set({ [minKey]: e.target.value })} placeholder="min" className="input !py-2 text-sm" aria-label=${`Minimum ${unit}`} />
-        <span className="text-slate-500 text-xs">to</span>
-        <input type="number" min="0" step=${step} value=${filters[maxKey]} onChange=${(e) => set({ [maxKey]: e.target.value })} placeholder="max" className="input !py-2 text-sm" aria-label=${`Maximum ${unit}`} />
+        <input type="number" min="0" step=${step} value=${filters[minKey]} onChange=${(e) => set({ [minKey]: e.target.value })} placeholder=${t('min')} className="input !py-2 text-sm" aria-label=${t('Minimum {what}', { what: unit })} />
+        <span className="text-slate-500 text-xs">${t('to')}</span>
+        <input type="number" min="0" step=${step} value=${filters[maxKey]} onChange=${(e) => set({ [maxKey]: e.target.value })} placeholder=${t('max')} className="input !py-2 text-sm" aria-label=${t('Maximum {what}', { what: unit })} />
     </div>`;
     return html`<section className="card p-3 md:p-4 space-y-3">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <label className="block"><span className="field-label">Alliance (buyer can receive in)</span>
+            <label className="block"><span className="field-label">${t('Alliance (buyer can receive in)')}</span>
                 <select value=${filters.alliance} onChange=${(e) => set({ alliance: e.target.value })} className="input !py-2 text-sm">
-                    <option value="">Any alliance</option>
+                    <option value="">${t('Any alliance')}</option>
                     ${alliances.map((a) => html`<option key=${a} value=${a}>${a}</option>`)}
                 </select></label>
-            <div><span className="field-label">Aircraft types in the order</span>
-                <div className="grid grid-cols-4 gap-1">${[['', 'Any'], ['1', '1'], ['2', '2'], ['3', '3+']].map(([v, l]) => html`<button key=${l} type="button" onClick=${() => set({ types: v })}
+            <div><span className="field-label">${t('Aircraft types in the order')}</span>
+                <div className="grid grid-cols-4 gap-1">${[['', t('Any')], ['1', '1'], ['2', '2'], ['3', '3+']].map(([v, l]) => html`<button key=${v || 'any'} type="button" onClick=${() => set({ types: v })}
                     className=${`py-2 rounded-xl border text-xs font-bold ${filters.types === v ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${l}</button>`)}</div></div>
-            <div><span className="field-label">Number of aircraft</span>${range('qtyMin', 'qtyMax', 'aircraft', 1)}</div>
-            <div><span className="field-label">List value ($ millions)</span>${range('listMin', 'listMax', 'list value in millions', 50)}</div>
+            <div><span className="field-label">${t('Number of aircraft')}</span>${range('qtyMin', 'qtyMax', t('aircraft'), 1)}</div>
+            <div><span className="field-label">${t('List value ($ millions)')}</span>${range('listMin', 'listMax', t('list value in millions'), 50)}</div>
         </div>
         <label className="flex items-center gap-2.5 text-sm text-slate-200 cursor-pointer w-fit">
             <input type="checkbox" checked=${filters.mineOnly === true} onChange=${(e) => set({ mineOnly: e.target.checked })} className="w-4 h-4 accent-sky-400" />
-            Only orders I delivered on <span className="text-xs text-slate-500">(partly or fully, also after taking over or passing on)</span>
+            ${t('Only orders I delivered on')} <span className="text-xs text-slate-500">${t('(partly or fully, also after taking over or passing on)')}</span>
         </label>
         <label className="flex items-center gap-2.5 text-sm text-slate-200 cursor-pointer w-fit">
             <input type="checkbox" checked=${filters.unreadOnly === true} onChange=${(e) => set({ unreadOnly: e.target.checked })} className="w-4 h-4 accent-sky-400" />
-            Only orders with new buyer messages
+            ${t('Only orders with new buyer messages')}
         </label>
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
-            ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">Status
+            ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">${t('Status')}
                 <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
-                    <option value="ALL">Any status</option>
+                    <option value="ALL">${t('Any status')}</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select></label>`}
-            <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total}${count ? ` · ${plural(count, 'filter')} on` : ''}</span>
-            ${count > 0 && html`<${Button} size="sm" variant="ghost" icon="x" onClick=${() => onChange({ ...NO_FILTERS })}>Clear filters<//>`}
-            <${Button} size="sm" variant="secondary" icon="chevron-up" onClick=${onToggle}>Done<//>
+            <span className="text-xs text-slate-400 mr-auto">${tj('Showing {shown} of {total}', { shown: html`<b className="text-slate-200">${shown}</b>`, total })}${count ? ` · ${t('{count} on', { count: plural(count, 'filter') })}` : ''}</span>
+            ${count > 0 && html`<${Button} size="sm" variant="ghost" icon="x" onClick=${() => onChange({ ...NO_FILTERS })}>${t('Clear filters')}<//>`}
+            <${Button} size="sm" variant="secondary" icon="chevron-up" onClick=${onToggle}>${t('Done')}<//>
         </div>
     </section>`;
 }
@@ -1490,8 +1501,8 @@ function Stat({ label, value, icon, tone }) {
 
 function SellAsPicker({ airlines, sellAs, onChange }) {
     if (!airlines.length) return null;
-    return html`<label data-tour="sellas" className="hidden sm:flex items-center gap-2 pl-3 pr-1 py-1 rounded-full border border-slate-800 bg-slate-900 text-xs" title="The airline buyers see when you take an order">
-        <span className="text-slate-500 font-bold">Selling as</span>
+    return html`<label data-tour="sellas" className="hidden sm:flex items-center gap-2 pl-3 pr-1 py-1 rounded-full border border-slate-800 bg-slate-900 text-xs" title=${t('The airline buyers see when you take an order')}>
+        <span className="text-slate-500 font-bold">${t('Selling as')}</span>
         <select value=${sellAs?.id || ''} onChange=${(e) => onChange(e.target.value)} className="bg-transparent font-bold text-white outline-none py-1 pr-1 max-w-40">
             ${airlines.map((a) => html`<option key=${a.id} value=${a.id} className="bg-slate-900">${a.name}</option>`)}
         </select>
@@ -1511,8 +1522,8 @@ const sharesAlliance = (airlines, order) => !orderAlliances(order).length || air
 function AllianceBadge({ airlines, order }) {
     if (!airlines.length || sharesAlliance(airlines, order)) return null;
     return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black text-amber-300 border-amber-500/30 bg-amber-500/10"
-        title=${`None of your airlines is in ${orderAlliances(order).join(' or ')}`}>
-        <${Icon} name="users-round" className="w-3 h-3" />NO SHARED ALLIANCE</span>`;
+        title=${t('None of your airlines is in {alliances}', { alliances: orderAlliances(order).join(' / ') })}>
+        <${Icon} name="users-round" className="w-3 h-3" />${t('NO SHARED ALLIANCE')}</span>`;
 }
 
 function itemsSummary(order, withDelivery = false) {
@@ -1524,7 +1535,7 @@ function PassedBadge({ passed, userId, teamSize }) {
     const me = passed.some((d) => d.seller_id === userId);
     return html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-black text-slate-300 border-slate-700 bg-slate-800/60"
         title=${passed.map((d) => d.seller_name + (d.note ? `: ${d.note}` : '')).join('\n')}>
-        <${Icon} name="user-x" className="w-3 h-3" />${me ? 'YOU PASSED · ' : ''}${passed.length}/${teamSize} PASSED</span>`;
+        <${Icon} name="user-x" className="w-3 h-3" />${me ? `${t('YOU PASSED')} · ` : ''}${t('{n}/{total} PASSED', { n: passed.length, total: teamSize })}</span>`;
 }
 
 // Which buttons a seller gets for an order.
@@ -1536,14 +1547,14 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     const size = compact ? 'sm' : 'md';
     const stop = (fn) => (e) => { e.stopPropagation(); fn(order); };
     return html`<div className="flex flex-wrap gap-1.5" onClick=${(e) => e.stopPropagation()}>
-        ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>Take order<//>`}
-        ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canUpdate && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>Update delivery<//>`}
-        ${canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>Take over<//>`}
-        ${['CLAIMED', 'PARTIAL'].includes(order.status) && (canManage || helping) && !compact && html`<${Button} size=${size} variant="secondary" icon=${helping ? 'log-out' : orderHelpers(order).length ? 'forward' : order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${helping ? 'Stop delivering' : orderHelpers(order).length ? 'Hand over' : order.filled > 0 ? 'Pass on the rest' : 'Release'}<//>`}
-        ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>Decline<//>`}
-        ${seller.is_admin && ACTIVE_STATUSES.includes(order.status) && !compact && html`<${Button} size=${size} variant="ghost" icon="octagon-x" className="!text-rose-300" onClick=${stop(actions.forceDecline)}>Decline for all<//>`}
-        ${!compact && html`<${Button} size=${size} variant="ghost" icon="flag" onClick=${stop(actions.flag)}>Flag<//>`}
-        ${seller.is_admin && !compact && html`<${Button} size=${size} variant="ghost" icon="trash-2" className="!text-rose-300" onClick=${stop(actions.remove)}>Delete<//>`}
+        ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>${t('Take order')}<//>`}
+        ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canUpdate && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>${t('Update delivery')}<//>`}
+        ${canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>${t('Take over')}<//>`}
+        ${['CLAIMED', 'PARTIAL'].includes(order.status) && (canManage || helping) && !compact && html`<${Button} size=${size} variant="secondary" icon=${helping ? 'log-out' : orderHelpers(order).length ? 'forward' : order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${helping ? t('Stop delivering') : orderHelpers(order).length ? t('Hand over') : order.filled > 0 ? t('Pass on the rest') : t('Release')}<//>`}
+        ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>${t('Decline')}<//>`}
+        ${seller.is_admin && ACTIVE_STATUSES.includes(order.status) && !compact && html`<${Button} size=${size} variant="ghost" icon="octagon-x" className="!text-rose-300" onClick=${stop(actions.forceDecline)}>${t('Decline for all')}<//>`}
+        ${!compact && html`<${Button} size=${size} variant="ghost" icon="flag" onClick=${stop(actions.flag)}>${t('Flag')}<//>`}
+        ${seller.is_admin && !compact && html`<${Button} size=${size} variant="ghost" icon="trash-2" className="!text-rose-300" onClick=${stop(actions.remove)}>${t('Delete')}<//>`}
     </div>`;
 }
 
@@ -1558,27 +1569,27 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     <${OrderCode} order=${order} />
                     <${StatusBadge} status=${displayStatus(order)} />
                     <${FlagBadge} flag=${flag} />
-                    ${caution && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950" title=${CAUTION_TEXT}><${Icon} name="eye" className="w-3 h-3" />CAUTION</span>`}
+                    ${caution && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950" title=${t(CAUTION_TEXT)}><${Icon} name="eye" className="w-3 h-3" />${t('CAUTION')}</span>`}
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
-                    ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOURS</span>`}
-                    ${helping && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">YOU'RE HELPING</span>`}
-                    ${missing > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-[#fff]"><${Icon} name="shield-alert" className="w-3 h-3" />MISSING PLANES REPORTED</span>`}
-                    ${canTakeOver(order, userId, now) && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" title=${`Taken over ${TAKEOVER_HOURS} hours ago and not finished: you can take over part of it`}>CAN TAKE OVER</span>`}
+                    ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">${t('YOURS')}</span>`}
+                    ${helping && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">${t("YOU'RE HELPING")}</span>`}
+                    ${missing > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-[#fff]"><${Icon} name="shield-alert" className="w-3 h-3" />${t('MISSING PLANES REPORTED')}</span>`}
+                    ${canTakeOver(order, userId, now) && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300" title=${t('Taken over {n} hours ago and not finished: you can take over part of it', { n: TAKEOVER_HOURS })}>${t('CAN TAKE OVER')}</span>`}
                     <${WaitChip} order=${order} now=${now} />
                     ${unread > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-400 text-slate-950">
-                        <${Icon} name="message-circle" className="w-3 h-3" />${unread} NEW MESSAGE${unread === 1 ? '' : 'S'}</span>`}
-                    <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>ordered ${timeAgo(order.created_at)}</span>
+                        <${Icon} name="message-circle" className="w-3 h-3" />${unread === 1 ? t('1 NEW MESSAGE') : t('{n} NEW MESSAGES', { n: unread })}</span>`}
+                    <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>${t('ordered {time}', { time: timeAgo(order.created_at) })}</span>
                 </div>
                 <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${orderAlliances(order).join(', ')} · ${order.buyer_name}</span></p>
                 <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>
-                ${order.seller_airline_name && (!mine || joined.length > 0) && html`<p className="text-[11px] text-slate-500">Seller: ${order.seller_airline_name} (${order.seller_name})${joined.length ? ` + also delivering: ${joined.map((h) => h.seller_airline_name).join(', ')}` : ''}</p>`}
+                ${order.seller_airline_name && (!mine || joined.length > 0) && html`<p className="text-[11px] text-slate-500">${t('Seller: {names}', { names: `${order.seller_airline_name} (${order.seller_name})` })}${joined.length ? ` + ${t('also delivering: {names}', { names: joined.map((h) => h.seller_airline_name).join(', ') })}` : ''}</p>`}
             </div>
             <div className="flex md:flex-col items-center md:items-end justify-between gap-2 shrink-0">
                 <div className="md:text-right">
                     <p className="font-black text-white">${fmtUSDShort(order.total_usd)}</p>
-                    <p className="text-[11px] text-amber-200/80" title="List value: what buying these aircraft new in-game costs, roughly">List ${fmtUSDShort(orderListValue(order))} · est. cost new</p>
-                    <p className="text-[11px] text-slate-500">${order.filled}/${order.total_qty} delivered</p>
+                    <p className="text-[11px] text-amber-200/80" title=${t('List value: what buying these aircraft new in-game costs, roughly')}>${t('List {value} · est. cost new', { value: fmtUSDShort(orderListValue(order)) })}</p>
+                    <p className="text-[11px] text-slate-500">${t('{done}/{total} delivered', { done: order.filled, total: order.total_qty })}</p>
                 </div>
                 <${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${true} />
             </div>
@@ -1595,7 +1606,7 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
     const items = orderLines(order);
     const previous = Array.isArray(order.previous_sellers) ? order.previous_sellers : [];
     return html`<${Modal} open=${true} onClose=${onClose} size="lg" title=${html`${orderRef(order)} · <${BuyerLink} order=${order} onBuyer=${onBuyer} />`}
-        subtitle=${`${order.id} · ${orderAlliances(order).join(', ')} · ordered by ${order.buyer_name} · ${fmtDate(order.created_at)}`}
+        subtitle=${`${order.id} · ${orderAlliances(order).join(', ')} · ${t('ordered by {name}', { name: order.buyer_name })} · ${fmtDate(order.created_at)}`}
         footer=${html`<${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${false} />`}>
         <div className="space-y-5">
             <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${displayStatus(order)} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
@@ -1603,52 +1614,52 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             </div>
             ${caution && html`<div className="flex gap-3 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 text-sm text-amber-100">
                 <${Icon} name="eye" className="w-5 h-5 text-amber-300 shrink-0" />
-                <div><p className="font-bold text-amber-200">Caution: buyer on the alert list</p><p>${CAUTION_TEXT}</p>
-                    ${cautionReason && html`<p className="text-xs mt-1 text-amber-200/80">Reason (admins only): ${cautionReason}</p>`}</div>
+                <div><p className="font-bold text-amber-200">${t('Caution: buyer on the alert list')}</p><p>${t(CAUTION_TEXT)}</p>
+                    ${cautionReason && html`<p className="text-xs mt-1 text-amber-200/80">${t('Reason (admins only): {reason}', { reason: cautionReason })}</p>`}</div>
             </div>`}
             <button onClick=${() => onBuyer(order)} className="w-full flex items-center gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-800 hover:border-slate-600 text-left">
                 <span className="w-9 h-9 rounded-xl bg-[#5865F2]/15 text-[#8b93ff] flex items-center justify-center shrink-0"><${DiscordLogo} className="w-4 h-4" /></span>
                 <span className="flex-1 min-w-0">
-                    <span className="block text-[11px] font-bold text-slate-500">Buyer</span>
+                    <span className="block text-[11px] font-bold text-slate-500">${t('Buyer')}</span>
                     <span className="block font-bold text-white truncate">${order.buyer_name}${order.buyer_discord_id ? html` <span className="font-mono text-xs text-slate-500 font-normal">${order.buyer_discord_id}</span>` : ''}</span>
                 </span>
-                <span className="text-xs font-bold text-slate-300 shrink-0 flex items-center gap-1">Discord info <${Icon} name="chevron-right" /></span>
+                <span className="text-xs font-bold text-slate-300 shrink-0 flex items-center gap-1">${t('Discord info')} <${Icon} name="chevron-right" /></span>
             </button>
             <${BuyerRecord} discordId=${order.buyer_discord_id} />
             ${orderAirlines(order).length > 1 && html`<div>
-                <p className="label text-slate-500 mb-1.5">Buyer accepts delivery to any of</p>
+                <p className="label text-slate-500 mb-1.5">${t('Buyer accepts delivery to any of')}</p>
                 <div className="flex flex-wrap gap-1.5">${orderAirlines(order).map((a) => {
                     const match = airlines.some((x) => x.alliance === a.alliance);
                     return html`<span key=${a.name + a.alliance} className=${`px-2.5 py-1 rounded-full text-xs font-bold ${match ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-200'}`}
-                        title=${match ? 'You have an airline in this alliance' : ''}>${a.name} <span className="opacity-60">${a.alliance}</span></span>`;
+                        title=${match ? t('You have an airline in this alliance') : ''}>${a.name} <span className="opacity-60">${a.alliance}</span></span>`;
                 })}</div>
             </div>`}
             <${OrderStepper} order=${order} />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 p-3 rounded-2xl border border-amber-500/20 bg-amber-500/5">
-                <span className="text-sm text-amber-100"><b className="text-white">List value ${fmtUSD(orderListValue(order))}</b> · est. cost of buying these aircraft new in-game</span>
-                ${order.filled > 0 && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status) && html`<span className="text-xs text-amber-200/70">${fmtUSDShort(listStillToBuy(order))} for the ${order.total_qty - order.filled} still to deliver</span>`}
-                <span className="text-xs text-amber-200/70">Buyer pays ${fmtUSDShort(order.total_usd)}</span>
+                <span className="text-sm text-amber-100"><b className="text-white">${t('List value {value}', { value: fmtUSD(orderListValue(order)) })}</b> · ${t('est. cost of buying these aircraft new in-game')}</span>
+                ${order.filled > 0 && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status) && html`<span className="text-xs text-amber-200/70">${t('{value} for the {n} still to deliver', { value: fmtUSDShort(listStillToBuy(order)), n: order.total_qty - order.filled })}</span>`}
+                <span className="text-xs text-amber-200/70">${t('Buyer pays {value}', { value: fmtUSDShort(order.total_usd) })}</span>
             </div>
-            ${order.seller_airline_name && html`<p className="text-sm text-slate-300">Seller: <b>${order.seller_airline_name}</b> (${order.seller_alliance}) — ${order.seller_name}${order.seller_id === userId ? ' (you)' : ''}</p>`}
+            ${order.seller_airline_name && html`<p className="text-sm text-slate-300">${tj('Seller: {names}', { names: html`<span><b>${order.seller_airline_name}</b> (${order.seller_alliance}) — ${order.seller_name}${order.seller_id === userId ? ` ${t('(you)')}` : ''}</span>` })}</p>`}
             ${['CLAIMED', 'PARTIAL'].includes(order.status) && order.seller_id !== userId && !isHelping(order, userId) && html`<p className="text-xs text-slate-400 flex items-center gap-1.5"><${Icon} name="users" className="w-3.5 h-3.5" />
-                ${canTakeOver(order, userId, now) ? `Taken over ${TAKEOVER_HOURS} hours ago and not finished: you can take over part of it. The current seller stays on it.`
-                    : orderHelpers(order).length >= MAX_HELPERS ? 'Enough sellers are already helping with this order.'
-                    : `Other sellers can take over if it isn't finished ${TAKEOVER_HOURS} hours after it was taken (in about ${Math.ceil(takeoverIn(order, now))} h).`}</p>`}
+                ${canTakeOver(order, userId, now) ? t('Taken over {n} hours ago and not finished: you can take over part of it. The current seller stays on it.', { n: TAKEOVER_HOURS })
+                    : orderHelpers(order).length >= MAX_HELPERS ? t('Enough sellers are already helping with this order.')
+                    : t("Other sellers can take over if it isn't finished {n} hours after it was taken (in about {h} h).", { n: TAKEOVER_HOURS, h: Math.ceil(takeoverIn(order, now)) })}</p>`}
             <${SellerShares} order=${order} userId=${userId} />
-            ${previous.length > 0 && deliveryShares(order).length < 2 && html`<p className="text-sm text-slate-300">Earlier sellers: ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
-                <span className="text-slate-400"> · delivered ${previous.map((p) => p.delivered).join(' + ')} before passing it on</span></p>`}
+            ${previous.length > 0 && deliveryShares(order).length < 2 && html`<p className="text-sm text-slate-300">${t('Earlier sellers:')} ${previous.map((p) => html`<b key=${p.at}>${p.seller_airline_name}</b>`).reduce((acc, el, i) => (i ? [...acc, ', ', el] : [el]), [])}
+                <span className="text-slate-400"> · ${t('delivered {list} before passing it on', { list: previous.map((p) => p.delivered).join(' + ') })}</span></p>`}
             ${order.status === 'PENDING' && passed?.length > 0 && html`<div className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                <p className="font-bold text-slate-200">Passed by ${passed.length} of ${teamSize} sellers</p>
+                <p className="font-bold text-slate-200">${t('Passed by {n} of {total} sellers', { n: passed.length, total: teamSize })}</p>
                 <ul className="text-xs text-slate-400 mt-1 space-y-0.5">${passed.map((d) => html`<li key=${d.seller_id}>${d.seller_name}${d.note ? ` — "${d.note}"` : ''}</li>`)}</ul>
             </div>`}
-            ${order.closed_reason && html`<p className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800"><b>Reason:</b> ${order.closed_reason}</p>`}
-            ${flag && flag.status !== 'NORMAL' && html`<p className="text-sm p-3 rounded-2xl bg-rose-500/5 border border-rose-500/20 text-rose-100"><b>${flag.status}</b> by ${flag.flagged_by}: ${flag.reason || 'no reason given'} <span className="text-rose-300/60">(sellers only)</span></p>`}
+            ${order.closed_reason && html`<p className="text-sm p-3 rounded-2xl bg-slate-950 border border-slate-800"><b>${t('Reason:')}</b> ${tx(order.closed_reason)}</p>`}
+            ${flag && flag.status !== 'NORMAL' && html`<p className="text-sm p-3 rounded-2xl bg-rose-500/5 border border-rose-500/20 text-rose-100">${tj('{flag} by {name}: {reason}', { flag: html`<b>${FLAG_META[flag.status]?.label || flag.status}</b>`, name: flag.flagged_by, reason: flag.reason || t('no reason given') })} <span className="text-rose-300/60">${t('(sellers only)')}</span></p>`}
             <div>
-                <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">Delivered</span><span className="font-bold">${order.filled} / ${order.total_qty}</span></div>
+                <div className="flex justify-between text-xs mb-1.5"><span className="text-slate-400">${t('Delivered')}</span><span className="font-bold">${order.filled} / ${order.total_qty}</span></div>
                 <${ProgressBar} value=${order.filled} max=${order.total_qty} />
             </div>
             <div className="overflow-x-auto"><table className="w-full text-sm">
-                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">Aircraft</th><th className="font-bold pb-2 text-right">Delivered</th><th className="font-bold pb-2 text-right">Level</th><th className="font-bold pb-2 text-right">Buyer pays</th><th className="font-bold pb-2 text-right">List value</th></tr></thead>
+                <thead><tr className="text-left text-[11px] text-slate-500"><th className="font-bold pb-2">${t('Aircraft')}</th><th className="font-bold pb-2 text-right">${t('Delivered')}</th><th className="font-bold pb-2 text-right">${t('Level')}</th><th className="font-bold pb-2 text-right">${t('Buyer pays')}</th><th className="font-bold pb-2 text-right">${t('List value')}</th></tr></thead>
                 <tbody className="divide-y divide-slate-800">
                     ${items.map((it, i) => html`<tr key=${i}>
                         <td className="py-2 pr-2"><span className="text-slate-100">${it.model}</span> <span className="text-slate-500 text-xs">${it.code}</span>${it.note && html`<span className="block text-xs text-slate-400">“${it.note}”</span>`}</td>
@@ -1657,31 +1668,31 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                         <td className="py-2 text-right">${fmtUSDShort(it.totalUSD)}</td>
                         <td className="py-2 text-right text-amber-200/90">${it.listPriceUSD ? fmtUSDShort(it.listPriceUSD * it.qty) : '–'}</td>
                     </tr>`)}
-                    <tr><td className="pt-2 font-bold">Total</td><td className="pt-2 text-right font-bold tabular-nums">${order.filled}/${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td><td className="pt-2 text-right font-black text-amber-200">${fmtUSD(orderListValue(order))}</td></tr>
+                    <tr><td className="pt-2 font-bold">${t('Total')}</td><td className="pt-2 text-right font-bold tabular-nums">${order.filled}/${order.total_qty}</td><td></td><td className="pt-2 text-right font-black">${fmtUSD(order.total_usd)}</td><td className="pt-2 text-right font-black text-amber-200">${fmtUSD(orderListValue(order))}</td></tr>
                 </tbody>
             </table></div>
-            ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">Buyer note</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
-            ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">Seller note (buyer can see)</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
+            ${order.buyer_note && html`<div><p className="label text-slate-500 mb-1">${t('Buyer note')}</p><p className="text-sm text-slate-200">${order.buyer_note}</p></div>`}
+            ${order.seller_note && html`<div><p className="label text-slate-500 mb-1">${t('Seller note (buyer can see)')}</p><p className="text-sm text-slate-200">${order.seller_note}</p></div>`}
             ${reports.length > 0 && html`<div>
-                <p className="label text-slate-500 mb-2">Missing planes (${reports.length})</p>
+                <p className="label text-slate-500 mb-2">${t('Missing planes')} (${reports.length})</p>
                 <div className="space-y-2">${[...reports].reverse().map((r) => html`<${MissingReport} key=${r.id} report=${r} order=${order}
                     culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits}
                     canClose=${seller.is_admin || deliveryShares(order).some((sh) => sh.sellerId === userId)} onDone=${onReport} />`)}</div>
             </div>`}
             <div>
-                <p className="label text-slate-500 mb-2">Messages with the buyer${messages.length ? ` (${messages.length})` : ''}</p>
+                <p className="label text-slate-500 mb-2">${t('Messages with the buyer')}${messages.length ? ` (${messages.length})` : ''}</p>
                 <${SellerThread} order=${order} messages=${messages} onMessage=${onMessage} />
             </div>
             <div>
-                <p className="label text-slate-500 mb-2">Status history</p>
+                <p className="label text-slate-500 mb-2">${t('Status history')}</p>
                 <${StatusHistory} order=${order} now=${now} />
             </div>
             <div>
-                <p className="label text-slate-500 mb-2">Timeline</p>
+                <p className="label text-slate-500 mb-2">${t('Timeline')}</p>
                 <ol className="space-y-2 border-l border-slate-800 pl-4">
                     ${events.map((e) => html`<li key=${e.id} className="relative">
                         <span className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-slate-600"></span>
-                        <p className="text-sm text-slate-200"><span className="font-mono text-[10px] text-slate-500 mr-1.5">${e.kind}</span>${e.message}</p>
+                        <p className="text-sm text-slate-200"><span className="font-mono text-[10px] text-slate-500 mr-1.5">${e.kind}</span>${tx(e.message)}</p>
                         <p className="text-[11px] text-slate-500">${e.actor_name} · ${fmtDate(e.created_at)}</p>
                     </li>`)}
                 </ol>
@@ -1713,9 +1724,9 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
             const list = outcome === 'confirmed' && known ? cleanIds(ids) : [];
             const r = await api(`/api/orders/${order.id}`, { action: 'missing', reportId: report.id, outcome, note: note.trim(), culprits: list });
             onDone?.(r.report); after();
-            toast(outcome === 'confirmed'
-                ? `Theft logged${r.logged ? ' in the moderation channel' : ''}${r.warned ? `, ${plural(r.warned, 'culprit')} warned` : ', culprit under investigation'}. The buyer has been told.`
-                : 'Report closed. The buyer has been told.', 'success');
+            toast(outcome !== 'confirmed' ? t('Report closed. The buyer has been told.')
+                : r.warned ? t('Theft logged, {count} warned. The buyer has been told.', { count: plural(r.warned, 'culprit') })
+                : t('Theft logged, culprit under investigation. The buyer has been told.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     // Name (more) culprits later: any seller.
@@ -1729,18 +1740,19 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
                 done: report.investigating ? closeIt : false });
             onDone?.(r.report); after();
             setWarning(false); setWarnIds(['']);
-            toast(`${plural(r.warned, 'culprit')} warned and logged${r.report?.investigating ? '. The investigation stays open' : ''}.`, 'success');
+            toast(r.report?.investigating ? t('{count} warned and logged. The investigation stays open.', { count: plural(r.warned, 'culprit') })
+                : t('{count} warned and logged.', { count: plural(r.warned, 'culprit') }), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     const giveUp = async () => {
-        const ok = await ask({ title: 'Close the investigation?', confirmLabel: 'Close investigation',
-            message: "The theft stays confirmed, with the culprit marked as not identified. If someone finds out later, you can still add and warn them here." });
+        const ok = await ask({ title: t('Close the investigation?'), confirmLabel: t('Close investigation'),
+            message: t('The theft stays confirmed, with the culprit marked as not identified. If someone finds out later, you can still add and warn them here.') });
         if (!ok) return;
         setBusy(true);
         try {
             const r = await api(`/api/orders/${order.id}`, { action: 'missing-culprits', reportId: report.id, culprits: [], done: true });
             onDone?.(r.report);
-            toast('Investigation closed: culprit not identified.', 'success');
+            toast(t('Investigation closed: culprit not identified.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     // Clear a confirmed theft once the warned culprit(s) re-listed the planes (checked in-game).
@@ -1753,107 +1765,109 @@ function MissingReport({ report, order, culprits = [], canClose, onDone, onCulpr
             const r = await api(`/api/orders/${order.id}`, { action: 'missing-clear', reportId: report.id, note: clearNote.trim(), verified });
             onDone?.(r.report);
             setClearing(false);
-            toast(`Theft cleared${r.logged ? ' and logged' : ''}. The buyer was told to buy the re-listed planes${r.culpritTold ? ', and the culprits were told the case is closed' : ''}.`, 'success');
+            toast(r.culpritTold ? t('Theft cleared. The buyer was told to buy the re-listed planes, and the culprits were told the case is closed.')
+                : t('Theft cleared. The buyer was told to buy the re-listed planes.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     // Red: not dealt with yet (or the thief is still unknown). Yellow: thief identified and warned, planes not
     // re-listed yet (the warning stays on their record). Green: the thief re-listed the planes.
     const RED = 'text-rose-200 border-rose-500/40 bg-rose-500/[0.07]', YELLOW = 'text-amber-100 border-amber-400/40 bg-amber-400/[0.07]';
     const GREEN = 'text-emerald-200 border-emerald-500/40 bg-emerald-500/[0.07]', GREY = 'text-slate-200 border-slate-800 bg-slate-950';
-    const head = report.status === 'OPEN' ? [RED, 'shield-alert', 'Reported, needs checking']
-        : report.status === 'CONFIRMED' && named.length ? [YELLOW, 'user-x', 'Thief identified · planes not re-listed yet']
-        : report.status === 'CONFIRMED' && report.investigating ? [RED, 'shield-x', 'Theft confirmed · thief not identified yet']
-        : report.status === 'CONFIRMED' ? [GREY, 'shield-x', 'Theft confirmed · thief could not be identified']
-        : report.status === 'CLEARED' ? [GREEN, 'shield-check', 'Planes re-listed by the thief']
-        : [GREY, 'circle-check', 'Not a theft'];
+    const head = report.status === 'OPEN' ? [RED, 'shield-alert', t('Reported, needs checking')]
+        : report.status === 'CONFIRMED' && named.length ? [YELLOW, 'user-x', t('Thief identified · planes not re-listed yet')]
+        : report.status === 'CONFIRMED' && report.investigating ? [RED, 'shield-x', t('Theft confirmed · thief not identified yet')]
+        : report.status === 'CONFIRMED' ? [GREY, 'shield-x', t('Theft confirmed · thief could not be identified')]
+        : report.status === 'CLEARED' ? [GREEN, 'shield-check', t('Planes re-listed by the thief')]
+        : [GREY, 'circle-check', t('Not a theft')];
     // Green: take the warnings off the thieves' record (sellers on the order and admins).
     const clearRecord = async () => {
-        const ok = await ask({ title: "Clear it from the thief's record?", confirmLabel: 'Clear from record',
-            message: `The theft warning${named.length > 1 ? 's' : ''} for this order will be removed from ${named.length > 1 ? 'the culprits\' records' : 'the culprit\'s record'}. They are told by DM, and it is logged. The report itself stays.` });
+        const ok = await ask({ title: t("Clear it from the thief's record?"), confirmLabel: t('Clear from record'),
+            message: named.length > 1 ? t("The theft warnings for this order will be removed from the culprits' records. They are told by DM, and it is logged. The report itself stays.")
+                : t("The theft warning for this order will be removed from the culprit's record. They are told by DM, and it is logged. The report itself stays.") });
         if (!ok) return;
         setBusy(true);
         try {
             const r = await api(`/api/orders/${order.id}`, { action: 'missing-record-clear', reportId: report.id });
             onDone?.(r.report); after();
-            toast(`Removed from the record (${plural(r.removed, 'warning')}).`, 'success');
+            toast(t('Removed from the record ({count}).', { count: plural(r.removed, 'warning') }), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     const theft = ['CONFIRMED', 'CLEARED'].includes(report.status);
     const confirmIdsOk = !known || idsValid(ids);
     return html`<div className=${`p-3 rounded-2xl border space-y-2 ${head[0]}`}>
         <p className="text-sm font-bold flex flex-wrap items-center gap-1.5"><${Icon} name=${head[1]} className="w-4 h-4" />${head[2]}
-            ${report.status === 'CONFIRMED' && report.investigating && html`<span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-amber-400/15 text-amber-200 border border-amber-400/30">Culprit under investigation</span>`}
+            ${report.status === 'CONFIRMED' && report.investigating && html`<span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-amber-400/15 text-amber-200 border border-amber-400/30">${t('Culprit under investigation')}</span>`}
             <span className="text-xs font-normal opacity-60">· ${timeAgo(report.created_at)}</span></p>
-        <p className="text-sm text-slate-100">${report.buyer_name || 'Buyer'}: “${report.details}”</p>
+        <p className="text-sm text-slate-100">${report.buyer_name || t('Buyer')}: “${report.details}”</p>
         ${report.status !== 'OPEN' && html`<p className="text-xs text-slate-300">${report.resolved_by_name}: “${report.resolution_note}”</p>`}
         ${theft && html`<div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5 space-y-1.5">
-            <p className="label text-slate-500">${!named.length ? 'Culprit' : report.record_cleared_at ? `Culprits (${named.length}) · warning removed from record` : `Culprits (${named.length}) · warned`}</p>
+            <p className="label text-slate-500">${!named.length ? t('Culprit') : report.record_cleared_at ? t('Culprits ({n}) · warning removed from record', { n: named.length }) : t('Culprits ({n}) · warned', { n: named.length })}</p>
             ${named.length ? html`<ul className="space-y-1">${named.map((c) => html`<li key=${c.id} className="text-xs text-slate-200 flex flex-wrap items-center gap-x-2">
-                    <${Icon} name="user-x" className="w-3.5 h-3.5 text-rose-300" /><b>${c.name || 'Discord user'}</b>
+                    <${Icon} name="user-x" className="w-3.5 h-3.5 text-rose-300" /><b>${c.name || t('Discord user')}</b>
                     <span className="font-mono text-slate-400">${c.discord_id}</span>
-                    ${c.added_by_name && html`<span className="text-slate-500">· by ${c.added_by_name}${c.created_at ? `, ${timeAgo(c.created_at)}` : ''}</span>`}
+                    ${c.added_by_name && html`<span className="text-slate-500">· ${t('by {name}', { name: c.added_by_name })}${c.created_at ? `, ${timeAgo(c.created_at)}` : ''}</span>`}
                 </li>`)}</ul>`
-            : html`<p className="text-xs text-slate-400">${report.investigating ? '🔍 Not identified yet. Found out who it was? Warn them below.' : 'Not identified (investigation closed).'}</p>`}
+            : html`<p className="text-xs text-slate-400">${report.investigating ? t('🔍 Not identified yet. Found out who it was? Warn them below.') : t('Not identified (investigation closed).')}</p>`}
         </div>`}
-        ${report.status === 'CONFIRMED' && named.length > 0 && html`<p className="text-xs text-amber-100/90 flex items-center gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5" />The warning stays on the thief's record until the planes are re-listed for the buyer.</p>`}
+        ${report.status === 'CONFIRMED' && named.length > 0 && html`<p className="text-xs text-amber-100/90 flex items-center gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5" />${t("The warning stays on the thief's record until the planes are re-listed for the buyer.")}</p>`}
         ${report.status === 'CLEARED' && html`<p className="text-xs text-emerald-200/90">${report.cleared_by_name}: “${report.cleared_note}” · ${timeAgo(report.cleared_at)}</p>`}
-        ${report.status === 'CLEARED' && report.record_cleared_at && html`<p className="text-xs text-emerald-200/90 flex items-center gap-1.5"><${Icon} name="eraser" className="w-3.5 h-3.5" />Removed from the thief's record by ${report.record_cleared_by_name || 'a seller'} · ${timeAgo(report.record_cleared_at)}</p>`}
+        ${report.status === 'CLEARED' && report.record_cleared_at && html`<p className="text-xs text-emerald-200/90 flex items-center gap-1.5"><${Icon} name="eraser" className="w-3.5 h-3.5" />${t("Removed from the thief's record by {name}", { name: report.record_cleared_by_name || t('a seller') })} · ${timeAgo(report.record_cleared_at)}</p>`}
         ${report.status === 'CLEARED' && !report.record_cleared_at && named.length > 0 && canClose && !warning && html`<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-500/20">
-            <p className="text-xs text-emerald-100/80">The thief re-listed the planes. Their warning is still on record.</p>
-            <${Button} size="sm" variant="secondary" icon="eraser" busy=${busy} onClick=${clearRecord}>Clear from the thief's record<//>
+            <p className="text-xs text-emerald-100/80">${t('The thief re-listed the planes. Their warning is still on record.')}</p>
+            <${Button} size="sm" variant="secondary" icon="eraser" busy=${busy} onClick=${clearRecord}>${t("Clear from the thief's record")}<//>
         </div>`}
 
         ${theft && !warning && !clearing && html`<div className="flex flex-wrap items-center gap-2 pt-1">
             <${Button} size="sm" variant="danger" icon="user-x" onClick=${() => setWarning(true)}>
-                ${report.investigating ? 'Identify & warn culprits' : named.length ? 'Warn another culprit' : 'Warn a culprit'}<//>
-            ${report.investigating && html`<${Button} size="sm" variant="ghost" busy=${busy} onClick=${giveUp}>Can't identify: close investigation<//>`}
-            ${report.status === 'CONFIRMED' && named.length > 0 && canClose && html`<${Button} size="sm" variant="secondary" icon="shield-check" className="ml-auto" onClick=${() => setClearing(true)}>Clear theft<//>`}
+                ${report.investigating ? t('Identify & warn culprits') : named.length ? t('Warn another culprit') : t('Warn a culprit')}<//>
+            ${report.investigating && html`<${Button} size="sm" variant="ghost" busy=${busy} onClick=${giveUp}>${t("Can't identify: close investigation")}<//>`}
+            ${report.status === 'CONFIRMED' && named.length > 0 && canClose && html`<${Button} size="sm" variant="secondary" icon="shield-check" className="ml-auto" onClick=${() => setClearing(true)}>${t('Clear theft')}<//>`}
         </div>`}
         ${theft && warning && html`<div className="pt-2 border-t border-slate-800 space-y-2">
-            <p className="text-xs text-slate-300">Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.</p>
+            <p className="text-xs text-slate-300">${t('Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.')}</p>
             <${CulpritInputs} ids=${warnIds} setIds=${setWarnIds} />
             ${report.investigating && html`<label className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer">
                 <input type="checkbox" checked=${closeIt} onChange=${(e) => setCloseIt(e.target.checked)} className="mt-0.5 accent-rose-400" />
-                <span>That's everyone: close the investigation. (Untick if more culprits may still be found.)</span>
+                <span>${t("That's everyone: close the investigation. (Untick if more culprits may still be found.)")}</span>
             </label>`}
             <div className="flex justify-end gap-2">
-                <${Button} size="sm" variant="ghost" onClick=${() => setWarning(false)}>Cancel<//>
+                <${Button} size="sm" variant="ghost" onClick=${() => setWarning(false)}>${t('Cancel')}<//>
                 <${Button} size="sm" variant="danger" icon="user-x" busy=${busy} disabled=${!cleanIds(warnIds).length || !idsValid(warnIds)} onClick=${warn}>
-                    Warn ${plural(cleanIds(warnIds).length || 1, 'culprit')}<//>
+                    ${t('Warn {count}', { count: plural(cleanIds(warnIds).length || 1, 'culprit') })}<//>
             </div>
         </div>`}
         ${report.status === 'CONFIRMED' && named.length > 0 && canClose && clearing && html`<div className="pt-2 border-t border-slate-800 space-y-2">
             <textarea value=${clearNote} maxLength="1000" rows="2" onChange=${(e) => setClearNote(e.target.value)} className="input"
-                placeholder="What was re-listed and where, e.g. 2× A320neo listed again at WIII"></textarea>
+                placeholder=${t('What was re-listed and where, e.g. 2× A320neo listed again at WIII')}></textarea>
             <label className="flex items-start gap-2 text-xs text-slate-200 cursor-pointer">
                 <input type="checkbox" checked=${verified} onChange=${(e) => setVerified(e.target.checked)} className="mt-0.5 accent-emerald-400" />
-                <span>I checked in-game: the planes are listed for the buyer again.</span>
+                <span>${t('I checked in-game: the planes are listed for the buyer again.')}</span>
             </label>
-            <p className="text-[11px] text-slate-500">Logged in the moderation channel. The buyer is told to buy them; the culprits are told the case is closed (the warnings stay on their record).</p>
+            <p className="text-[11px] text-slate-500">${t('Logged in the moderation channel. The buyer is told to buy them; the culprits are told the case is closed (the warnings stay on their record).')}</p>
             <div className="flex justify-end gap-2">
-                <${Button} size="sm" variant="ghost" onClick=${() => setClearing(false)}>Cancel<//>
-                <${Button} size="sm" icon="shield-check" busy=${busy} disabled=${!verified || !clearNote.trim()} onClick=${clear}>Clear theft<//>
+                <${Button} size="sm" variant="ghost" onClick=${() => setClearing(false)}>${t('Cancel')}<//>
+                <${Button} size="sm" icon="shield-check" busy=${busy} disabled=${!verified || !clearNote.trim()} onClick=${clear}>${t('Clear theft')}<//>
             </div>
         </div>`}
-        ${report.status === 'OPEN' && !canClose && html`<p className="text-xs text-slate-400">The sellers on this order and the admins check this one.</p>`}
+        ${report.status === 'OPEN' && !canClose && html`<p className="text-xs text-slate-400">${t('The sellers on this order and the admins check this one.')}</p>`}
         ${report.status === 'OPEN' && canClose && html`<div className="pt-2 border-t border-slate-800 space-y-2">
-            <p className="text-xs text-slate-300">Check in-game who bought the planes you listed for this buyer, then:</p>
-            <div className="grid grid-cols-2 gap-1.5">${[['confirmed', 'Theft confirmed'], ['not_theft', 'Not a theft']].map(([k, label]) => html`<button key=${k} type="button" onClick=${() => setOutcome(k)}
+            <p className="text-xs text-slate-300">${t('Check in-game who bought the planes you listed for this buyer, then:')}</p>
+            <div className="grid grid-cols-2 gap-1.5">${[['confirmed', t('Theft confirmed')], ['not_theft', t('Not a theft')]].map(([k, label]) => html`<button key=${k} type="button" onClick=${() => setOutcome(k)}
                 className=${`py-2 rounded-xl border text-xs font-bold ${outcome === k ? (k === 'confirmed' ? 'bg-rose-500 text-[#fff] border-rose-500' : 'bg-white text-slate-950 border-white') : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
             <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input"
-                placeholder=${outcome === 'confirmed' ? 'What happened, e.g. 2× A320neo bought by another player; relisted for the buyer' : 'What you found, e.g. the planes are still listed, buy them at WIII'}></textarea>
+                placeholder=${outcome === 'confirmed' ? t('What happened, e.g. 2× A320neo bought by another player; relisted for the buyer') : t('What you found, e.g. the planes are still listed, buy them at WIII')}></textarea>
             ${outcome === 'confirmed' && html`<div className="space-y-2">
-                <p className="text-xs font-bold text-slate-400">Who took them?</p>
-                <div className="grid grid-cols-2 gap-1.5">${[[true, 'I know who'], [false, 'Under investigation']].map(([k, label]) => html`<button key=${label} type="button" onClick=${() => setKnown(k)}
+                <p className="text-xs font-bold text-slate-400">${t('Who took them?')}</p>
+                <div className="grid grid-cols-2 gap-1.5">${[[true, t('I know who')], [false, t('Under investigation')]].map(([k, label]) => html`<button key=${String(k)} type="button" onClick=${() => setKnown(k)}
                     className=${`py-2 rounded-xl border text-xs font-bold ${known === k ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${label}</button>`)}</div>
                 ${known ? html`<${CulpritInputs} ids=${ids} setIds=${setIds} />`
-                    : html`<p className="text-[11px] text-slate-400">The theft is logged now. When you find out who it was, any seller can warn them from this report (or from Theft reports on the front page).</p>`}
+                    : html`<p className="text-[11px] text-slate-400">${t('The theft is logged now. When you find out who it was, any seller can warn them from this report (or from Theft reports on the front page).')}</p>`}
             </div>`}
-            <p className="text-[11px] text-slate-500">${outcome === 'confirmed' ? 'Posted in the moderation log channel. Each culprit gets an automatic warning. The buyer sees your note, never who it was.' : 'The buyer sees your note.'}</p>
+            <p className="text-[11px] text-slate-500">${outcome === 'confirmed' ? t('Posted in the moderation log channel. Each culprit gets an automatic warning. The buyer sees your note, never who it was.') : t('The buyer sees your note.')}</p>
             <div className="flex justify-end"><${Button} size="sm" variant=${outcome === 'confirmed' ? 'danger' : 'primary'} busy=${busy}
                 disabled=${!note.trim() || (outcome === 'confirmed' && !confirmIdsOk)}
-                icon=${outcome === 'confirmed' ? 'shield-x' : 'check'} onClick=${submit}>${outcome !== 'confirmed' ? 'Close report'
-                    : known && cleanIds(ids).length ? `Log theft & warn ${plural(cleanIds(ids).length, 'culprit')}` : 'Log theft'}<//></div>
+                icon=${outcome === 'confirmed' ? 'shield-x' : 'check'} onClick=${submit}>${outcome !== 'confirmed' ? t('Close report')
+                    : known && cleanIds(ids).length ? t('Log theft & warn {count}', { count: plural(cleanIds(ids).length, 'culprit') }) : t('Log theft')}<//></div>
         </div>`}
     </div>`;
 }
@@ -1879,14 +1893,14 @@ function DiscordName({ id, min = 17 }) {
         return () => { live = false; clearTimeout(t); };
     }, [clean, valid]);
     if (!valid) return null;
-    if (!who) return html`<p className="text-[11px] text-slate-500 flex items-center gap-2"><${Spinner} width=${12} /> Looking up this Discord ID…</p>`;
-    if (who.error) return html`<p className="text-[11px] text-slate-500">Couldn't look this ID up: ${who.error}</p>`;
-    if (who.found === false) return html`<p className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5"><${Icon} name="user-x" className="w-3.5 h-3.5" />No Discord user has this ID. Check it.</p>`;
-    if (who.found !== true) return html`<p className="text-[11px] text-slate-500">Discord couldn't be asked right now; the ID will still work.</p>`;
+    if (!who) return html`<p className="text-[11px] text-slate-500 flex items-center gap-2"><${Spinner} width=${12} /> ${t('Looking up this Discord ID…')}</p>`;
+    if (who.error) return html`<p className="text-[11px] text-slate-500">${t("Couldn't look this ID up: {msg}", { msg: who.error })}</p>`;
+    if (who.found === false) return html`<p className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5"><${Icon} name="user-x" className="w-3.5 h-3.5" />${t('No Discord user has this ID. Check it.')}</p>`;
+    if (who.found !== true) return html`<p className="text-[11px] text-slate-500">${t("Discord couldn't be asked right now; the ID will still work.")}</p>`;
     return html`<p className="text-[11px] text-emerald-200 flex items-center gap-2 min-w-0">
         ${who.avatar ? html`<img src=${who.avatar} alt="" className="w-5 h-5 rounded-full shrink-0" />` : html`<${Icon} name="circle-user" className="w-4 h-4 shrink-0" />`}
         <span className="truncate"><b className="text-white">@${who.username || 'unknown'}</b>${who.name && who.name !== who.username ? ` · ${who.name}` : ''}</span>
-        <span className="shrink-0 text-slate-500">${who.onMarket ? '· on Echo Market' : '· not on Echo Market yet'}</span>
+        <span className="shrink-0 text-slate-500">· ${who.onMarket ? t('on Echo Market') : t('not on Echo Market yet')}</span>
     </p>`;
 }
 
@@ -1900,15 +1914,15 @@ const MAX_CULPRITS = 10;
 function CulpritInputs({ ids, setIds }) {
     const set = (i, v) => setIds(ids.map((x, j) => (j === i ? v.replace(/[^\d]/g, '') : x)));
     return html`<div className="space-y-1.5">
-        <p className="text-xs font-bold text-slate-400">Culprit Discord user IDs <span className="font-normal text-slate-500">(Discord: right-click the user → Copy User ID)</span></p>
+        <p className="text-xs font-bold text-slate-400">${t('Culprit Discord user IDs')} <span className="font-normal text-slate-500">${t('(Discord: right-click the user → Copy User ID)')}</span></p>
         ${ids.map((v, i) => html`<div key=${i} className="space-y-1"><div className="flex gap-1.5">
-            <input value=${v} onChange=${(e) => set(i, e.target.value)} inputMode="numeric" aria-label=${`Culprit ${i + 1} Discord user ID`}
-                className=${`input font-mono !py-2 ${!v.trim() || ID_RE.test(v.trim()) ? '' : '!border-rose-500'}`} placeholder=${`Culprit ${i + 1}, e.g. 123456789012345678`} />
-            ${ids.length > 1 && html`<button type="button" onClick=${() => setIds(ids.filter((_, j) => j !== i))} title="Remove"
+            <input value=${v} onChange=${(e) => set(i, e.target.value)} inputMode="numeric" aria-label=${t('Culprit {n} Discord user ID', { n: i + 1 })}
+                className=${`input font-mono !py-2 ${!v.trim() || ID_RE.test(v.trim()) ? '' : '!border-rose-500'}`} placeholder=${t('Culprit {n}, e.g. 123456789012345678', { n: i + 1 })} />
+            ${ids.length > 1 && html`<button type="button" onClick=${() => setIds(ids.filter((_, j) => j !== i))} title=${t('Remove')}
                 className="shrink-0 w-10 rounded-xl border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 flex items-center justify-center"><${Icon} name="x" /></button>`}
         </div><${DiscordName} id=${v} /></div>`)}
         ${ids.length < MAX_CULPRITS && html`<button type="button" onClick=${() => setIds([...ids, ''])}
-            className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1"><${Icon} name="user-plus" className="w-3.5 h-3.5" />Add another culprit</button>`}
+            className="text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1"><${Icon} name="user-plus" className="w-3.5 h-3.5" />${t('Add another culprit')}</button>`}
     </div>`;
 }
 
@@ -1920,16 +1934,16 @@ function TheftsView({ reports, orders, culpritsByReport, seller, userId, onOpenO
     const all = [...reports].filter((r) => byId[r.order_id]).sort((a, b) => b.created_at.localeCompare(a.created_at));
     const needs = (r) => r.status === 'OPEN' || (r.status === 'CONFIRMED' && r.investigating);
     const FILTERS = {
-        attention: ['Needs attention', all.filter(needs)],
-        thefts: ['Confirmed thefts', all.filter((r) => ['CONFIRMED', 'CLEARED'].includes(r.status))],
-        all: ['All reports', all]
+        attention: [t('Needs attention'), all.filter(needs)],
+        thefts: [t('Confirmed thefts'), all.filter((r) => ['CONFIRMED', 'CLEARED'].includes(r.status))],
+        all: [t('All reports'), all]
     };
     const list = FILTERS[filter][1];
     const [shown, bar] = usePaged(list, 'reports');
     return html`<section className="space-y-4">
         <div>
-            <h2 className="text-lg font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />Theft reports</h2>
-            <p className="text-sm text-slate-400">Know who took a buyer's planes? Open the theft below and press <b className="text-slate-200">Warn</b>: each culprit gets an automatic warning (Discord DM, moderation log, disciplinary record). Any seller can do this.</p>
+            <h2 className="text-lg font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />${t('Theft reports')}</h2>
+            <p className="text-sm text-slate-400">${tj("Know who took a buyer's planes? Open the theft below and press {warn}: each culprit gets an automatic warning (Discord DM, moderation log, disciplinary record). Any seller can do this.", { warn: html`<b className="text-slate-200">${t('Warn')}</b>` })}</p>
         </div>
         <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 w-fit max-w-full overflow-x-auto no-scrollbar">
             ${Object.entries(FILTERS).map(([k, [label, items]]) => html`<button key=${k} onClick=${() => setFilter(k)} aria-pressed=${filter === k}
@@ -1942,8 +1956,8 @@ function TheftsView({ reports, orders, culpritsByReport, seller, userId, onOpenO
             return html`<div key=${r.id} className="card p-3 space-y-2">
                 <button onClick=${() => onOpenOrder(o.id)} className="w-full text-left flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm hover:text-white">
                     <b className="text-white">${orderRef(o)}</b><span className="text-slate-400">${airlineNames(o)}</span>
-                    <span className="text-xs text-slate-500">· buyer ${o.buyer_name || '-'} · ${plural(o.total_qty, 'aircraft')}</span>
-                    <span className="ml-auto text-xs font-bold text-sky-300 flex items-center gap-1">Open order<${Icon} name="chevron-right" className="w-3.5 h-3.5" /></span>
+                    <span className="text-xs text-slate-500">· ${t('buyer {name}', { name: o.buyer_name || '-' })} · ${plural(o.total_qty, 'aircraft')}</span>
+                    <span className="ml-auto text-xs font-bold text-sky-300 flex items-center gap-1">${t('Open order')}<${Icon} name="chevron-right" className="w-3.5 h-3.5" /></span>
                 </button>
                 <${MissingReport} report=${r} order=${o} culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits} onDone=${onReport}
                     canClose=${seller.is_admin || deliveryShares(o).some((sh) => sh.sellerId === userId)} />
@@ -1961,11 +1975,11 @@ function StatusHistory({ order, now }) {
             ${history.map((h, i) => {
                 const next = history[i + 1];
                 const lasted = (next ? ms(next.at) : (CLOSED.includes(h.status) ? null : now)) - ms(h.at);
-                const label = h.status === 'PENDING' && i > 0 ? 'Back in the open queue' : (STATUS[h.status]?.label || h.status);
+                const label = h.status === 'PENDING' && i > 0 ? t('Back in the open queue') : (STATUS[h.status]?.label || h.status);
                 return html`<li key=${i} className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="min-w-0"><span className="font-bold text-slate-100">${label}</span>
                         <span className="block text-[11px] text-slate-500">${fmtDate(h.at)}</span></span>
-                    ${Number.isFinite(lasted) && html`<span className="text-xs text-slate-400 shrink-0 tabular-nums">${next ? '' : 'for '}${fmtDuration(lasted)}${next ? '' : ' so far'}</span>`}
+                    ${Number.isFinite(lasted) && html`<span className="text-xs text-slate-400 shrink-0 tabular-nums">${next ? fmtDuration(lasted) : t('for {time} so far', { time: fmtDuration(lasted) })}</span>`}
                 </li>`;
             })}
         </ol>
@@ -1987,14 +2001,14 @@ function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false, nou
     const options = PAGE_SIZES.filter((p) => p === 'all' || p < total);
     const nextSize = PAGE_SIZES.find((p) => p !== 'all' && p > shown && p < total) || 'all';
     return html`<div className=${compact ? 'pt-2 flex flex-wrap items-center gap-2' : 'card p-3 flex flex-wrap items-center gap-3'}>
-        <span className="text-xs text-slate-400 mr-auto">Showing <b className="text-slate-200">${shown}</b> of ${total} ${noun}${hidden > 0 ? ` · ${hidden} hidden` : ''}</span>
+        <span className="text-xs text-slate-400 mr-auto">${tj(noun === 'reports' ? 'Showing {shown} of {total} reports' : 'Showing {shown} of {total} orders', { shown: html`<b className="text-slate-200">${shown}</b>`, total })}${hidden > 0 ? ` · ${t('{n} hidden', { n: hidden })}` : ''}</span>
         ${hidden > 0 && html`<${Button} size="sm" variant="secondary" icon="chevron-down" onClick=${() => setPageSize(nextSize)}>
-            Show ${nextSize === 'all' ? `all ${total}` : `${Math.min(nextSize, total) - shown} more`}<//>`}
+            ${nextSize === 'all' ? t('Show all {n}', { n: total }) : t('Show {n} more', { n: Math.min(nextSize, total) - shown })}<//>`}
         <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500">Show</span>
+            <span className="text-xs font-bold text-slate-500">${t('Show')}</span>
             <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800">
                 ${options.map((p) => html`<button key=${p} onClick=${() => setPageSize(p)} aria-pressed=${pageSize === p}
-                    className=${`px-3 py-1 rounded-full text-xs font-bold ${pageSize === p ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${p === 'all' ? 'All' : p}</button>`)}
+                    className=${`px-3 py-1 rounded-full text-xs font-bold ${pageSize === p ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${p === 'all' ? t('All') : p}</button>`)}
             </div>
         </div>
     </div>`;
@@ -2008,26 +2022,26 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false,
         (sellAs && same(sellAs) ? sellAs : sorted.find(same) || sellAs || sorted[0])?.id);
     const [busy, setBusy] = useState(false);
     const chosen = airlines.find((a) => a.id === airlineId);
-    return html`<${Modal} open=${true} onClose=${onClose} title=${join ? `Take over ${orderRef(order)}` : `Take ${orderRef(order)}`} size="sm"
-        subtitle=${`${plural(order.total_qty, 'aircraft')} for ${airlineNames(order)} · ${fmtUSDShort(order.total_usd)}`}
-        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} icon=${join ? 'users' : 'hand'} busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>${join ? 'Take over' : 'Take order'}<//>`}>
-        ${caution && html`<p className="text-sm text-amber-100 mb-4 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-amber-300 shrink-0" />${CAUTION_TEXT}</p>`}
-        ${join && html`<p className="text-sm text-slate-300 mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800">${order.seller_airline_name} took this order over ${TAKEOVER_HOURS} hours ago and hasn't finished it (${order.filled} of ${order.total_qty} delivered). You join them: <b className="text-white">they stay on the order</b>, the buyer is told you will also be delivering, and you record only the aircraft <b className="text-white">you</b> list.</p>`}
-        <p className="field-label">Sell as airline</p>
+    return html`<${Modal} open=${true} onClose=${onClose} title=${join ? t('Take over {ref}', { ref: orderRef(order) }) : t('Take {ref}', { ref: orderRef(order) })} size="sm"
+        subtitle=${`${t('{count} for {airline}', { count: plural(order.total_qty, 'aircraft'), airline: airlineNames(order) })} · ${fmtUSDShort(order.total_usd)}`}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//>
+            <${Button} icon=${join ? 'users' : 'hand'} busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>${join ? t('Take over') : t('Take order')}<//>`}>
+        ${caution && html`<p className="text-sm text-amber-100 mb-4 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-amber-300 shrink-0" />${t(CAUTION_TEXT)}</p>`}
+        ${join && html`<p className="text-sm text-slate-300 mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800">${t("{airline} took this order over {n} hours ago and hasn't finished it ({filled} of {total} delivered). You join them: they stay on the order, the buyer is told you will also be delivering, and you record only the aircraft you list.", { airline: order.seller_airline_name, n: TAKEOVER_HOURS, filled: order.filled, total: order.total_qty })}</p>`}
+        <p className="field-label">${t('Sell as airline')}</p>
         <div className="space-y-1.5">
             ${sorted.map((a) => html`<button key=${a.id} onClick=${() => setAirlineId(a.id)}
                 className=${`w-full flex items-center justify-between p-3 rounded-xl border text-left ${airlineId === a.id ? 'border-sky-400 bg-sky-400/10' : 'border-slate-800 hover:border-slate-600'}`}>
                 <span><span className="font-bold text-white">${a.name}</span> <span className="text-xs text-slate-400">${a.alliance}</span>
-                    ${same(a) && html`<span className="ml-2 text-[10px] font-black text-emerald-300">SAME ALLIANCE AS BUYER</span>`}</span>
+                    ${same(a) && html`<span className="ml-2 text-[10px] font-black text-emerald-300">${t('SAME ALLIANCE AS BUYER')}</span>`}</span>
                 ${airlineId === a.id && html`<${Icon} name="check" className="w-4 h-4 text-sky-300" />`}
             </button>`)}
         </div>
-        ${chosen && same(chosen) && html`<p className="text-xs text-emerald-300 mt-4">Deliver to the buyer's <b>${deliverableTo(order, chosen.alliance).map((a) => a.name).join(' or ')}</b> (${chosen.alliance}).</p>`}
+        ${chosen && same(chosen) && html`<p className="text-xs text-emerald-300 mt-4">${tj("Deliver to the buyer's {airlines} ({alliance}).", { airlines: html`<b>${deliverableTo(order, chosen.alliance).map((a) => a.name).join(' / ')}</b>`, alliance: chosen.alliance })}</p>`}
         ${chosen && !same(chosen) && buyerAlliances.length > 0 && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px" />
-            ${sorted.some(same) ? `${chosen.name} (${chosen.alliance}) is not in any of the buyer's alliances (${buyerAlliances.join(', ')}).`
-                : `You share no alliance with this buyer (${buyerAlliances.join(', ')}).`} You can still take the order.</p>`}
-        <p className="text-xs text-slate-400 mt-4">The buyer gets notified that <b className="text-slate-200">${chosen?.name}</b> ${join ? 'will also be delivering' : 'is selling to them'}. Sell the aircraft in-game, then record deliveries here.</p>
+            ${sorted.some(same) ? t("{airline} ({alliance}) is not in any of the buyer's alliances ({alliances}).", { airline: chosen.name, alliance: chosen.alliance, alliances: buyerAlliances.join(', ') })
+                : t('You share no alliance with this buyer ({alliances}).', { alliances: buyerAlliances.join(', ') })} ${t('You can still take the order.')}</p>`}
+        <p className="text-xs text-slate-400 mt-4">${tj(join ? 'The buyer gets notified that {airline} will also be delivering. Sell the aircraft in-game, then record deliveries here.' : 'The buyer gets notified that {airline} is selling to them. Sell the aircraft in-game, then record deliveries here.', { airline: html`<b className="text-slate-200">${chosen?.name}</b>` })}</p>
     <//>`;
 }
 
@@ -2051,35 +2065,35 @@ function ProgressModal({ order, userId, onClose, onSave }) {
     const next = total === 0 ? 'CLAIMED' : total >= max ? 'FULFILLED' : 'PARTIAL';
     const changed = counts.some((n, i) => n !== start[i]);
     const actingFor = order.seller_id !== userId && !helping;   // an admin updating for the order's seller
-    return html`<${Modal} open=${true} onClose=${onClose} title=${`Update delivery · ${orderRef(order)}`} size="md"
-        subtitle=${`${airlineNames(order)} · ${plural(lines.length, 'aircraft type')}${actingFor ? ` · for ${order.seller_airline_name}` : ''}`}
-        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ mine: counts, changed, note: note.trim(), sellerNote: helping ? undefined : sellerNote.trim() }); setBusy(false); }}>Save<//>`}>
+    return html`<${Modal} open=${true} onClose=${onClose} title=${`${t('Update delivery')} · ${orderRef(order)}`} size="md"
+        subtitle=${`${airlineNames(order)} · ${plural(lines.length, 'aircraft type')}${actingFor ? ` · ${t('for {airline}', { airline: order.seller_airline_name })}` : ''}`}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//>
+            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave({ mine: counts, changed, note: note.trim(), sellerNote: helping ? undefined : sellerNote.trim() }); setBusy(false); }}>${t('Save')}<//>`}>
         <div className="space-y-5">
             <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                    <p className="field-label !mb-0">${actingFor ? `Listed in-game by ${order.seller_airline_name}` : 'Listed in-game by you'}, per aircraft type</p>
-                    <button onClick=${() => setCounts(lines.map((_, i) => maxMine(i)))} className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">All the rest</button>
+                    <p className="field-label !mb-0">${actingFor ? t('Listed in-game by {airline}, per aircraft type', { airline: order.seller_airline_name }) : t('Listed in-game by you, per aircraft type')}</p>
+                    <button onClick=${() => setCounts(lines.map((_, i) => maxMine(i)))} className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">${t('All the rest')}</button>
                 </div>
                 ${lines.map((it, i) => html`<div key=${i} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-bold text-white min-w-0 truncate">${it.model} <span className="text-slate-500 font-medium">@${it.pricePercent}%</span></p>
-                        ${others[i] > 0 && html`<span className="text-[10px] text-slate-400 shrink-0">${others[i]} by other sellers</span>`}
+                        ${others[i] > 0 && html`<span className="text-[10px] text-slate-400 shrink-0">${t('{n} by other sellers', { n: others[i] })}</span>`}
                     </div>
                     <div className="flex items-center gap-2">
-                        <button className="stepper !w-9 !h-9" aria-label=${`One less ${it.model}`} disabled=${counts[i] <= 0} onClick=${() => setLine(i, counts[i] - 1)}><${Icon} name="minus" /></button>
-                        <input type="number" value=${counts[i]} min="0" max=${maxMine(i)} onChange=${(e) => setLine(i, e.target.value)} className="input !w-20 !py-2 text-center font-bold" aria-label=${`${it.model} listed`} />
-                        <button className="stepper !w-9 !h-9" aria-label=${`One more ${it.model}`} onClick=${() => setLine(i, counts[i] + 1)}><${Icon} name="plus" /></button>
-                        <span className="text-sm text-slate-400">${others[i] > 0 ? `+ ${others[i]} = ${counts[i] + others[i]}` : ''} of ${it.qty}</span>
-                        <button onClick=${() => setLine(i, maxMine(i))} className="ml-auto px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800">All</button>
+                        <button className="stepper !w-9 !h-9" aria-label=${t('One less {model}', { model: it.model })} disabled=${counts[i] <= 0} onClick=${() => setLine(i, counts[i] - 1)}><${Icon} name="minus" /></button>
+                        <input type="number" value=${counts[i]} min="0" max=${maxMine(i)} onChange=${(e) => setLine(i, e.target.value)} className="input !w-20 !py-2 text-center font-bold" aria-label=${t('{model} listed', { model: it.model })} />
+                        <button className="stepper !w-9 !h-9" aria-label=${t('One more {model}', { model: it.model })} onClick=${() => setLine(i, counts[i] + 1)}><${Icon} name="plus" /></button>
+                        <span className="text-sm text-slate-400">${others[i] > 0 ? `+ ${others[i]} = ${counts[i] + others[i]} ` : ''}${t('of {n}', { n: it.qty })}</span>
+                        <button onClick=${() => setLine(i, maxMine(i))} className="ml-auto px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800">${t('All')}</button>
                     </div>
                     <${ProgressBar} value=${counts[i] + others[i]} max=${it.qty} />
                 </div>`)}
-                <p className="text-xs text-slate-400">Delivered in total ${total} of ${max} · new status: <b className="text-slate-200">${STATUS[next].label}</b></p>
+                <p className="text-xs text-slate-400">${tj('Delivered in total {n} of {max} · new status: {status}', { n: total, max, status: html`<b className="text-slate-200">${STATUS[next].label}</b>` })}</p>
             </div>
-            <label className="block"><span className="field-label">Update message (optional, shown in the buyer's timeline)</span>
-                <input value=${note} maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder="e.g. First 5 listed, buy them at WIII" /></label>
-            ${!helping && html`<label className="block"><span className="field-label">Seller note (pinned on the order, buyer can see)</span>
+            <label className="block"><span className="field-label">${t("Update message (optional, shown in the buyer's timeline)")}</span>
+                <input value=${note} maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder=${t('e.g. First 5 listed, buy them at WIII')} /></label>
+            ${!helping && html`<label className="block"><span className="field-label">${t('Seller note (pinned on the order, buyer can see)')}</span>
                 <textarea value=${sellerNote} maxLength="1000" rows="2" onChange=${(e) => setSellerNote(e.target.value)} className="input"></textarea></label>`}
         </div>
     <//>`;
@@ -2089,17 +2103,18 @@ function FlagModal({ order, flag, onClose, onSave }) {
     const [status, setStatus] = useState(flag?.status || 'NORMAL');
     const [reason, setReason] = useState(flag?.reason || '');
     const [busy, setBusy] = useState(false);
-    return html`<${Modal} open=${true} onClose=${onClose} title=${`Flag ${orderRef(order)}`} size="sm" subtitle="Only sellers can see flags. The buyer is not notified."
-        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//>
-            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave(status, reason.trim()); setBusy(false); }}>Save flag<//>`}>
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Flag {ref}', { ref: orderRef(order) })} size="sm" subtitle=${t('Only sellers can see flags. The buyer is not notified.')}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//>
+            <${Button} busy=${busy} onClick=${async () => { setBusy(true); await onSave(status, reason.trim()); setBusy(false); }}>${t('Save flag')}<//>`}>
         <div className="grid grid-cols-3 gap-1.5">
             ${Object.entries(FLAG_META).map(([k, m]) => html`<button key=${k} onClick=${() => setStatus(k)}
                 className=${`p-3 rounded-xl border text-xs font-bold flex flex-col items-center gap-1.5 ${status === k ? m.cls : 'border-slate-800 text-slate-400'}`}>
                 <${Icon} name=${m.icon} className="w-5 h-5" />${m.label}</button>`)}
         </div>
-        <label className="block mt-4"><span className="field-label">Reason</span>
-            <textarea value=${reason} rows="3" maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Why is this order flagged?"></textarea></label>
+        <label className="block mt-4"><span className="field-label">${t('Reason')}</span>
+            <textarea value=${reason} rows="3" maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder=${t('Why is this order flagged?')}></textarea></label>
     <//>`;
 }
 
+await setLang(savedLang(), ['app'], false).catch(() => {});
 ReactDOM.createRoot(document.getElementById('root')).render(isConfigured ? html`<${App} />` : html`<${NotConfigured} />`);

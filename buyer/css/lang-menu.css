@@ -1,0 +1,29 @@
+/* The language menu (js/i18n.js languageMenu), the same on the buyer site, the seller desk and the welcome pages,
+   plus a rule for scripts that letter-spacing breaks.
+   Source of truth: shared/css/lang-menu.css. Run "npm run sync" at the repo root after editing. */
+.lang-menu { position: relative; flex-shrink: 0; }
+.lang-btn {
+    display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px;
+    border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.04);
+    color: #e4e4e7; font: 600 12px/1 'JetBrains Mono', ui-monospace, 'Noto Sans SC', 'Noto Sans KR', 'Noto Sans Bengali', 'Noto Sans Devanagari', monospace;
+    letter-spacing: .04em; cursor: pointer; white-space: nowrap;
+}
+.lang-btn:hover { background: rgba(255, 255, 255, 0.09); color: #fff; }
+.lang-btn:focus-visible, .lang-list li:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+.lang-caret { font-size: 10px; opacity: .6; }
+.lang-list {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 90; min-width: 180px; margin: 0; padding: 6px; list-style: none;
+    background: #111114; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+}
+.lang-list[hidden] { display: none; }
+.lang-menu.up .lang-list { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; }
+.lang-list li {
+    padding: 9px 12px; border-radius: 10px; cursor: pointer; color: #d4d4d8;
+    font: 500 14px/1.3 'Plus Jakarta Sans', 'Noto Sans SC', 'Noto Sans KR', 'Noto Sans Bengali', 'Noto Sans Devanagari', system-ui, sans-serif;
+}
+.lang-list li:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.lang-list li[aria-selected="true"] { background: rgba(255, 255, 255, 0.1); color: #fff; font-weight: 700; }
+
+/* Hindi and Bengali letters join into one shape: spacing them apart (our uppercase labels use letter-spacing)
+   breaks the words, so it is switched off for these two languages. */
+html:lang(hi) *, html:lang(bn) * { letter-spacing: normal !important; }

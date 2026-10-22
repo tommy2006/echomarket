@@ -10,10 +10,11 @@
     --card: rgba(7, 9, 20, 0.66);
     --line: rgba(255, 255, 255, 0.12);
     --nav-h: 64px;
-    --display: 'Plus Jakarta Sans', system-ui, sans-serif;
-    --body: 'Plus Jakarta Sans', system-ui, sans-serif;
-    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --display: 'Plus Jakarta Sans', 'Noto Sans SC', 'Noto Sans KR', 'Noto Sans Bengali', 'Noto Sans Devanagari', system-ui, sans-serif;
+    --body: 'Plus Jakarta Sans', 'Noto Sans SC', 'Noto Sans KR', 'Noto Sans Bengali', 'Noto Sans Devanagari', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'Noto Sans SC', 'Noto Sans KR', 'Noto Sans Bengali', 'Noto Sans Devanagari', ui-monospace, SFMono-Regular, monospace;
     color-scheme: dark;
+    /* Noto: loaded only with Chinese, Korean, Bengali or Hindi (js/i18n.js), for the letters ours lack. */
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scroll-padding-top: var(--nav-h); }
@@ -220,6 +221,9 @@ p { margin: 0 0 12px; color: var(--muted); }
 
 #fade { position: fixed; inset: 0; z-index: 80; background: var(--bg); opacity: 0; pointer-events: none; transition: opacity 1s ease; }
 #fade.on { opacity: 1; }
+
+/* Language menu (css/lang-menu.css) in the top bar */
+.nav .lang-menu { margin-left: -8px; }
 
 /* ------------------------------------------------------------ phones */
 @media (max-width: 1060px) { .nav-links { display: none; } .nav-step { margin-left: auto; } }
