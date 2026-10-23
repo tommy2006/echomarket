@@ -536,10 +536,10 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
         return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', esc); };
     }, [menu]);
     return html`<header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
-        <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
-            <a href="/" onClick=${navTo('home')} className="flex items-center gap-2.5 shrink-0">
+        <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-2 sm:gap-3">
+            <a href="/" onClick=${navTo('home')} className="flex items-center gap-2.5 shrink-0" aria-label="Echo Market">
                 <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
-                <span className="font-extrabold tracking-tight text-white">Echo Market</span>
+                <span className="hidden min-[360px]:inline font-extrabold tracking-tight text-white">Echo Market</span>
             </a>
             <nav className="hidden md:flex items-center gap-1 ml-6">
                 ${VIEWS.map((v) => html`<a key=${v.id} href=${viewHref(v.id)} onClick=${navTo(v.id)} data-tour=${v.id}
@@ -809,7 +809,8 @@ const MAKERS = {
     UAC: { mark: 'U', name: 'UAC', logo: 'uac', ratio: 1 }
 };
 const makerName = (c) => MAKERS[c]?.name || c;
-// The maker's name next to its logo (only for screen readers when the logo already spells it).
+// The maker's name next to its logo (only for screen readers when the logo already spells it). sr-only is
+// absolutely positioned: a scrolling row holding it must be `relative`, or the hidden name widens the page on phones.
 const makerLabel = (c) => (MAKERS[c]?.wordmark ? html`<span className="sr-only">${makerName(c)}</span>` : makerName(c));
 function MakerMark({ maker, size = 20 }) {
     const m = MAKERS[maker];
@@ -917,7 +918,7 @@ function ShopView({ pricelist, priceLevel, setPriceLevel, cart, onPick }) {
                 <option value="range">${t('Longest range')}</option>
             </select>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
+        <div className="relative flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
             ${categories.map((c) => html`<button key=${c} onClick=${() => setCategory(c)}
                 className=${`shrink-0 px-3.5 py-1.5 rounded-full border text-xs font-bold ${category === c ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
                 <span className="flex items-center gap-1.5">${c !== 'ALL' && html`<${MakerMark} maker=${c} size=${17} />`}${c === 'ALL' ? t('All makers') : makerLabel(c)}</span></button>`)}

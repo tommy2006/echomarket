@@ -570,8 +570,8 @@ function App() {
                 onChange=${(filters) => setView((v) => ({ ...v, filters }))} onToggle=${() => setFiltersOpen(!filtersOpen)}
                 shown=${list.length} total=${inTab.length} />`}
             ${orderTab && tab === 'all' && !filtersOpen && html`<div className="flex items-center gap-2 -mt-1">
-                <span className="text-xs text-slate-500">${t('Status')}</span>
-                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
+                <span className="text-xs text-slate-500 shrink-0">${t('Status')}</span>
+                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto min-w-0 text-xs">
                     <option value="ALL">${t('Any status')}</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select>
@@ -1480,8 +1480,8 @@ function OrderFilters({ filters, alliances, tab, statusFilter, setStatusFilter, 
             ${t('Only orders with new buyer messages')}
         </label>
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
-            ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400">${t('Status')}
-                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto text-xs">
+            ${tab === 'all' && html`<label className="flex items-center gap-2 text-xs text-slate-400 min-w-0 max-w-full">${t('Status')}
+                <select value=${statusFilter} onChange=${(e) => setStatusFilter(e.target.value)} className="input !py-1.5 !w-auto min-w-0 text-xs">
                     <option value="ALL">${t('Any status')}</option>
                     ${Object.entries(STATUS).map(([k, m]) => html`<option key=${k} value=${k}>${m.label}</option>`)}
                 </select></label>`}
