@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "每个人都会自动收到一次市场警告（Discord 私信、记录在管理频道、计入纪律记录）。买家永远不会知道是谁。",
  "Earlier sellers:": "之前的卖家：",
  "Earlier: {list}": "之前：{list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Echo Market 仅限 Echo Alliances 成员",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Echo Market 仅供 Echo Alliances Discord 服务器成员使用。请加入服务器后重试。",
  "Echo Market rules": "Echo Market 规则",

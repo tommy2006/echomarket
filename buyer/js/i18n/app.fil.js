@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "Bawat tao ay awtomatikong makakatanggap ng market warning (Discord DM, nakatala sa moderation channel, nasa disciplinary record nila). Hindi kailanman malalaman ng mamimili kung sino.",
  "Earlier sellers:": "Mga naunang nagbebenta:",
  "Earlier: {list}": "Dati: {list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Para sa mga miyembro ng Echo Alliances ang Echo Market",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Para lang sa mga miyembro ng Echo Alliances Discord server ang Echo Market. Sumali sa server, saka subukan ulit.",
  "Echo Market rules": "Mga patakaran ng Echo Market",

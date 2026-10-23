@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "Setiap orang mendapat peringatan pasar otomatis (DM Discord, dicatat di channel moderasi, masuk catatan disiplin). Pembeli tidak pernah tahu siapa pelakunya.",
  "Earlier sellers:": "Penjual sebelumnya:",
  "Earlier: {list}": "Sebelumnya: {list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Echo Market untuk anggota Echo Alliances",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Echo Market hanya untuk anggota server Discord Echo Alliances. Bergabunglah ke server, lalu coba lagi.",
  "Echo Market rules": "Aturan Echo Market",

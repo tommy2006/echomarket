@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "প্রত্যেকে একটি স্বয়ংক্রিয় মার্কেট সতর্কবার্তা পান (Discord DM, মডারেশন চ্যানেলে লগ, শৃঙ্খলা রেকর্ডে)। ক্রেতা কখনো জানতে পারেন না কে ছিল।",
  "Earlier sellers:": "আগের বিক্রেতারা:",
  "Earlier: {list}": "আগে: {list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Echo Market শুধু Echo Alliances সদস্যদের জন্য",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Echo Market শুধু Echo Alliances Discord সার্ভারের সদস্যদের জন্য। সার্ভারে যোগ দিন, তারপর আবার চেষ্টা করুন।",
  "Echo Market rules": "Echo Market-এর নিয়ম",

@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "각 사람은 자동으로 마켓 경고를 받아요 (Discord DM, 관리 채널 기록, 징계 기록). 구매자는 누구인지 알 수 없어요.",
  "Earlier sellers:": "이전 판매자:",
  "Earlier: {list}": "이전: {list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Echo Market은 Echo Alliances 멤버 전용이에요",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Echo Market은 Echo Alliances Discord 서버 멤버만 이용할 수 있어요. 서버에 가입한 뒤 다시 시도하세요.",
  "Echo Market rules": "Echo Market 규칙",

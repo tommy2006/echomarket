@@ -201,6 +201,7 @@ export default {
  "Each person gets an automatic market warning (Discord DM, logged in the moderation channel, on their disciplinary record). The buyer never learns who it was.": "Mỗi người tự động nhận một cảnh cáo của chợ (DM Discord, ghi vào kênh kiểm duyệt, vào hồ sơ kỷ luật). Người mua không bao giờ biết đó là ai.",
  "Earlier sellers:": "Những người bán trước:",
  "Earlier: {list}": "Trước đó: {list}",
+ "Echo Market": "Echo Market",
  "Echo Market is for Echo Alliances members": "Echo Market dành cho thành viên Echo Alliances",
  "Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.": "Echo Market chỉ dành cho thành viên máy chủ Discord Echo Alliances. Hãy tham gia máy chủ rồi thử lại.",
  "Echo Market rules": "Quy định Echo Market",
