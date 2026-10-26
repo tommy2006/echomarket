@@ -140,11 +140,13 @@ function WaitChip({ order, now }) {
     return html`<span className=${`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${toneClass(tm.tone)}`}>
         <${Icon} name="timer" className="w-3 h-3" />${tm.text}</span>`;
 }
+// Flags and the alert-list CAUTION tag are solid pink (Tailwind's own pink, not the rank accent), so they stand
+// out from the soft order tags around them: lighter = milder.
 const flagMeta = (label, cls, icon) => ({ get label() { return t(label); }, cls, icon });
 const FLAG_META = {
     NORMAL: flagMeta('Normal', 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10', 'shield-check'),
-    SUSPICIOUS: flagMeta('Suspicious', 'text-amber-300 border-amber-500/30 bg-amber-500/10', 'flag'),
-    BLACKLISTED: flagMeta('Blacklisted', 'text-rose-300 border-rose-500/30 bg-rose-500/10', 'ban')
+    SUSPICIOUS: flagMeta('Suspicious', 'text-slate-950 border-pink-400 bg-pink-400', 'flag'),
+    BLACKLISTED: flagMeta('Blacklisted', 'text-[#fff] border-pink-600 bg-pink-600', 'ban')
 };
 
 function App() {
@@ -1581,7 +1583,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     <${OrderCode} order=${order} />
                     <${StatusBadge} status=${displayStatus(order)} />
                     <${FlagBadge} flag=${flag} />
-                    ${caution && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950" title=${t(CAUTION_TEXT)}><${Icon} name="eye" className="w-3 h-3" />${t('CAUTION')}</span>`}
+                    ${caution && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-pink-300 text-slate-950" title=${t(CAUTION_TEXT)}><${Icon} name="eye" className="w-3 h-3" />${t('CAUTION')}</span>`}
                     ${order.status === 'PENDING' && html`<${AllianceBadge} airlines=${airlines} order=${order} />`}
                     ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
                     ${mine && html`<span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300">${t('YOURS')}</span>`}
@@ -1624,10 +1626,10 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
             <div className="flex flex-wrap gap-2 items-center"><${StatusBadge} status=${displayStatus(order)} /><${FlagBadge} flag=${flag} /><${AllianceBadge} airlines=${airlines} order=${order} />
                 ${order.status === 'PENDING' && html`<${PassedBadge} passed=${passed} userId=${userId} teamSize=${teamSize} />`}
             </div>
-            ${caution && html`<div className="flex gap-3 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 text-sm text-amber-100">
-                <${Icon} name="eye" className="w-5 h-5 text-amber-300 shrink-0" />
-                <div><p className="font-bold text-amber-200">${t('Caution: buyer on the alert list')}</p><p>${t(CAUTION_TEXT)}</p>
-                    ${cautionReason && html`<p className="text-xs mt-1 text-amber-200/80">${t('Reason (admins only): {reason}', { reason: cautionReason })}</p>`}</div>
+            ${caution && html`<div className="flex gap-3 p-3 rounded-2xl border border-pink-400/50 bg-pink-400/10 text-sm text-pink-100">
+                <${Icon} name="eye" className="w-5 h-5 text-pink-300 shrink-0" />
+                <div><p className="font-bold text-pink-200">${t('Caution: buyer on the alert list')}</p><p>${t(CAUTION_TEXT)}</p>
+                    ${cautionReason && html`<p className="text-xs mt-1 text-pink-200/80">${t('Reason (admins only): {reason}', { reason: cautionReason })}</p>`}</div>
             </div>`}
             <button onClick=${() => onBuyer(order)} className="w-full flex items-center gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-800 hover:border-slate-600 text-left">
                 <span className="w-9 h-9 rounded-xl bg-[#5865F2]/15 text-[#8b93ff] flex items-center justify-center shrink-0"><${DiscordLogo} className="w-4 h-4" /></span>
@@ -2038,7 +2040,7 @@ function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false,
         subtitle=${`${t('{count} for {airline}', { count: plural(order.total_qty, 'aircraft'), airline: airlineNames(order) })} · ${fmtUSDShort(order.total_usd)}`}
         footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//>
             <${Button} icon=${join ? 'users' : 'hand'} busy=${busy} disabled=${!chosen} onClick=${async () => { setBusy(true); await onConfirm(airlineId); setBusy(false); }}>${join ? t('Take over') : t('Take order')}<//>`}>
-        ${caution && html`<p className="text-sm text-amber-100 mb-4 p-3 rounded-2xl border border-amber-400/50 bg-amber-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-amber-300 shrink-0" />${t(CAUTION_TEXT)}</p>`}
+        ${caution && html`<p className="text-sm text-pink-100 mb-4 p-3 rounded-2xl border border-pink-400/50 bg-pink-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-pink-300 shrink-0" />${t(CAUTION_TEXT)}</p>`}
         ${join && html`<p className="text-sm text-slate-300 mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800">${t("{airline} took this order over {n} hours ago and hasn't finished it ({filled} of {total} delivered). You join them: they stay on the order, the buyer is told you will also be delivering, and you record only the aircraft you list.", { airline: order.seller_airline_name, n: TAKEOVER_HOURS, filled: order.filled, total: order.total_qty })}</p>`}
         <p className="field-label">${t('Sell as airline')}</p>
         <div className="space-y-1.5">
