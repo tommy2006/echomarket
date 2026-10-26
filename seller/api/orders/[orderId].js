@@ -28,11 +28,14 @@
 //                                      record. Sellers on the order and admins. Logged; culprits are DMed.
 //   flag      { flagStatus, flagReason }  seller-only moderation flag
 //   message   { body }                 message to the buyer about this order (any seller); the buyer is DMed
+//   remind    { note }                 completed orders: a seller who delivered on it reminds the buyer to buy the
+//                                      aircraft listed for them in-game (order timeline + 🔔, Discord DM, phone
+//                                      alert). Optional note. Once per seller per order every REMIND_HOURS.
 //   delete    {}                       admins only — removes the order completely
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
-    orderHelpers, deliveryShares, shareText, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS, HttpError
+    orderHelpers, deliveryShares, shareText, sharesLines, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 
@@ -43,6 +46,7 @@ function requireWelcome(seller) {
         throw new HttpError(403, `Before your first order, finish the sellers' welcome (a few minutes): ${SELLER_URL || ''}/welcome.html`);
     }
 }
+const REMIND_HOURS = 6;   // between two reminders from the same seller about the same order
 const MAX_CULPRITS = 10;   // per report (one theft had 4)
 const THEFT_WARNING = (ref) => `You bought aircraft on the in-game market that were listed for another Echo Market buyer (order ${ref}). Only buy planes you ordered: that is a market rule. Follow the seller team's instructions (for example, re-list the planes for the buyer). Another case can lead to a market ban.`;
 
@@ -407,6 +411,42 @@ Answer on Echo Market (Orders).`,
                 });
             }
             return res.json({ ok: true, order, message: msg });
+        }
+
+        case 'remind': {
+            if (order.status !== 'FULFILLED') throw new HttpError(409, 'Reminders are only for completed orders.');
+            // Only a seller who listed aircraft on this order (its seller, a seller who joined, or an earlier seller).
+            const mine = deliveryShares(order).find((sh) => sh.sellerId === account.id && sh.total > 0);
+            if (!mine) throw new HttpError(403, 'Only the sellers who delivered this order can remind the buyer.');
+            const note = cleanText(input.note, 500);
+            await rateLimit(`remind:${order.id}:${account.id}`, 1, REMIND_HOURS * 3600,
+                `You already reminded this buyer in the last ${REMIND_HOURS} hours.`);
+            const airline = mine.airline || accountName(account);
+            await addEvent(order, 'REMINDER', account, {
+                message: `Reminder from ${airline}: the aircraft listed for you are waiting on the in-game market. Search for this airline in-game and buy exactly what was listed for you.${note ? ` Their message: ${note}` : ''}`
+            });
+            let dm = 'unavailable';
+            if (order.buyer_id) {
+                const { data: buyer } = await db.from('accounts').select('*').eq('id', order.buyer_id).maybeSingle();
+                const listed = sharesLines(order, 1);
+                if (buyer) dm = await sendDM(buyer, {
+                    title: `⏰ Reminder: buy your aircraft for order ${ref}`,
+                    description: `**${md(airline)}** delivered your order and listed the aircraft for you on the in-game market. If you haven't bought them yet, search for **${md(airline)}** in-game and buy exactly what was listed for you.${note ? `
+
+**${md(accountName(account))}** wrote:
+> ${md(note)}` : ''}`,
+                    color: EMBED_COLORS.fulfilled,
+                    fields: listed ? [{ name: 'Listed for you', value: listed }] : [],
+                    url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
+                });
+                await sendPush(order.buyer_id, {
+                    title: `⏰ Order ${ref}: your aircraft are waiting`,
+                    body: `${airline} listed your aircraft in-game. Buy them now.`,
+                    tag: `remind-${order.id}`,
+                    url: BUYER_URL ? `${BUYER_URL}/#orders` : undefined
+                });
+            }
+            return res.json({ ok: true, order, dm });
         }
 
         case 'missing': {

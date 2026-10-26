@@ -200,7 +200,8 @@ p { margin: 0 0 14px; color: var(--muted); }
 #quiz fieldset.wrong { border-color: #ff6b6b; }
 #quiz fieldset.right { border-color: var(--accent); }
 #quiz legend { padding: 0 6px; margin-left: -6px; color: var(--text); font-weight: 400; display: flex; gap: 10px; align-items: flex-start; float: left; width: 100%; margin-bottom: 8px; }
-#quiz legend span {
+/* The question number only: the question text next to it is a span too (translated, data-i18n). */
+#quiz legend > span:first-child {
     flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
     font-family: var(--display); font-size: 11px; font-weight: 700; display: grid; place-items: center; margin-top: 1px;
 }

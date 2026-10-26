@@ -20,6 +20,9 @@ const MAX_HELPERS = 3;
 // Other sellers may take over once the order has been taken this long without being fully delivered.
 const canTakeOver = (order, userId, now = Date.now()) => ['CLAIMED', 'PARTIAL'].includes(order.status)
     && order.seller_id !== userId && !isHelping(order, userId) && orderHelpers(order).length < MAX_HELPERS && takeoverIn(order, now) === 0;
+// Completed orders: the sellers who listed aircraft on it may remind the buyer to buy them (seller API: remind).
+const deliveredOn = (order, userId) => order.status === 'FULFILLED' && deliveryShares(order).some((sh) => sh.sellerId === userId && sh.total > 0);
+const REMIND_HOURS = 6;   // same as seller/api/orders/[orderId].js
 // List price of what is still to deliver: roughly what the sellers pay to buy those aircraft new in-game.
 const listStillToBuy = (order) => orderLines(order).reduce((sum, it) => sum + (Number(it.listPriceUSD) || 0) * Math.max(0, it.qty - it.filled), 0);
 
@@ -404,6 +407,7 @@ function App() {
             setModal({ kind: 'join', order });
         },
         flag: (order) => setModal({ kind: 'flag', order }),
+        remind: (order) => setModal({ kind: 'remind', order }),
         release: async (order) => {
             const left = order.total_qty - order.filled;
             if (order.seller_id !== userId && isHelping(order, userId)) {
@@ -626,6 +630,13 @@ function App() {
                 if (payload.changed || payload.note) ok = await act(modal.order, { action: 'progress', mine: payload.mine, note: payload.note });
                 if (ok && payload.sellerNote !== undefined && payload.sellerNote !== (modal.order.seller_note || '')) ok = await act(modal.order, { action: 'note', sellerNote: payload.sellerNote });
                 if (ok) { setModal(null); toast(t('{ref} updated.', { ref: orderRef(modal.order) }), 'success'); }
+            }} />`}
+        ${modal?.kind === 'remind' && html`<${RemindModal} order=${modal.order} onClose=${() => setModal(null)}
+            onSend=${async (note) => {
+                const ok = await act(modal.order, { action: 'remind', note }, (r) => (r.dm === 'sent'
+                    ? t('Reminder sent. The buyer sees it on Echo Market and got a Discord DM.')
+                    : t("Reminder sent on Echo Market. The Discord DM couldn't be delivered (DMs off or closed).")));
+                if (ok) setModal(null);
             }} />`}
         ${modal?.kind === 'flag' && html`<${FlagModal} order=${modal.order} flag=${flags[modal.order.id]} onClose=${() => setModal(null)}
             onSave=${async (flagStatus, flagReason) => {
@@ -1549,6 +1560,7 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     return html`<div className="flex flex-wrap gap-1.5" onClick=${(e) => e.stopPropagation()}>
         ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>${t('Take order')}<//>`}
         ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canUpdate && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>${t('Update delivery')}<//>`}
+        ${deliveredOn(order, userId) && html`<${Button} size=${size} icon="bell-ring" onClick=${stop(actions.remind)}>${t('Remind buyer')}<//>`}
         ${canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>${t('Take over')}<//>`}
         ${['CLAIMED', 'PARTIAL'].includes(order.status) && (canManage || helping) && !compact && html`<${Button} size=${size} variant="secondary" icon=${helping ? 'log-out' : orderHelpers(order).length ? 'forward' : order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${helping ? t('Stop delivering') : orderHelpers(order).length ? t('Hand over') : order.filled > 0 ? t('Pass on the rest') : t('Release')}<//>`}
         ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>${t('Decline')}<//>`}
@@ -2113,6 +2125,21 @@ function FlagModal({ order, flag, onClose, onSave }) {
         </div>
         <label className="block mt-4"><span className="field-label">${t('Reason')}</span>
             <textarea value=${reason} rows="3" maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder=${t('Why is this order flagged?')}></textarea></label>
+    <//>`;
+}
+
+// A reminder to the buyer of a completed order: buy the aircraft listed for you in-game. Optional message.
+function RemindModal({ order, onClose, onSend }) {
+    const [note, setNote] = useState('');
+    const [busy, setBusy] = useState(false);
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Remind the buyer · {ref}', { ref: orderRef(order) })} size="sm"
+        subtitle=${t("For buyers who haven't bought the aircraft you listed yet.")}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>${t('Cancel')}<//>
+            <${Button} icon="bell-ring" busy=${busy} onClick=${async () => { setBusy(true); await onSend(note.trim()); setBusy(false); }}>${t('Send reminder')}<//>`}>
+        <p className="text-sm text-slate-300">${t('The buyer gets a reminder on Echo Market (order timeline and 🔔) and a Discord DM: your airline listed their aircraft in-game, and they should buy exactly what was listed.')}</p>
+        <label className="block mt-4"><span className="field-label">${t('Your message (optional)')}</span>
+            <textarea value=${note} rows="3" maxLength="500" onChange=${(e) => setNote(e.target.value)} className="input" placeholder=${t('e.g. Listed at WIII, please buy them today')}></textarea></label>
+        <p className="text-[11px] text-slate-500 mt-2">${t('You can send one reminder per order every {n} hours.', { n: REMIND_HOURS })}</p>
     <//>`;
 }
 

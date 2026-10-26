@@ -48,6 +48,10 @@ const EXTRA = {
         'Missing planes checked: theft confirmed.', 'Missing planes checked: theft confirmed. {note}',
         'Missing planes checked: not a theft.', 'Missing planes checked: not a theft. {note}',
         'Missing planes reported: {a}', 'The missing planes were re-listed for you: {note}', 'Cancelled by buyer',
+        'Reminder from {a}: the aircraft listed for you are waiting on the in-game market. Search for this airline in-game and buy exactly what was listed for you.',
+        'Reminder from {a}: the aircraft listed for you are waiting on the in-game market. Search for this airline in-game and buy exactly what was listed for you. Their message: {note}',
+        // seller/api/orders/[orderId].js remind: the rate-limit message
+        'You already reminded this buyer in the last {a} hours.',
         'You can take over {a} hours after the order was taken: in about {b} hour.',
         'You can take over {a} hours after the order was taken: in about {b} hours.',
         'Test alert sent to {a} device.', 'Test alert sent to {a} devices.',
