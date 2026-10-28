@@ -1,0 +1,68 @@
+# 🧰 Echo Market · Seller Desk Features
+Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
+
+## 👤 Your desk
+- **Sign-in:** Discord sign-in; your seller role (Verified Seller, Ambassador, Lead Ambassador) lets you in automatically.
+- **Rank colour:** the desk's accent colour follows your rank.
+- **Selling as:** profile picture → pick which of your airlines buyers see when you take an order.
+- **Tour & welcome:** profile picture → *Show me around* replays the tour; *Seller welcome* replays the intro.
+- **Language menu:** top bar; switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.
+- **Greeting bar:** shows how many orders are waiting, the longest wait, and orders with new buyer messages (*Show these orders*).
+- **Live alerts:** new orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.
+
+## 📋 Order lists
+- **Tabs:** *Open queue*, *My orders*, *All orders*.
+- **Search:** find by order number, airline, buyer or aircraft.
+- **Sort:** longest waiting, newest, or price (high/low).
+- **Filters:** status, alliance, aircraft types, number of aircraft, list value, *only orders I delivered on*, *only orders with new buyer messages*.
+- **Wait chips:** how long an order has waited, been with a seller, or took to finish.
+- **Tags:** *SAME ALLIANCE AS BUYER* / *NO SHARED ALLIANCE*, *YOU PASSED*, *2/5 PASSED*, *CAN TAKE OVER*, *NEW MESSAGES*, *MISSING PLANES REPORTED*.
+- **Pink tags:** **CAUTION** (buyer on the alert list), **SUSPICIOUS** / **BLACKLISTED** (flagged order).
+- **List value:** rough in-game cost of buying the planes new, next to what the buyer pays.
+
+━━━━━━━━━━━━━━━━━━━━
+
+## ✈️ Working an order
+- **Take order:** claim an open order; the buyer is told who is delivering.
+- **Decline:** a pass for you only; the order stays open for the others (if you're the last seller, you decline it for good with a reason the buyer sees).
+- **Update delivery:** enter how many of each type *you* listed in-game; the buyer gets a DM.
+- **Seller note:** a note pinned on the order that the buyer can see (e.g. *listed at WIII*).
+- **Release:** nothing delivered yet → back to the open queue.
+- **Pass on the rest:** what you delivered stays counted; the rest goes back to the queue.
+- **Take over:** 12 h after an order was taken and still unfinished, up to 3 other sellers can join and list part of it.
+- **Hand over:** the order's seller passes it to the first seller who took over.
+- **Stop delivering:** a seller who took over leaves; their count stays.
+- **Remind buyer:** on completed orders you listed on, nudge the buyer to buy the planes (DM + market notice, optional message, once every 6 h).
+- **Flag:** mark an order with a reason only sellers see; the buyer isn't told.
+- **Buyer info:** click the buyer's airline name for their Discord profile, ID, @mention, DM status, warnings/bans and all their orders.
+- **Messages:** buyers can write to the seller team 24 h after ordering; reply from the order (they get a DM).
+- **Timeline & status history:** every step of the order, with who did what and when.
+
+━━━━━━━━━━━━━━━━━━━━
+
+## 🚨 Missing planes & thefts
+- **Missing-plane report:** you get a DM when a buyer says planes listed for them were bought by someone else.
+- **Theft confirmed / Not a theft:** close the report on the order; the buyer sees your note.
+- **Warn culprits:** add one or more Discord IDs to warn them automatically, or choose *Under investigation*.
+- **Theft reports tab:** *Needs attention*, *Confirmed thefts*, *All reports*; anyone can *Identify & warn culprits* later.
+- **Clear theft:** the thief re-listed the planes for the buyer; their warning stays on record.
+- **Clear from record:** remove a wrong warning (sellers on that order and admins).
+- **Close investigation:** culprit couldn't be identified.
+
+━━━━━━━━━━━━━━━━━━━━
+
+## 🛡️ Admins only
+*Lead Ambassadors, Market Admins and sellers made admin by hand.*
+- **Decline for all:** close any order for the whole team at once (spam, rule breaks); the buyer sees your reason.
+- **Delete:** remove an order forever.
+- **Alert reasons:** see *why* a buyer is on the alert list on their CAUTION orders.
+- **Sellers tab:** leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.
+- **Moderation → Market ban:** ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).
+- **Moderation → Lift ban:** end a ban early.
+- **Moderation → Send message:** an *Information* or *Warning* message to anyone by Discord ID (market notice + DM; warnings are logged).
+- **Moderation → Bot commands:** install/update the Discord slash commands and choose the ordering channel(s).
+- **Community → Announcements:** a pop-up for every buyer plus a home banner until you delete it.
+- **Community → Alert list:** add a Discord ID with a private reason; their orders show CAUTION to sellers.
+- **Community → Budget rewards:** raise a buyer's daily budget to Tier 1 ($25B) or Tier 2 ($40B), with an optional end date (boosters get Tier 3 automatically).
+- **`/market` in Discord:** `ban`, `unban`, `warn`, `message`, `info` without opening the desk.
+-# Questions? Ask a Lead Ambassador.
