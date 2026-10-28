@@ -12,6 +12,8 @@
 //   series                                           orders per day (≤ 30 days) or per week
 //   topAircraft                                      most-ordered aircraft types
 // trade: aircraft delivered from each seller alliance to each buyer alliance (who supplies whom).
+// aircraft: the most popular aircraft types across all alliances (aircraft ordered, orders, delivered, value,
+//           average price level, alliances that ordered them).
 import { admin, orderItems, deliveryShares } from './server.js';
 
 const PAGE = 1000;
@@ -64,6 +66,7 @@ export async function allianceStats(days) {
         return stats.get(name);
     };
     const trade = new Map();   // "buyer alliance|seller alliance" → aircraft delivered
+    const types = new Map();   // model → totals over every alliance
 
     for (const o of orders) {
         const a = row(o.alliance || NO_ALLIANCE);
@@ -81,6 +84,15 @@ export async function allianceStats(days) {
             a.models.set(it.model, (a.models.get(it.model) || 0) + it.qty);
             const level = Number(it.pricePercent);
             if (level > 0) { a.levelSum += level * it.qty; a.levelQty += it.qty; }
+            if (!types.has(it.model)) types.set(it.model, { model: it.model, aircraft: 0, orders: 0, delivered: 0, value: 0, levelSum: 0, levelQty: 0, allianceSet: new Set() });
+            const ty = types.get(it.model);
+            ty.aircraft += it.qty;
+            ty.orders++;
+            ty.delivered += it.filled;
+            // Older lines have no totalUSD: their share of the order's total, by aircraft.
+            ty.value += Number(it.totalUSD) || Math.round((Number(o.total_usd) || 0) * it.qty / (o.total_qty || 1));
+            if (level > 0) { ty.levelSum += level * it.qty; ty.levelQty += it.qty; }
+            ty.allianceSet.add(a.name);
         }
         const claimed = firstClaim.get(o.id);
         if (claimed) a.waits.push((new Date(claimed) - new Date(o.created_at)) / 36e5);
@@ -105,8 +117,12 @@ export async function allianceStats(days) {
     }), { orders: 0, completed: 0, aircraft: 0, delivered: 0, value: 0 });
     totals.buyers = new Set(orders.map((o) => o.buyer_id).filter(Boolean)).size;
 
+    const aircraft = [...types.values()].map(({ levelSum, levelQty, allianceSet, ...ty }) => ({
+        ...ty, alliances: allianceSet.size, priceLevel: levelQty ? Math.round(levelSum / levelQty * 10) / 10 : null
+    })).sort((x, y) => y.aircraft - x.aircraft || y.orders - x.orders || x.model.localeCompare(y.model)).slice(0, 25);
+
     return {
-        ok: true, days, bucketDays, bucketStarts, alliances, totals,
+        ok: true, days, bucketDays, bucketStarts, alliances, totals, aircraft,
         trade: [...trade].map(([key, aircraft]) => { const [buyer, seller] = key.split('|'); return { buyer, seller, aircraft }; }),
         generatedAt: new Date().toISOString()
     };

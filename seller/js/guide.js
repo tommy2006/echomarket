@@ -10,7 +10,8 @@ export const GUIDE = [
         ['Seller guide', 'Profile picture → Seller guide opens this list.'],
         ['Language menu', 'Top bar; switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.'],
         ['Greeting bar', 'Shows how many orders are waiting, the longest wait, and orders with new buyer messages (Show these orders).'],
-        ['Live alerts', 'New orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.']
+        ['Live alerts', 'New orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.'],
+        ['New-order meow', 'A soft meow plays when a new order comes in while the desk is open; profile picture → Meow for new orders turns it on or off.']
     ] },
     { title: 'Order lists', icon: 'list', items: [
         ['Tabs', 'Open queue, My orders, All orders.'],
@@ -53,7 +54,7 @@ export const GUIDE = [
         ['Delete', 'Remove an order forever.'],
         ['Alert reasons', 'See why a buyer is on the alert list on their CAUTION orders.'],
         ['Sellers tab', 'Leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.'],
-        ['Alliances tab', 'Which alliances order the most: rankings, orders over time, order outcomes and who supplies whom.'],
+        ['Alliances tab', 'Which alliances order the most: rankings, most popular aircraft, orders over time, order outcomes and who supplies whom.'],
         ['Moderation → Market ban', 'Ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).'],
         ['Moderation → Lift ban', 'End a ban early.'],
         ['Moderation → Send message', 'An Information or Warning message to anyone by Discord ID (market notice + DM; warnings are logged).'],

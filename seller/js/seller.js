@@ -72,6 +72,56 @@ const PAGE_SIZES = [5, 10, 25, 50, 'all'];
 
 // ---- sorting and filtering the order lists (remembered per device)
 const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
+const LS_MEOW = 'echo_seller_meow_v1';   // false = no sound for new orders
+
+// A soft "meow" when a new order comes in while the desk is open. Made with the Web Audio API (no sound file):
+// a buzzy tone through a vowel-like filter that opens and closes ("m-e-ow") while the pitch rises and falls.
+// Browsers only allow sound after the page has been clicked or tapped once, so the audio starts on the first tap.
+let meowCtx = null;
+let lastMeow = 0;
+function audio() {
+    if (!meowCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        meowCtx = new Ctx();
+    }
+    if (meowCtx.state === 'suspended') meowCtx.resume().catch(() => {});
+    return meowCtx;
+}
+['pointerdown', 'keydown'].forEach((type) => window.addEventListener(type, () => { if (store.get(LS_MEOW, true)) audio(); }, { once: true, capture: true }));
+function playMeow() {
+    if (!store.get(LS_MEOW, true) || Date.now() - lastMeow < 3000) return;   // several orders at once: one meow
+    const ctx = audio();
+    if (!ctx || ctx.state !== 'running') return;
+    lastMeow = Date.now();
+    const t0 = ctx.currentTime + 0.02, end = t0 + 0.7;
+    const voice = ctx.createOscillator();
+    voice.type = 'sawtooth';
+    voice.frequency.setValueAtTime(460, t0);
+    voice.frequency.linearRampToValueAtTime(720, t0 + 0.2);
+    voice.frequency.exponentialRampToValueAtTime(400, end);
+    const wobble = ctx.createOscillator();   // a little vibrato
+    const wobbleDepth = ctx.createGain();
+    wobble.frequency.value = 7;
+    wobbleDepth.gain.value = 9;
+    wobble.connect(wobbleDepth).connect(voice.frequency);
+    const vowel = ctx.createBiquadFilter();   // "m" (closed) → "e" (bright) → "ow" (round)
+    vowel.type = 'bandpass';
+    vowel.Q.value = 4;
+    vowel.frequency.setValueAtTime(500, t0);
+    vowel.frequency.linearRampToValueAtTime(1700, t0 + 0.18);
+    vowel.frequency.exponentialRampToValueAtTime(650, end);
+    const soften = ctx.createBiquadFilter();
+    soften.type = 'lowpass';
+    soften.frequency.value = 2600;
+    const volume = ctx.createGain();
+    volume.gain.setValueAtTime(0.0001, t0);
+    volume.gain.exponentialRampToValueAtTime(0.22, t0 + 0.08);
+    volume.gain.setValueAtTime(0.22, t0 + 0.3);
+    volume.gain.exponentialRampToValueAtTime(0.0001, end);
+    voice.connect(vowel).connect(soften).connect(volume).connect(ctx.destination);
+    [voice, wobble].forEach((o) => { o.start(t0); o.stop(end + 0.05); });
+}
 const ORDER_TABS = ['open', 'mine', 'all'];
 const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false, unreadOnly: false };
 const typeCount = (o) => orderLines(o).length;
@@ -287,6 +337,7 @@ function App() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => {
                 if (p.eventType === 'DELETE') return setOrders((l) => l.filter((o) => o.id !== p.old.id));
                 if (p.eventType === 'INSERT') {
+                    playMeow();
                     toast(t('New order {ref} from {airline}', { ref: orderRef(p.new), airline: airlineNames(p.new) }), 'success');
                     notifyBrowser(t('New Echo Market order'), `${airlineNames(p.new)}: ${plural(p.new.total_qty, 'aircraft')}`);
                 }
@@ -868,6 +919,11 @@ const ALLIANCE_METRICS = [
     { key: 'completion', label: 'Completed', about: 'Share of orders fully delivered.', fmt: (v) => `${v}%` },
     { key: 'waitHours', label: 'Wait', about: 'Median time until a seller first took an order (shortest first).', fmt: fmtHours, ascending: true }
 ];
+const AIRCRAFT_METRICS = [
+    { key: 'aircraft', label: 'Aircraft', about: 'Aircraft ordered of each type.', fmt: (v) => String(v) },
+    { key: 'orders', label: 'Orders', about: 'Orders that include each type.', fmt: (v) => String(v) },
+    { key: 'value', label: 'Value', about: 'What buyers pay for each type.', fmt: (v) => fmtUSDShort(v) }
+];
 const metricValue = (a, key) => key === 'avgSize' ? (a.orders ? a.aircraft / a.orders : null)
     : key === 'completion' ? (a.orders ? pct(a.completed, a.orders) : null) : a[key];
 const sortByMetric = (key) => {
@@ -934,6 +990,8 @@ function AllianceStats() {
     const [metric, setMetric] = useState('orders');
     const [sortBy, setSortBy] = useState('orders');
     const [picked, setPicked] = useState(null);
+    const [typesBy, setTypesBy] = useState('aircraft');
+    const [allTypes, setAllTypes] = useState(false);
     const [bind, tipNode] = useChartTip();
     useEffect(() => {
         let gone = false;
@@ -977,6 +1035,12 @@ function AllianceStats() {
     const cell = (buyer, seller) => trade.find((c) => c.buyer === buyer && c.seller === seller)?.aircraft || 0;
     const tradeMax = Math.max(1, ...trade.map((c) => c.aircraft));
     const heatStep = (v) => Math.min(HEAT.length - 1, Math.floor(Math.sqrt(v / tradeMax) * HEAT.length));
+
+    // Most popular aircraft types over every alliance.
+    const typeMetric = AIRCRAFT_METRICS.find((x) => x.key === typesBy);
+    const types = [...(data.aircraft || [])].sort((x, y) => y[typesBy] - x[typesBy] || y.aircraft - x.aircraft);
+    const typesShown = allTypes ? types : types.slice(0, 10);
+    const typesMax = Math.max(1, ...types.map((x) => x[typesBy]));
 
     const outcomes = [['done', 'Completed'], ['active', 'Waiting or in delivery'], ['closed', 'Declined or cancelled']];
     const outcomeCount = (a, k) => (k === 'done' ? a.completed : k === 'active' ? a.active : a.declined + a.cancelled);
@@ -1025,6 +1089,23 @@ function AllianceStats() {
                 </li>`;
             })}</ol>
         <//>
+
+        ${types.length > 0 && html`<${VizCard} title="Most popular aircraft" about=${`${typeMetric.about} All alliances together; hover or tap a bar for details.`}>
+            <div className="flex gap-1.5 mb-3" role="group" aria-label="Rank aircraft by">
+                ${AIRCRAFT_METRICS.map((x) => html`<button key=${x.key} onClick=${() => setTypesBy(x.key)} aria-pressed=${typesBy === x.key}
+                    className=${`px-3 py-1.5 rounded-full text-xs font-bold border ${typesBy === x.key ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-400 hover:text-white'}`}>${x.label}</button>`)}
+            </div>
+            <ol className="space-y-0.5">${typesShown.map((ty, i) => html`<li key=${ty.model}
+                ...${bind(html`<${TipRows} title=${ty.model} rows=${[['Aircraft ordered', ty.aircraft], ['Orders', ty.orders], ['Delivered', ty.delivered],
+                    ['Value', fmtUSDShort(ty.value)], ['Price level', ty.priceLevel == null ? '—' : `${ty.priceLevel}%`], ['Alliances ordering', ty.alliances]]} />`)}
+                className="grid grid-cols-[1.25rem_minmax(0,8rem)_1fr_auto] sm:grid-cols-[1.5rem_minmax(0,14rem)_1fr_auto] items-center gap-2 py-1 rounded-lg hover:bg-slate-800/40 outline-none focus-visible:bg-slate-800/40">
+                <span className="text-xs font-black text-slate-500 tabular-nums text-center">${i + 1}</span>
+                <span className="text-sm text-slate-200 truncate">${ty.model}</span>
+                <span className="h-4 flex items-center min-w-0"><span className="h-3 rounded-r" style=${{ width: `max(${(ty[typesBy] / typesMax * 100).toFixed(1)}%, 3px)`, backgroundColor: VIZ.bar }}></span></span>
+                <span className="text-sm font-bold text-white tabular-nums text-right min-w-[3.5rem]">${typeMetric.fmt(ty[typesBy])}</span>
+            </li>`)}</ol>
+            ${types.length > 10 && html`<button onClick=${() => setAllTypes(!allTypes)} className="mt-2 text-xs font-bold text-sky-300 hover:text-white">${allTypes ? 'Show the top 10' : `Show all ${types.length}`}</button>`}
+        <//>`}
 
         <div className="grid lg:grid-cols-2 gap-3">
             <${VizCard} title="Orders over time" about=${`Orders placed per ${per}. Every chart uses the same scale, so heights compare.`}>
@@ -1164,6 +1245,12 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnre
 function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
     const [open, setOpen] = useState(false);
     const [guideOpen, setGuideOpen] = useState(false);
+    const [meow, setMeow] = useState(() => store.get(LS_MEOW, true));
+    const toggleMeow = () => {
+        store.set(LS_MEOW, !meow);
+        setMeow(!meow);
+        if (!meow) { lastMeow = 0; audio(); setTimeout(playMeow, 150); }   // turning it on plays a sample
+    };
     const signOut = async () => {
         setOpen(false);
         if (await ask({ title: t('Sign out of the seller desk?'), confirmLabel: t('Sign out'), message: t("You'll need to sign in with Discord again to take orders.") })) sb.auth.signOut();
@@ -1191,6 +1278,10 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
             </label>`}
             <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> ${t('Open the market')}</a>
             <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
+            <button onClick=${toggleMeow} aria-pressed=${meow} className="menu-item w-full">
+                <${Icon} name=${meow ? 'volume-2' : 'volume-x'} /> <span className="flex-1 text-left">${t('Meow for new orders')}</span>
+                <span className=${`text-[11px] font-bold ${meow ? 'text-sky-300' : 'text-slate-500'}`}>${meow ? t('On') : t('Off')}</span>
+            </button>
             <button onClick=${() => { setOpen(false); setGuideOpen(true); }} className="menu-item w-full"><${Icon} name="book-open" /> ${t('Seller guide')}</button>
             <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Seller welcome')}</a>
             <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
