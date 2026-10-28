@@ -283,7 +283,7 @@ function App() {
 
     if (!authReady) return html`<${FullPageSpinner} />`;
     if (session && !standing) return html`<${FullPageSpinner} />`;
-    if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole)) {
+    if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole || standing.timedOutUntil)) {
         return html`<${MarketGate} standing=${standing} account=${account} onSignOut=${signOut} />`;
     }
     // Everyone goes through the "Cleared for takeoff" welcome once (rules + how not to take others' planes).
@@ -1601,16 +1601,27 @@ function OrderThread({ order, messages, onMessage }) {
 }
 
 // =========================================================================
-//  Members only / market bans: shown instead of the market.
+//  Members only / market bans / Discord timeouts: shown instead of the market.
 // =========================================================================
 function MarketGate({ standing, account, onSignOut }) {
     const banned = standing.ban || standing.bannedRole;
     const ban = standing.ban;
+    const timedOut = !banned && standing.inGuild && standing.timedOutUntil;
+    // A timeout runs out on its own: reload when it ends (if that's within a day), so the market just opens.
+    useEffect(() => {
+        if (!timedOut) return;
+        const ms = new Date(timedOut).getTime() - Date.now() + 5000;
+        if (ms > 0 && ms < 864e5) { const id = setTimeout(() => window.location.reload(), ms); return () => clearTimeout(id); }
+    }, [timedOut]);
     return html`<div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-            <div className=${`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border ${banned ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
-                <${Icon} name=${banned ? 'ban' : 'users-round'} className="w-6 h-6" /></div>
-            ${banned ? html`
+            <div className=${`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border ${banned || timedOut ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
+                <${Icon} name=${banned ? 'ban' : timedOut ? 'timer' : 'users-round'} className="w-6 h-6" /></div>
+            ${timedOut ? html`
+                <h1 className="text-xl font-black text-white mt-5">${t("You're timed out on the Echo Discord server")}</h1>
+                <p className="text-sm text-slate-300 mt-2">${t('While a Discord timeout lasts, you cannot use Echo Market. You can use it again after {date}.', { date: fmtDate(timedOut) })}</p>
+                <p className="text-xs text-slate-400 mt-4">${t('If you think this is a mistake, contact a moderator on the Echo Discord server.')}</p>`
+            : banned ? html`
                 <h1 className="text-xl font-black text-white mt-5">${t("You're banned from Echo Market")}</h1>
                 <p className="text-sm text-slate-300 mt-2">${ban ? (ban.ends_at ? t('Until {date}.', { date: fmtDate(ban.ends_at) }) : t('This ban is permanent.')) : t('You have the Market Banned role on the Echo Discord server.')}</p>
                 ${ban?.reason && html`<p className="text-sm text-slate-200 mt-3 p-3 rounded-2xl bg-slate-900 border border-slate-800 text-left"><b>${t('Reason:')}</b> ${ban.reason}</p>`}

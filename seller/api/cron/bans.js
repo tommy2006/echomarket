@@ -1,9 +1,10 @@
 // GET /api/cron/bans — run daily by Vercel (see "crons" in vercel.json): removes the Market Banned role
 // from everyone whose market ban ended in the last 3 days (people who come back to the market get it
-// removed right away anyway). Vercel sends "Authorization: Bearer <CRON_SECRET>"; without CRON_SECRET
+// removed right away anyway). Also moves the Sellers' Cup forward (lib/cup.js), in case nobody opened the desk. Vercel sends "Authorization: Bearer <CRON_SECRET>"; without CRON_SECRET
 // set in this project, nothing runs.
 import { admin, handler, endLapsedBanRole, logModeration, HttpError } from '../../lib/server.js';
 import { timingSafeEqual } from 'crypto';
+import { advanceCup } from '../../lib/cup.js';
 
 export default handler(['GET'], async (req, res) => {
     const secret = process.env.CRON_SECRET || '';
@@ -22,5 +23,7 @@ export default handler(['GET'], async (req, res) => {
             await logModeration({ title: '⌛ Market ban ended', color: 0xFFFFFF, description: `<@${discordId}>: the ban ran out and the Market Banned role was removed.` });
         }
     }
-    res.json({ ok: true, checked: (ended || []).length, removed });
+    let cup = null;
+    try { cup = (await advanceCup())?.status || null; } catch (err) { console.error('cup advance failed:', err.message); }
+    res.json({ ok: true, checked: (ended || []).length, removed, cup });
 });

@@ -629,11 +629,16 @@ alter table public.missing_report_culprits enable row level security;
 
 -- May this signed-in person use the market (create/edit airlines)? Member of the Echo server (checked
 -- by the API) and not market-banned (ban record or the Market Banned role).
+-- Discord timeout on the Echo server (e.g. from the Sapphire bot): no market until it ends. Read from Discord
+-- with the membership check (lib/server.js, marketStanding()).
+alter table public.accounts add column if not exists timed_out_until timestamptz;
+
 create or replace function public.has_market_access()
 returns boolean language sql stable security definer set search_path = public as $$
     select exists (
         select 1 from public.accounts a
         where a.id = auth.uid() and a.in_guild is true and not a.market_banned_role
+          and (a.timed_out_until is null or a.timed_out_until <= now())
           and not exists (select 1 from public.market_bans b
                           where b.discord_id = a.discord_id and b.revoked_at is null
                             and (b.ends_at is null or b.ends_at > now()))
@@ -895,6 +900,40 @@ begin
     end loop;
 end $$;
 grant all on public.budget_rewards, public.announcements, public.watchlist, public.order_alerts to service_role;
+
+-- ---------------------------------------------------------------------
+--  8b. Sellers' Cup (seller/lib/cup.js): a knockout competition between sellers, started by an admin.
+--      A seeding period, then head-to-head rounds; the state (seeds, rounds, matches) is kept as JSON.
+--      Written only by the seller API; every seller can read it.
+-- ---------------------------------------------------------------------
+create table if not exists public.seller_cups (
+    id            uuid primary key default gen_random_uuid(),
+    name          text not null,
+    status        text not null default 'seeding' check (status in ('seeding', 'running', 'finished', 'cancelled')),
+    pairing       text not null default 'fold' check (pairing in ('fold', 'bracket', 'random')),
+    bracket_size  int check (bracket_size is null or bracket_size >= 2),   -- null = every eligible seller
+    seeding_hours int not null default 168 check (seeding_hours between 1 and 2160),
+    round_hours   int not null default 168 check (round_hours between 1 and 2160),
+    channel_id    text,             -- Discord channel for pairings and results
+    started_at    timestamptz not null default now(),
+    started_by    uuid,
+    seeds         jsonb not null default '[]'::jsonb,   -- [{ sellerId, name, discordId, seed, orders, value }]
+    rounds        jsonb not null default '[]'::jsonb,   -- [{ round, startsAt, endsAt, resolved, matches: [...] }]
+    removed       jsonb not null default '[]'::jsonb,   -- seller ids disqualified by an admin
+    champion_id   uuid,
+    note          text,
+    version       int not null default 0,
+    updated_at    timestamptz not null default now(),
+    ended_at      timestamptz
+);
+create unique index if not exists seller_cups_one_active on public.seller_cups ((true)) where status in ('seeding', 'running');
+alter table public.seller_cups enable row level security;
+drop policy if exists "cups: sellers read" on public.seller_cups;
+create policy "cups: sellers read" on public.seller_cups for select to authenticated using (public.is_seller());
+grant select on public.seller_cups to authenticated;
+revoke insert, update, delete, truncate, references, trigger on public.seller_cups from anon, authenticated;
+revoke all on public.seller_cups from anon;
+grant all on public.seller_cups to service_role;
 
 -- ---------------------------------------------------------------------
 --  9. Make the API notice new tables/columns right away (otherwise it can

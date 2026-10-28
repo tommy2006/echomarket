@@ -38,6 +38,7 @@ import {
     orderHelpers, deliveryShares, shareText, sharesLines, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
+import { noticeSharedOrder } from '../../lib/cup.js';
 
 const ACTIVE = ['CLAIMED', 'PARTIAL'];
 // Sellers take (or take over) orders only after the sellers' welcome (welcome.html). Older databases: no gate.
@@ -329,6 +330,8 @@ export default handler(['POST'], async (req, res) => {
             });
             const title = status === 'FULFILLED' ? `✅ ${ref} fulfilled` : `🟡 ${ref}: ${filled}/${order.total_qty} delivered`;
             await syncDiscord(updated, title);
+            // Sellers' Cup: an order completed by more than one seller counts for nobody; they're all told.
+            if (status === 'FULFILLED' && order.status !== 'FULFILLED') await noticeSharedOrder(updated);
             // Notify only when more aircraft were delivered (not for corrections downwards).
             if (filled > order.filled) {
                 await dmBuyer(updated, status === 'FULFILLED' ? 'FULFILLED' : 'PROGRESS', note, myAirline);

@@ -2,7 +2,10 @@
 // Body: { days, sellerId, view }
 //   days      7, 30, 90 or 0 (= all time)
 //   sellerId  optional: one seller's details, plus every order they took in the period
-//   view      'alliances': alliance statistics instead (lib/alliance-stats.js)
+//   view      'alliances': alliance statistics instead (lib/alliance-stats.js), for every seller
+//             'cup': the Sellers' Cup (lib/cup.js) with live scores, for every seller (also moves it forward)
+//   action    admins only: 'cup-start' { name, roundDays, seedingDays, bracketSize, pairing, channelId },
+//             'cup-cancel' { reason }, 'cup-disqualify' { sellerId }
 //
 // Worked out from the order timeline (order_events), so it can be limited to a period:
 //   ordersTaken   times the seller took an order (CLAIMED)
@@ -12,6 +15,7 @@
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
 import { allianceStats } from '../../lib/alliance-stats.js';
+import { advanceCup, cupView, startCup, cancelCup, disqualify, eligibleSellers, PAIRINGS } from '../../lib/cup.js';
 import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, RANKS, HttpError } from '../../lib/server.js';
 
 // Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
@@ -54,12 +58,21 @@ async function all(query) {
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const me = await requireActiveSeller(account);
-    if (!me.is_admin) throw new HttpError(403, 'Only admins can see seller performance.');
     await rateLimit('admin-stats:' + account.id, 60, 600);
-
     const input = body(req);
     const days = [7, 30, 90].includes(Number(input.days)) ? Number(input.days) : 0;
+    // Alliance statistics: every seller. Seller performance: admins only.
     if (input.view === 'alliances') return res.json(await allianceStats(days));
+    if (input.view === 'cup') {
+        const cup = await advanceCup();
+        const active = cup && ['seeding', 'running'].includes(cup.status);
+        return res.json({ ok: true, ...(await cupView(cup)), now: new Date().toISOString(), pairings: PAIRINGS,
+            eligible: me.is_admin && !active ? (await eligibleSellers()).length : undefined });
+    }
+    if (!me.is_admin) throw new HttpError(403, 'Only admins can see seller performance or manage the Cup.');
+    if (input.action === 'cup-start') return res.json({ ok: true, cup: await startCup(account, input) });
+    if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });
+    if (input.action === 'cup-disqualify') return res.json({ ok: true, cup: await disqualify(account, input.sellerId) });
     const one = typeof input.sellerId === 'string' && /^[0-9a-f-]{36}$/i.test(input.sellerId) ? input.sellerId : null;
     const since = days ? Date.now() - days * 864e5 : 0;
     const db = admin();

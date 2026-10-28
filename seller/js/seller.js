@@ -12,7 +12,7 @@ import {
     t, tj, tx, useLang, LanguageMenu, greetingLine, setLang, savedLang
 } from './ui.js';
 import { GUIDE } from './guide.js';
-// Languages: the seller screens follow the language menu; admin-only screens (Sellers, Alliances, Moderation, Community)
+// Languages: the seller screens follow the language menu; admin screens (Sellers, Moderation, Community) and the Alliances statistics
 // stay in English, like the Echo Alliances site's admin pages.
 
 // "Helping": this seller joined the order (take over) without being its main seller.
@@ -522,9 +522,9 @@ function App() {
         mine: { label: t('My orders'), icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: t('All orders'), icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         thefts: { label: t('Theft reports'), icon: 'shield-alert', fn: () => false },   // every seller
+        alliances: { label: t('Alliances'), icon: 'chart-column', fn: () => false },     // every seller
         // Admins only: seller performance and alliance statistics (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
-                                alliances: { label: 'Alliances', icon: 'chart-column', fn: () => false },
                                 mod: { label: 'Moderation', icon: 'shield', fn: () => false },
                                 community: { label: 'Community', icon: 'sparkles', fn: () => false } } : {})
     };
@@ -565,6 +565,7 @@ function App() {
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} onShowUnread=${showUnread} />
+            <${CupBanner} userId=${userId} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
             <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin}
                 theftHint=${investigating.length ? t('{n} under investigation', { n: investigating.length }) : reportsToCheck.length ? t('{n} to check', { n: reportsToCheck.length }) : ''} />
@@ -624,8 +625,8 @@ function App() {
                 onOpenOrder=${openDetail} onReport=${onReport} onCulprits=${refreshCulprits} />`
             : tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
-            : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
-            : tab === 'alliances' && seller.is_admin ? html`<${AllianceStats} />`
+            : tab === 'team' && seller.is_admin ? html`<${SellersTab} userId=${userId} onOpenOrder=${openDetail} />`
+            : tab === 'alliances' ? html`<${AllianceStats} />`
             : loading ? html`<${EchoLoader} className="py-16" />`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
@@ -987,7 +988,7 @@ function AllianceStats() {
     const header = html`<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
             <h2 className="text-lg font-extrabold text-white">Alliance statistics</h2>
-            <p className="text-xs text-slate-500">Only admins can see this. Hover or tap a chart for details; click an alliance for more.</p>
+            <p className="text-xs text-slate-500">Every seller can see this. Hover or tap a chart for details; click an alliance for more.</p>
         </div>
         <${PeriodPicker} days=${days} setDays=${setDays} />
     </div>`;
@@ -1204,6 +1205,229 @@ function AllianceDetailModal({ alliance: a, data, days, onClose }) {
         </div>
         ${tipNode}
     <//>`;
+}
+
+// ---------------- Sellers' Cup (seller/lib/cup.js): banner for every seller, bracket, and the admins' Cup panel.
+const cupRoundName = (round, total) => {
+    const left = total - round;
+    return left === 0 ? t('Final') : left === 1 ? t('Semi-finals') : left === 2 ? t('Quarter-finals') : t('Round {n}', { n: round });
+};
+const cupActive = (cup) => cup && ['seeding', 'running'].includes(cup.status);
+const cupSeed = (cup, id) => cup.seeds.find((s) => s.sellerId === id);
+const fmtCupLength = (hours) => (hours % 24 === 0 ? `${hours / 24} day${hours === 24 ? '' : 's'}` : `${hours} hours`);
+
+// The Cup as columns of rounds; the current round shows live scores.
+function CupBracket({ view, userId }) {
+    const { cup, totalRounds, live = {} } = view;
+    if (!cup.rounds.length) return null;
+    const rounds = [...cup.rounds];
+    return html`<div className="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
+        <div className="flex gap-3 min-w-max">
+            ${rounds.map((r) => html`<div key=${r.round} className="w-52 shrink-0">
+                <p className="text-xs font-extrabold text-white">${cupRoundName(r.round, totalRounds)}</p>
+                <p className="text-[10px] text-slate-500 mb-2">${new Date(r.startsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${new Date(r.endsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}${r.resolved ? '' : ` · ${t('live')}`}</p>
+                <ul className="space-y-2">${r.matches.map((m, i) => html`<li key=${i} className="rounded-xl border border-slate-800 bg-slate-950/60 divide-y divide-slate-800">
+                    ${[m.a, m.b].map((id, side) => {
+                        if (!id) return html`<p key="bye" className="px-2.5 py-1.5 text-[11px] text-slate-500 italic">${t('bye')}</p>`;
+                        const s = cupSeed(cup, id);
+                        const score = r.resolved ? (side ? m.scoreB : m.scoreA) : live[id];
+                        const won = r.resolved && m.winner === id;
+                        const lost = r.resolved && m.winner && m.winner !== id;
+                        return html`<p key=${id} className=${`flex items-center gap-2 px-2.5 py-1.5 text-xs ${won ? 'text-white font-extrabold' : lost ? 'text-slate-500 line-through decoration-slate-600' : 'text-slate-200'} ${id === userId ? 'bg-sky-400/10' : ''}`}>
+                            <span className="text-[10px] text-slate-500 tabular-nums w-6 shrink-0">#${s?.seed ?? '?'}</span>
+                            <span className="flex-1 truncate">${s?.name || '?'}${id === userId ? ` (${t('you')})` : ''}</span>
+                            ${m.b && score != null && html`<span className="tabular-nums font-bold">${score}</span>`}
+                            ${won && html`<${Icon} name=${cup.champion_id === id ? 'trophy' : 'check'} className="w-3.5 h-3.5 text-emerald-400 shrink-0" />`}
+                        </p>`;
+                    })}
+                    ${r.resolved && m.how === 'tie-seed' && html`<p className="px-2.5 py-1 text-[10px] text-slate-500">${t('Tie: higher seed through')}</p>`}
+                    ${r.resolved && m.how === 'walkover' && html`<p className="px-2.5 py-1 text-[10px] text-slate-500">${t('Walkover')}</p>`}
+                </li>`)}</ul>
+            </div>`)}
+        </div>
+    </div>`;
+}
+
+// Seeding period: everyone's completed orders so far; the bracket cut-off line.
+function CupStandings({ view, userId }) {
+    const { cup, standings = [] } = view;
+    return html`<ol className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">
+        ${standings.map((s) => html`<li key=${s.sellerId} className=${`flex items-center gap-3 px-3 py-2 text-sm ${s.sellerId === userId ? 'bg-sky-400/10' : ''} ${cup.bracket_size && s.place === cup.bracket_size ? 'border-b-2 !border-b-sky-400/60' : ''}`}>
+            <span className="w-6 text-center text-xs font-black text-slate-500 tabular-nums">${s.place}</span>
+            <span className="flex-1 truncate text-slate-200">${s.name}${s.sellerId === userId ? ` (${t('you')})` : ''}</span>
+            <span className="text-[11px] text-slate-500 tabular-nums">${fmtUSDShort(s.value)}</span>
+            <span className="w-16 text-right font-bold text-white tabular-nums">${plural(s.orders, 'order')}</span>
+        </li>`)}
+    </ol>`;
+}
+
+function CupDetails({ view, userId }) {
+    const { cup } = view;
+    return html`<div className="space-y-4">
+        <p className="text-xs text-slate-400">${t('Only orders you complete on your own count. Tie: the higher seed goes through.')}</p>
+        ${cup.status === 'seeding' ? html`<div>
+            <p className="label text-slate-500 mb-2">${t('Seeding standings')} · ${t('ends {date}', { date: fmtDate(view.seedingEndsAt) })}</p>
+            <${CupStandings} view=${view} userId=${userId} />
+            ${cup.bracket_size && html`<p className="text-[11px] text-slate-500 mt-2">${t('The top {n} make the bracket.', { n: cup.bracket_size })}</p>`}
+        </div>` : html`<${CupBracket} view=${view} userId=${userId} />`}
+        ${cup.status === 'finished' && cup.champion_id && html`<p className="p-3 rounded-2xl bg-amber-400/10 border border-amber-400/30 text-amber-200 font-bold flex items-center gap-2">
+            <${Icon} name="trophy" className="w-5 h-5" /> ${t('Champion: {name}', { name: cupSeed(cup, cup.champion_id)?.name || '?' })}</p>`}
+        ${cup.status === 'cancelled' && html`<p className="text-sm text-slate-400">${t('Cancelled.')} ${cup.note || ''}</p>`}
+    </div>`;
+}
+
+// Front page, every seller: where the Cup stands and how they are doing.
+function CupBanner({ userId }) {
+    useLang();
+    const [view, setView] = useState(null);
+    const [open, setOpen] = useState(false);
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+        let gone = false;
+        const load = () => api('/api/admin/sellers', { view: 'cup' }).then((r) => { if (!gone) { setView(r); setNow(Date.now()); } }).catch(() => {});
+        load();
+        const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => { gone = true; document.removeEventListener('visibilitychange', onVisible); };
+    }, []);
+    const cup = view?.cup;
+    // Shown while it runs, and for three days after a champion is crowned.
+    if (!cup || !(cupActive(cup) || (cup.status === 'finished' && now - new Date(cup.ended_at).getTime() < 3 * 864e5))) return null;
+    let text;
+    if (cup.status === 'seeding') {
+        const me = (view.standings || []).find((s) => s.sellerId === userId);
+        const left = fmtDuration(new Date(view.seedingEndsAt).getTime() - now);
+        text = me ? t('{cup} · seeding: you have {n} (#{place}) · ends in {time}', { cup: cup.name, n: plural(me.orders, 'completed order'), place: me.place, time: left })
+            : t('{cup} · seeding · ends in {time}', { cup: cup.name, time: left });
+    } else if (cup.status === 'running') {
+        const round = cup.rounds[cup.rounds.length - 1];
+        const name = cupRoundName(round.round, view.totalRounds);
+        const left = fmtDuration(new Date(round.endsAt).getTime() - now);
+        const m = round.matches.find((x) => x.a === userId || x.b === userId);
+        const other = m && (m.a === userId ? m.b : m.a);
+        text = !m ? t('{cup} · {round} in progress · ends in {time}', { cup: cup.name, round: name, time: left })
+            : !other ? t('{cup} · {round}: you have a bye and go straight through', { cup: cup.name, round: name })
+            : t('{cup} · {round}: you {mine} – {theirs} {name} · ends in {time}', { cup: cup.name, round: name, mine: view.live?.[userId] ?? 0,
+                theirs: view.live?.[other] ?? 0, name: cupSeed(cup, other)?.name || '?', time: left });
+    } else {
+        text = t('{name} won {cup}!', { name: cupSeed(cup, cup.champion_id)?.name || '?', cup: cup.name });
+    }
+    return html`<div className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3 md:p-4 rounded-2xl border border-amber-400/30 bg-amber-400/[0.07]">
+        <span className="w-9 h-9 rounded-xl bg-amber-400/15 text-amber-300 flex items-center justify-center shrink-0"><${Icon} name="trophy" className="w-5 h-5" /></span>
+        <p className="flex-1 min-w-[12rem] text-sm font-bold text-amber-100">${text}</p>
+        <${Button} size="sm" variant="secondary" icon="swords" onClick=${() => setOpen(true)}>${t('See the Cup')}<//>
+        <${Modal} open=${open} onClose=${() => setOpen(false)} title=${cup.name} size="lg">
+            <${CupDetails} view=${view} userId=${userId} />
+        <//>
+    </div>`;
+}
+
+// Admins: Sellers tab → Cup. Start a Cup, watch it, cancel it, disqualify a seller.
+function CupAdmin({ userId }) {
+    const [view, setView] = useState(null);
+    const [error, setError] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const monthName = new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const [form, setForm] = useState({ name: `Sellers' Cup · ${monthName}`, seedingDays: 7, roundDays: 7, bracketSize: '', pairing: 'fold', channelId: '' });
+    const load = () => api('/api/admin/sellers', { view: 'cup' }).then((r) => {
+        setView(r);
+        if (r.cup?.channel_id) setForm((f) => (f.channelId ? f : { ...f, channelId: r.cup.channel_id }));
+    }).catch((e) => setError(e.message));
+    useEffect(() => { load(); }, []);
+    const run = async (payload, done) => {
+        setBusy(true);
+        try { await api('/api/admin/sellers', payload); toast(done, 'success'); await load(); } catch (e) { toast(e.message, 'error'); }
+        setBusy(false);
+    };
+    if (error) return html`<div className="card p-5 text-sm text-rose-300">${error}</div>`;
+    if (!view) return html`<${EchoLoader} className="py-16" />`;
+    const { cup } = view;
+    const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+    if (cupActive(cup)) {
+        const round = cup.rounds[cup.rounds.length - 1];
+        const people = cup.status === 'seeding' ? (view.standings || []) : cup.seeds.filter((s) => round?.matches.some((m) => !m.winner && (m.a === s.sellerId || m.b === s.sellerId)));
+        return html`<div className="space-y-3">
+            <div className="card !rounded-2xl md:!rounded-3xl p-4 md:p-5 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p className="label text-amber-300 flex items-center gap-1.5"><${Icon} name="trophy" className="w-4 h-4" />${cup.status === 'seeding' ? 'Seeding period' : cupRoundName(round.round, view.totalRounds)}</p>
+                        <h3 className="text-xl font-black text-white mt-1">${cup.name}</h3>
+                        <p className="text-xs text-slate-400 mt-1">${cup.status === 'seeding' ? `Seeding ends ${fmtDate(view.seedingEndsAt)}` : `Round ends ${fmtDate(round.endsAt)}`}
+                            · rounds of ${fmtCupLength(cup.round_hours)} · ${cup.bracket_size ? `top ${cup.bracket_size}` : 'every seller'} · ${cup.pairing === 'fold' ? '1 v last' : cup.pairing}
+                            · ${cup.channel_id ? `posts in channel ${cup.channel_id}` : 'no Discord channel'}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <${Button} size="sm" variant="secondary" icon="refresh-cw" busy=${busy} onClick=${() => { setBusy(true); load().finally(() => setBusy(false)); }}>Refresh<//>
+                        <${Button} size="sm" variant="ghost" icon="octagon-x" className="!text-rose-300" busy=${busy} onClick=${async () => {
+                            const reason = await ask({ title: `Cancel ${cup.name}?`, danger: true, confirmLabel: 'Cancel the Cup', message: 'The Cup stops for everyone and the cancellation is posted in the Cup channel. This cannot be undone.', input: { placeholder: 'Reason (shown in Discord)' } });
+                            if (reason !== null && reason !== false) run({ action: 'cup-cancel', reason: typeof reason === 'string' ? reason : '' }, 'Cup cancelled.');
+                        }}>Cancel Cup<//>
+                    </div>
+                </div>
+                ${people.length > 0 && html`<label className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    Disqualify a seller (they lose their match by walkover):
+                    <select className="input !py-1.5 !w-auto min-w-0 text-xs" value="" onChange=${async (e) => {
+                        const id = e.target.value;
+                        const who = people.find((p) => p.sellerId === id);
+                        if (id && await ask({ title: `Disqualify ${who?.name}?`, danger: true, confirmLabel: 'Disqualify', message: cup.status === 'seeding' ? 'They will not be seeded.' : 'They lose their current match by walkover when the round ends.' })) run({ action: 'cup-disqualify', sellerId: id }, `${who?.name} disqualified.`);
+                    }}>
+                        <option value="">Choose…</option>
+                        ${people.filter((p) => !(cup.removed || []).includes(p.sellerId)).map((p) => html`<option key=${p.sellerId} value=${p.sellerId}>${p.name}</option>`)}
+                    </select>
+                </label>`}
+            </div>
+            <div className="card !rounded-2xl md:!rounded-3xl p-4 md:p-5"><${CupDetails} view=${view} userId=${userId} /></div>
+        </div>`;
+    }
+
+    const size = Number(form.bracketSize) || view.eligible || 0;
+    const field = Math.min(size, view.eligible || 0);
+    return html`<div className="space-y-3">
+        <div className="card !rounded-2xl md:!rounded-3xl p-4 md:p-5 space-y-4">
+            <div>
+                <h3 className="font-extrabold text-white flex items-center gap-2"><${Icon} name="trophy" className="w-4 h-4 text-amber-300" />Start a Sellers' Cup</h3>
+                <p className="text-xs text-slate-500 mt-1">Every seller with a Discord seller role (Verified Seller, Ambassador, Lead Ambassador) takes part automatically: ${view.eligible ?? 0} right now.
+                    The seeding period starts the moment you press Start; sellers are seeded by orders completed on their own (ties: higher order value). Then head-to-head rounds, one after the other.</p>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+                <label className="block sm:col-span-2"><span className="label text-slate-500">Cup name</span><input className="input mt-1" maxLength="80" value=${form.name} onInput=${set('name')} /></label>
+                <label className="block"><span className="label text-slate-500">Seeding period (days)</span><input className="input mt-1" type="number" min="0.5" max="90" step="0.5" value=${form.seedingDays} onInput=${set('seedingDays')} /></label>
+                <label className="block"><span className="label text-slate-500">Each round (days)</span><input className="input mt-1" type="number" min="0.5" max="90" step="0.5" value=${form.roundDays} onInput=${set('roundDays')} /></label>
+                <label className="block"><span className="label text-slate-500">Bracket size (empty = every seller)</span><input className="input mt-1" type="number" min="2" max="256" placeholder="Everyone" value=${form.bracketSize} onInput=${set('bracketSize')} /></label>
+                <label className="block"><span className="label text-slate-500">Pairings</span>
+                    <select className="input mt-1" value=${form.pairing} onChange=${set('pairing')}>
+                        ${Object.entries(view.pairings || {}).map(([k, label]) => html`<option key=${k} value=${k}>${label}</option>`)}
+                    </select></label>
+                <label className="block sm:col-span-2"><span className="label text-slate-500">Discord channel ID for pairings and results</span>
+                    <input className="input mt-1" inputmode="numeric" placeholder="e.g. 1234567890123456789" value=${form.channelId} onInput=${set('channelId')} />
+                    <span className="block text-[11px] text-slate-500 mt-1">Right-click the channel → Copy Channel ID. The bot needs permission to post there. Empty = no Discord posts.</span></label>
+            </div>
+            <p className="text-xs text-slate-400">${field >= 2 ? `${field} sellers → ${Math.ceil(Math.log2(field))} round${Math.ceil(Math.log2(field)) === 1 ? '' : 's'}${field & (field - 1) ? ` (the top ${2 ** Math.ceil(Math.log2(field)) - field} seed${2 ** Math.ceil(Math.log2(field)) - field === 1 ? ' gets' : 's get'} a bye in round 1)` : ''}, about ${Math.round(Number(form.seedingDays) + Math.ceil(Math.log2(field)) * Number(form.roundDays))} days in total.` : 'At least 2 sellers are needed when seeding ends.'}</p>
+            <${Button} icon="trophy" busy=${busy} onClick=${async () => {
+                if (await ask({ title: `Start ${form.name}?`, confirmLabel: 'Start the Cup', message: `The seeding period starts now and the Cup is announced${form.channelId ? ' in the Cup channel, pinging every seller' : ''}.` })) {
+                    run({ action: 'cup-start', ...form, bracketSize: form.bracketSize || null }, 'The Cup has started!');
+                }
+            }}>Start the Cup<//>
+        </div>
+        ${cup && html`<div className="card !rounded-2xl md:!rounded-3xl p-4 md:p-5">
+            <p className="label text-slate-500 mb-1">Last Cup</p>
+            <h3 className="font-extrabold text-white mb-3">${cup.name}</h3>
+            <${CupDetails} view=${view} userId=${userId} />
+        </div>`}
+    </div>`;
+}
+
+// Admins' Sellers tab: the leaderboard, or the Cup.
+function SellersTab({ userId, onOpenOrder }) {
+    const [part, setPart] = useState('leaderboard');
+    return html`<section className="space-y-3">
+        <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start w-max">
+            ${[['leaderboard', 'Leaderboard', 'trophy'], ['cup', "Sellers' Cup", 'swords']].map(([k, label, icon]) => html`<button key=${k} onClick=${() => setPart(k)} aria-pressed=${part === k}
+                className=${`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${part === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}><${Icon} name=${icon} className="w-3.5 h-3.5" />${label}</button>`)}
+        </div>
+        ${part === 'cup' ? html`<${CupAdmin} userId=${userId} />` : html`<${SellerStats} userId=${userId} onOpenOrder=${onOpenOrder} />`}
+    </section>`;
 }
 
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
@@ -1815,12 +2039,12 @@ function RewardsCard({ data, run }) {
 }
 
 // Admin tools, one tap away on the desk's front page (instead of at the end of a scrolling tab bar).
-// Every seller: the theft reports (identify and warn culprits). Admins also get their tools next to it.
+// Every seller: the theft reports (identify and warn culprits) and the alliance statistics. Admins also get their tools.
 const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', get label() { return t('Theft reports'); }, get hint() { return t('Identify and warn culprits'); } };
+const ALLIANCES_TOOL = { tab: 'alliances', icon: 'chart-column', get label() { return t('Alliances'); }, get hint() { return t('Who orders the most'); } };
 // (The admin tools below stay in English, like the admin screens they open.)
 const ADMIN_TOOLS = [
-    { tab: 'team', icon: 'trophy', label: 'Sellers', hint: 'Leaderboard and stats' },
-    { tab: 'alliances', icon: 'chart-column', label: 'Alliances', hint: 'Who orders the most' },
+    { tab: 'team', icon: 'trophy', label: 'Sellers', hint: "Leaderboard, Sellers' Cup" },
     { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
     { tab: 'community', icon: 'sparkles', label: 'Community', hint: 'Rewards, notices, alert list' }
 ];
@@ -1842,8 +2066,8 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
 }
 
 function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
-    const tools = isAdmin ? [THEFT_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL];
-    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-1'}`}>
+    const tools = isAdmin ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL, ALLIANCES_TOOL];
+    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2'}`}>
         ${tools.map((tool) => {
             const hint = tool.tab === 'thefts' && theftHint ? theftHint : tool.hint;
             const alert = tool.tab === 'thefts' && theftHint;

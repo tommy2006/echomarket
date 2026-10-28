@@ -537,7 +537,8 @@ export const GUILD_IDS = env('DISCORD_GUILD_ID').split(',').map((x) => x.trim())
 export const MEMBERSHIP_CHECK = Boolean(BOT_TOKEN && GUILD_IDS.length);
 
 // Someone's standing in the Echo server, from ONE Discord lookup:
-//   { inGuild, rank: 'lead'|'ambassador'|'verified'|null, marketAdmin, marketBanned }
+//   { inGuild, rank: 'lead'|'ambassador'|'verified'|null, marketAdmin, marketBanned, timedOutUntil }
+// timedOutUntil: when a Discord timeout (e.g. from the Sapphire bot) ends, or null when not timed out.
 // null = couldn't tell (Discord down, bad token…). Never throws.
 export async function discordStanding(discordId) {
     if (!BOT_TOKEN || !discordId) return null;
@@ -548,7 +549,7 @@ export async function discordStanding(discordId) {
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
-        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false, roleTier: 0 };
+        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false, roleTier: 0, timedOutUntil: null };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -563,6 +564,8 @@ export async function discordStanding(discordId) {
                 if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
                 const roleTier = ROLE_IDS.tier2 && roles.includes(ROLE_IDS.tier2) ? 2 : ROLE_IDS.tier1 && roles.includes(ROLE_IDS.tier1) ? 1 : 0;
                 st.roleTier = Math.max(st.roleTier, roleTier);
+                const until = m.json.communication_disabled_until;
+                if (until && new Date(until).getTime() > Date.now() && (!st.timedOutUntil || until > st.timedOutUntil)) st.timedOutUntil = until;
             } else if (m.status === 404) {
                 known = true;   // not in this server
             }
@@ -586,8 +589,9 @@ export async function hasSellerRole(discordId) {
 }
 
 // =====================================================================
-//  Market access for buyers: member of the Echo server, and not market-banned (a ban record or the
-//  Market Banned role). Membership is re-checked with Discord at most every 10 minutes.
+//  Market access for buyers: member of the Echo server, not market-banned (a ban record or the
+//  Market Banned role) and not timed out on the server (Discord timeouts, given by the Sapphire bot).
+//  Membership is re-checked with Discord at most every 10 minutes.
 // =====================================================================
 const MEMBERSHIP_RECHECK_MINUTES = 10;
 export async function activeBan(discordId) {
@@ -598,12 +602,13 @@ export async function activeBan(discordId) {
     const now = Date.now();
     return (data || []).find((b) => !b.ends_at || new Date(b.ends_at).getTime() > now) || null;
 }
-// { inGuild, bannedRole, ban } — refreshes the stored membership when it's old (or when fresh = true).
+// { inGuild, bannedRole, ban, timedOutUntil } — refreshes the stored membership when it's old (or when fresh = true).
 export async function marketStanding(account, { fresh = false } = {}) {
     let inGuild = account.in_guild;
     let bannedRole = Boolean(account.market_banned_role);
     let booster = account.booster === true;
     let roleTier = Number(account.role_tier) || 0;
+    let timedOutUntil = account.timed_out_until || null;
     if (MEMBERSHIP_CHECK) {
         const age = account.guild_checked_at ? Date.now() - new Date(account.guild_checked_at).getTime() : Infinity;
         if (fresh || inGuild == null || age > MEMBERSHIP_RECHECK_MINUTES * 60e3) {
@@ -623,6 +628,11 @@ export async function marketStanding(account, { fresh = false } = {}) {
                 if ((Number(account.role_tier) || 0) !== roleTier && 'role_tier' in account) {
                     await admin().from('accounts').update({ role_tier: roleTier }).eq('id', account.id);
                 }
+                // Discord timeout (saved on its own too: an older database has no "timed_out_until" column).
+                if ((account.timed_out_until || null) !== st.timedOutUntil && 'timed_out_until' in account) {
+                    await admin().from('accounts').update({ timed_out_until: st.timedOutUntil }).eq('id', account.id);
+                }
+                timedOutUntil = st.timedOutUntil;
             } else if (inGuild == null) {
                 inGuild = true;   // Discord unreachable and never checked: don't lock people out
             }
@@ -638,7 +648,8 @@ export async function marketStanding(account, { fresh = false } = {}) {
         bannedRole = false;
         await admin().from('accounts').update({ market_banned_role: false }).eq('id', account.id);
     }
-    return { inGuild: inGuild !== false, bannedRole, ban, booster, roleTier };
+    if (timedOutUntil && new Date(timedOutUntil).getTime() <= Date.now()) timedOutUntil = null;   // ran out
+    return { inGuild: inGuild !== false, bannedRole, ban, booster, roleTier, timedOutUntil };
 }
 
 // =====================================================================
@@ -693,6 +704,10 @@ export async function requireMarketAccess(account) {
     if (!st.inGuild) throw new HttpError(403, 'Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.');
     if (st.ban) throw new HttpError(403, `You are banned from Echo Market ${banText(st.ban)}. Reason: ${st.ban.reason}`);
     if (st.bannedRole) throw new HttpError(403, 'You have the Market Banned role on the Echo Discord server, so you cannot use Echo Market.');
+    if (st.timedOutUntil) {
+        const ends = banText({ ends_at: st.timedOutUntil }).replace(/^until /, '');
+        throw new HttpError(403, `You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends (${ends}).`);
+    }
     return st;
 }
 

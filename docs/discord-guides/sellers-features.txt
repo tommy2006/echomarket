@@ -8,9 +8,13 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 - **Tour & welcome:** profile picture → *Show me around* replays the tour; *Seller welcome* replays the intro.
 - **Seller guide:** profile picture → *Seller guide* opens this list on the desk, with a search box.
 - **Language menu:** top bar; switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.
+- **Alliances tab:** which alliances order the most: rankings, popular aircraft, orders over time, outcomes, who supplies whom.
+- **Sellers' Cup:** while a Cup runs, a banner shows your seed or match score; *See the Cup* opens the bracket. Only orders you complete alone count.
 - **Greeting bar:** shows how many orders are waiting, the longest wait, and orders with new buyer messages (*Show these orders*).
 - **Live alerts:** new orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.
 - **New-order meow:** a soft meow when a new order comes in while the desk is open; profile picture → *Meow for new orders* turns it on/off.
+
+━━━━━━━━━━━━━━━━━━━━
 
 ## 📋 Order lists
 - **Tabs:** *Open queue*, *My orders*, *All orders*.
@@ -59,7 +63,7 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 - **Delete:** remove an order forever.
 - **Alert reasons:** see *why* a buyer is on the alert list on their CAUTION orders.
 - **Sellers tab:** leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.
-- **Alliances tab:** which alliances order the most: rankings, most popular aircraft, orders over time, order outcomes and who supplies whom.
+- **Sellers tab → Sellers' Cup:** start a knockout Cup (name, seeding, round length, bracket size, pairings, channel); cancel it or disqualify a seller.
 - **Moderation → Market ban:** ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).
 - **Moderation → Lift ban:** end a ban early.
 - **Moderation → Send message:** an *Information* or *Warning* message to anyone by Discord ID (market notice + DM; warnings are logged).

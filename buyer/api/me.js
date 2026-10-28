@@ -1,7 +1,7 @@
 // POST /api/me — may the signed-in person use the market right now?
 // Called by the buyer site when it opens. Re-checks Echo server membership with Discord (and the
 // Market Banned role, server boosting and the Tier 1 / Tier 2 roles), and looks up market bans and the daily budget. Returns:
-//   { ok, inGuild, membershipCheck, ban: { reason, duration, ends_at } | null, bannedRole,
+//   { ok, inGuild, membershipCheck, ban: { reason, duration, ends_at } | null, bannedRole, timedOutUntil,
 //     budget: { tier, limit, source, expiresAt, key, celebrate }, welcomeDone }
 // { action: 'budget-seen', key }: the buyer saw the "thank you" for this reward (shown once per reward).
 // { action: 'welcome-done', answers }: the buyer finished the "Cleared for takeoff" welcome (welcome.html).
@@ -37,6 +37,7 @@ export default handler(['POST'], async (req, res) => {
         inGuild: st.inGuild,
         membershipCheck: MEMBERSHIP_CHECK,
         bannedRole: st.bannedRole,
+        timedOutUntil: st.timedOutUntil,   // a Discord timeout on the Echo server: no market until it ends
         ban: st.ban ? { reason: st.ban.reason, duration: st.ban.duration, ends_at: st.ban.ends_at, starts_at: st.ban.starts_at } : null,
         // celebrate: a new reward (or boosting) the buyer hasn't been thanked for yet. Never the admins' reason.
         budget: { ...budget, celebrate: Boolean(budget.key && 'budget_seen_key' in account && budget.key !== account.budget_seen_key) },
