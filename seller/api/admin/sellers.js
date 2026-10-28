@@ -1,7 +1,8 @@
 // POST /api/admin/sellers — seller performance, for admins only.
-// Body: { days, sellerId }
+// Body: { days, sellerId, view }
 //   days      7, 30, 90 or 0 (= all time)
 //   sellerId  optional: one seller's details, plus every order they took in the period
+//   view      'alliances': alliance statistics instead (lib/alliance-stats.js)
 //
 // Worked out from the order timeline (order_events), so it can be limited to a period:
 //   ordersTaken   times the seller took an order (CLAIMED)
@@ -10,6 +11,7 @@
 //                 delivered total, so the increase since the previous update is what that seller sold
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
+import { allianceStats } from '../../lib/alliance-stats.js';
 import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, RANKS, HttpError } from '../../lib/server.js';
 
 // Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
@@ -57,6 +59,7 @@ export default handler(['POST'], async (req, res) => {
 
     const input = body(req);
     const days = [7, 30, 90].includes(Number(input.days)) ? Number(input.days) : 0;
+    if (input.view === 'alliances') return res.json(await allianceStats(days));
     const one = typeof input.sellerId === 'string' && /^[0-9a-f-]{36}$/i.test(input.sellerId) ? input.sellerId : null;
     const since = days ? Date.now() - days * 864e5 : 0;
     const db = admin();

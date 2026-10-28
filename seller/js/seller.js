@@ -11,7 +11,8 @@ import {
     orderListValue, orderHelpers, deliveryShares, SellerShares, takeoverIn, TAKEOVER_HOURS, GuidedTour,
     t, tj, tx, useLang, LanguageMenu, greetingLine, setLang, savedLang
 } from './ui.js';
-// Languages: the seller screens follow the language menu; admin-only screens (Sellers, Moderation, Community)
+import { GUIDE } from './guide.js';
+// Languages: the seller screens follow the language menu; admin-only screens (Sellers, Alliances, Moderation, Community)
 // stay in English, like the Echo Alliances site's admin pages.
 
 // "Helping": this seller joined the order (take over) without being its main seller.
@@ -486,8 +487,9 @@ function App() {
         mine: { label: t('My orders'), icon: 'briefcase', fn: (o) => (o.seller_id === userId || isHelping(o, userId)) && ['CLAIMED', 'PARTIAL'].includes(o.status) },
         all: { label: t('All orders'), icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         thefts: { label: t('Theft reports'), icon: 'shield-alert', fn: () => false },   // every seller
-        // Admins only: seller performance (the API refuses everyone else too).
+        // Admins only: seller performance and alliance statistics (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
+                                alliances: { label: 'Alliances', icon: 'chart-column', fn: () => false },
                                 mod: { label: 'Moderation', icon: 'shield', fn: () => false },
                                 community: { label: 'Community', icon: 'sparkles', fn: () => false } } : {})
     };
@@ -588,6 +590,7 @@ function App() {
             : tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellerStats} userId=${userId} onOpenOrder=${openDetail} />`
+            : tab === 'alliances' && seller.is_admin ? html`<${AllianceStats} />`
             : loading ? html`<${EchoLoader} className="py-16" />`
             : !list.length ? html`<${EmptyState} icon=${tab === 'open' ? 'party-popper' : 'inbox'}
                 title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
@@ -847,6 +850,297 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
     <//>`;
 }
 
+// ---------------- Alliances tab (admins only): which alliances order the most, from /api/admin/sellers { view: 'alliances' }.
+// Colours (checked for colour blindness on the desk's dark cards): one blue for single-series bars; outcomes in the
+// fixed order completed (green) | in progress (blue) | declined or cancelled (red), so green and red never touch;
+// "who supplies whom" uses one blue ramp, darker = fewer aircraft.
+const VIZ = { bar: '#3987e5', done: '#0ca30c', active: '#3987e5', closed: '#d03b3b' };
+const HEAT = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb'];
+const pct = (n, d) => (d ? Math.round(n / d * 100) : 0);
+const fmtHours = (h) => (h == null ? '—' : h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)} h` : `${Math.round(h / 24)} d`);
+const ALLIANCE_METRICS = [
+    { key: 'orders', label: 'Orders', about: 'Orders placed by buyers in the alliance.', fmt: (v) => String(v) },
+    { key: 'aircraft', label: 'Aircraft', about: 'Aircraft ordered.', fmt: (v) => String(v) },
+    { key: 'value', label: 'Value', about: 'What the buyers pay for their orders (at their price level).', fmt: (v) => fmtUSDShort(v) },
+    { key: 'buyers', label: 'Buyers', about: 'Different buyers who ordered.', fmt: (v) => String(v) },
+    { key: 'avgSize', label: 'Order size', about: 'Average aircraft per order.', fmt: (v) => v.toFixed(1) },
+    { key: 'priceLevel', label: 'Price level', about: 'Average price level, weighted by aircraft.', fmt: (v) => `${v}%` },
+    { key: 'completion', label: 'Completed', about: 'Share of orders fully delivered.', fmt: (v) => `${v}%` },
+    { key: 'waitHours', label: 'Wait', about: 'Median time until a seller first took an order (shortest first).', fmt: fmtHours, ascending: true }
+];
+const metricValue = (a, key) => key === 'avgSize' ? (a.orders ? a.aircraft / a.orders : null)
+    : key === 'completion' ? (a.orders ? pct(a.completed, a.orders) : null) : a[key];
+const sortByMetric = (key) => {
+    const ascending = ALLIANCE_METRICS.find((x) => x.key === key)?.ascending;
+    return (x, y) => {
+        const vx = metricValue(x, key), vy = metricValue(y, key);
+        return (vx == null) - (vy == null) || (ascending ? vx - vy : vy - vx) || y.orders - x.orders || x.name.localeCompare(y.name);
+    };
+};
+const bucketLabel = (iso, bucketDays) => (bucketDays === 1 ? '' : 'week of ') +
+    new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+// Hover (and focus / tap) tooltip shared by the charts.
+function useChartTip() {
+    const [tip, setTip] = useState(null);
+    useEffect(() => {
+        if (!tip) return;
+        const hide = () => setTip(null);
+        window.addEventListener('scroll', hide, true);
+        return () => window.removeEventListener('scroll', hide, true);
+    }, [tip]);
+    const bind = (content, { tap = true } = {}) => ({
+        tabIndex: 0,
+        onMouseMove: (e) => setTip({ x: e.clientX, y: e.clientY, content }),
+        onMouseLeave: () => setTip(null),
+        onFocus: (e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ x: r.left + r.width / 2, y: r.top, content }); },
+        onBlur: () => setTip(null),
+        ...(tap ? { onClick: (e) => setTip({ x: e.clientX, y: e.clientY, content }) } : {})
+    });
+    const below = tip && tip.y < 140;
+    const node = tip && ReactDOM.createPortal(html`<div role="tooltip"
+        className="fixed z-[70] pointer-events-none w-max max-w-[16rem] px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 shadow-2xl text-xs text-slate-200"
+        style=${{ left: Math.min(window.innerWidth - 136, Math.max(136, tip.x)), top: below ? tip.y + 18 : tip.y - 12,
+            transform: below ? 'translate(-50%, 0)' : 'translate(-50%, -100%)' }}>${tip.content}</div>`, document.body);
+    return [bind, node];
+}
+const TipRows = ({ title, rows }) => html`<p className="font-bold text-white mb-1">${title}</p>
+    ${rows.map(([k, v]) => html`<p key=${k} className="flex justify-between gap-4"><span className="text-slate-400">${k}</span><span className="tabular-nums">${v}</span></p>`)}`;
+const allianceTip = (a) => html`<${TipRows} title=${a.name} rows=${[
+    ['Orders', a.orders], ['Aircraft', `${a.aircraft} (${a.delivered} delivered)`], ['Value', fmtUSDShort(a.value)], ['Buyers', a.buyers],
+    ['Price level', a.priceLevel == null ? '—' : `${a.priceLevel}%`], ['Completed', `${pct(a.completed, a.orders)}%`], ['Median wait', fmtHours(a.waitHours)]]} />`;
+
+function VizCard({ title, about, children }) {
+    return html`<section className="card !rounded-2xl md:!rounded-3xl p-3 md:p-5 min-w-0">
+        <h3 className="font-extrabold text-white">${title}</h3>
+        ${about && html`<p className="text-[11px] text-slate-500 mt-0.5">${about}</p>`}
+        <div className="mt-3">${children}</div>
+    </section>`;
+}
+
+// Columns over time (one per day or week), on a given scale.
+function MiniColumns({ series, max, height = 'h-12', tipFor, bind }) {
+    return html`<div className=${`${height} flex items-end gap-px border-b border-slate-700`}>
+        ${series.map((n, i) => html`<span key=${i} ...${bind(tipFor(n, i))} className="flex-1 h-full flex items-end outline-none hover:bg-slate-800/60 focus-visible:bg-slate-800/60">
+            <span className="w-full rounded-t-sm" style=${{ height: n ? `max(${(n / max * 100).toFixed(1)}%, 2px)` : 0, backgroundColor: VIZ.bar }}></span>
+        </span>`)}
+    </div>`;
+}
+
+function AllianceStats() {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    const [metric, setMetric] = useState('orders');
+    const [sortBy, setSortBy] = useState('orders');
+    const [picked, setPicked] = useState(null);
+    const [bind, tipNode] = useChartTip();
+    useEffect(() => {
+        let gone = false;
+        setData(null); setError(null);
+        api('/api/admin/sellers', { view: 'alliances', days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
+        return () => { gone = true; };
+    }, [days]);
+
+    const header = html`<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+            <h2 className="text-lg font-extrabold text-white">Alliance statistics</h2>
+            <p className="text-xs text-slate-500">Only admins can see this. Hover or tap a chart for details; click an alliance for more.</p>
+        </div>
+        <${PeriodPicker} days=${days} setDays=${setDays} />
+    </div>`;
+    if (error) return html`<section className="space-y-3">${header}<div className="card p-5 text-sm text-rose-300">${error}</div></section>`;
+    if (!data) return html`<section className="space-y-3">${header}<${EchoLoader} className="py-16" /></section>`;
+    const list = data.alliances;
+    if (!list.length) return html`<section className="space-y-3">${header}
+        <${EmptyState} icon="chart-column" title="No orders yet" text=${`No orders were placed ${periodText(days)}.`} /></section>`;
+
+    const m = ALLIANCE_METRICS.find((x) => x.key === metric);
+    const ranked = [...list].sort(sortByMetric(metric));
+    const maxV = Math.max(...ranked.map((a) => metricValue(a, metric) || 0)) || 1;
+    const top = list[0];
+    const { totals, bucketStarts, bucketDays, trade } = data;
+    const per = bucketDays === 1 ? 'day' : 'week';
+
+    // Orders over time: one small chart per alliance (the busiest six, the rest together), all on one scale.
+    const multiples = list.length > 7
+        ? [...list.slice(0, 6), { name: `Other alliances (${list.length - 6})`, orders: list.slice(6).reduce((s, a) => s + a.orders, 0),
+            series: list.slice(6).reduce((s, a) => s.map((n, i) => n + a.series[i]), new Array(bucketStarts.length).fill(0)) }]
+        : list;
+    const seriesMax = Math.max(1, ...multiples.flatMap((a) => a.series));
+
+    // Who supplies whom: buyer alliances (rows) × seller alliances (columns), aircraft delivered.
+    const sellerTotals = new Map();
+    for (const c of trade) sellerTotals.set(c.seller, (sellerTotals.get(c.seller) || 0) + c.aircraft);
+    const sellerCols = [...sellerTotals].sort((x, y) => y[1] - x[1]).map(([name]) => name);
+    const tradeRows = list.filter((a) => trade.some((c) => c.buyer === a.name));
+    const cell = (buyer, seller) => trade.find((c) => c.buyer === buyer && c.seller === seller)?.aircraft || 0;
+    const tradeMax = Math.max(1, ...trade.map((c) => c.aircraft));
+    const heatStep = (v) => Math.min(HEAT.length - 1, Math.floor(Math.sqrt(v / tradeMax) * HEAT.length));
+
+    const outcomes = [['done', 'Completed'], ['active', 'Waiting or in delivery'], ['closed', 'Declined or cancelled']];
+    const outcomeCount = (a, k) => (k === 'done' ? a.completed : k === 'active' ? a.active : a.declined + a.cancelled);
+
+    return html`<section className="space-y-3">
+        ${header}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
+            <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4 min-w-0">
+                <p className="text-[11px] font-bold text-slate-500">Most orders · ${periodText(days)}</p>
+                <p className="text-xl md:text-2xl font-black text-white mt-1 truncate">${top.name}</p>
+                <p className="text-[11px] text-slate-500">${plural(top.orders, 'order')} · ${pct(top.orders, totals.orders)}% of all</p>
+            </div>
+            <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
+                <p className="text-[11px] font-bold text-slate-500">Orders</p>
+                <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${totals.orders}</p>
+                <p className="text-[11px] text-slate-500">${pct(totals.completed, totals.orders)}% completed · ${plural(list.length, 'alliance')}</p>
+            </div>
+            <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
+                <p className="text-[11px] font-bold text-slate-500">Aircraft ordered</p>
+                <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${totals.aircraft}</p>
+                <p className="text-[11px] text-slate-500">${totals.delivered} delivered so far</p>
+            </div>
+            <div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4">
+                <p className="text-[11px] font-bold text-slate-500">Order value</p>
+                <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums">${fmtUSDShort(totals.value)}</p>
+                <p className="text-[11px] text-slate-500">from ${plural(totals.buyers, 'buyer')}</p>
+            </div>
+        </div>
+
+        <${VizCard} title=${`Ranking · ${m.label}`} about=${m.about}>
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 mb-3" role="group" aria-label="Rank by">
+                ${ALLIANCE_METRICS.map((x) => html`<button key=${x.key} onClick=${() => setMetric(x.key)} aria-pressed=${metric === x.key}
+                    className=${`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border ${metric === x.key ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-400 hover:text-white'}`}>${x.label}</button>`)}
+            </div>
+            <ol className="space-y-0.5">${ranked.map((a, i) => {
+                const v = metricValue(a, metric);
+                return html`<li key=${a.name}>
+                    <button ...${bind(allianceTip(a), { tap: false })} onClick=${() => setPicked(a)}
+                        className="w-full grid grid-cols-[1.25rem_minmax(0,6.5rem)_1fr_auto] sm:grid-cols-[1.5rem_minmax(0,10rem)_1fr_auto] items-center gap-2 py-1 rounded-lg hover:bg-slate-800/40 text-left">
+                        <span className="text-xs font-black text-slate-500 tabular-nums text-center">${i + 1}</span>
+                        <span className="text-sm text-slate-200 truncate">${a.name}</span>
+                        <span className="h-4 flex items-center min-w-0">${v == null ? html`<span className="text-[11px] text-slate-600">no data</span>`
+                            : html`<span className="h-3 rounded-r" style=${{ width: `max(${(v / maxV * 100).toFixed(1)}%, 3px)`, backgroundColor: VIZ.bar }}></span>`}</span>
+                        <span className="text-sm font-bold text-white tabular-nums text-right min-w-[3.5rem]">${v == null ? '—' : m.fmt(v)}</span>
+                    </button>
+                </li>`;
+            })}</ol>
+        <//>
+
+        <div className="grid lg:grid-cols-2 gap-3">
+            <${VizCard} title="Orders over time" about=${`Orders placed per ${per}. Every chart uses the same scale, so heights compare.`}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                    ${multiples.map((a) => html`<div key=${a.name} className="min-w-0">
+                        <p className="flex justify-between gap-2 text-xs mb-1"><span className="text-slate-200 font-bold truncate">${a.name}</span><span className="text-slate-500 tabular-nums shrink-0">${a.orders}</span></p>
+                        <${MiniColumns} series=${a.series} max=${seriesMax} bind=${bind}
+                            tipFor=${(n, i) => html`<${TipRows} title=${a.name} rows=${[[bucketLabel(bucketStarts[i], bucketDays), plural(n, 'order')]]} />`} />
+                    </div>`)}
+                </div>
+                <p className="flex justify-between text-[10px] text-slate-500 mt-2"><span>${bucketLabel(bucketStarts[0], bucketDays)}</span><span>now</span></p>
+            <//>
+
+            <${VizCard} title="Order outcomes" about="How each alliance's orders stand so far.">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 mb-3">
+                    ${outcomes.map(([k, label]) => html`<span key=${k} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style=${{ backgroundColor: VIZ[k] }}></span>${label}</span>`)}
+                </div>
+                <ul className="space-y-2">${list.slice(0, 12).map((a) => html`<li key=${a.name} className="grid grid-cols-[minmax(0,6rem)_1fr] sm:grid-cols-[minmax(0,8rem)_1fr] items-center gap-2">
+                    <span className="text-xs text-slate-200 truncate">${a.name}</span>
+                    <span className="flex h-5 gap-0.5 min-w-0">${outcomes.filter(([k]) => outcomeCount(a, k) > 0).map(([k, label]) => {
+                        const n = outcomeCount(a, k);
+                        return html`<span key=${k} ...${bind(html`<${TipRows} title=${a.name} rows=${[[label, `${n} of ${a.orders} (${pct(n, a.orders)}%)`]]} />`)}
+                            className="first:rounded-l last:rounded-r flex items-center justify-center text-[10px] font-bold text-white overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-white"
+                            style=${{ flexGrow: n, flexBasis: 0, backgroundColor: VIZ[k] }}>${pct(n, a.orders) >= 15 ? `${pct(n, a.orders)}%` : ''}</span>`;
+                    })}</span>
+                </li>`)}</ul>
+                ${list.length > 12 && html`<p className="text-[11px] text-slate-500 mt-2">The 12 alliances with the most orders; the table below has them all.</p>`}
+            <//>
+        </div>
+
+        <${VizCard} title="Who supplies whom" about="Aircraft delivered by sellers from each alliance (columns) to buyers in each alliance (rows). Brighter = more aircraft.">
+            ${!sellerCols.length ? html`<p className="text-sm text-slate-400">No aircraft delivered on these orders yet.</p>`
+            : html`<div className="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
+                <table className="text-xs border-separate [border-spacing:2px]">
+                    <thead><tr>
+                        <th className="text-left text-[10px] font-bold text-slate-500 pr-2 align-bottom whitespace-nowrap">Buyers ↓ · Sellers →</th>
+                        ${sellerCols.map((name) => html`<th key=${name} scope="col" className="text-[10px] font-bold text-slate-400 px-1 align-bottom max-w-[5.5rem] truncate" title=${name}>${name}</th>`)}
+                    </tr></thead>
+                    <tbody>${tradeRows.map((a) => html`<tr key=${a.name}>
+                        <th scope="row" className="text-left font-medium text-slate-200 pr-2 max-w-[8rem] truncate" title=${a.name}>${a.name}</th>
+                        ${sellerCols.map((name) => {
+                            const v = cell(a.name, name);
+                            const step = heatStep(v);
+                            return html`<td key=${name} ...${bind(html`<${TipRows} title=${`${name} sellers → ${a.name} buyers`} rows=${[['Aircraft delivered', v], [`Share of ${a.name}'s deliveries`, `${pct(v, a.delivered)}%`]]} />`)}
+                                className="h-9 min-w-[3.5rem] rounded text-center tabular-nums font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+                                style=${v ? { backgroundColor: HEAT[step], color: step >= 4 ? '#020617' : '#ffffff' } : { backgroundColor: '#1e293b', color: '#475569' }}>${v || '·'}</td>`;
+                        })}
+                    </tr>`)}</tbody>
+                </table>
+            </div>
+            <div className="flex items-center gap-2 mt-3 text-[10px] text-slate-500">
+                <span>fewer</span>
+                <span className="flex gap-0.5">${HEAT.map((c) => html`<span key=${c} className="w-5 h-2.5 rounded-sm" style=${{ backgroundColor: c }}></span>`)}</span>
+                <span>more aircraft (most in one cell: ${tradeMax})</span>
+            </div>`}
+        <//>
+
+        <${VizCard} title="All alliances" about="Click a column to sort, or an alliance for its details.">
+            <div className="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
+                <table className="w-full text-xs">
+                    <thead><tr className="text-slate-500 border-b border-slate-800">
+                        <th className="text-left font-bold py-2 pr-3">Alliance</th>
+                        ${ALLIANCE_METRICS.map((x) => html`<th key=${x.key} className="text-right font-bold py-2 px-2 whitespace-nowrap" aria-sort=${sortBy === x.key ? (x.ascending ? 'ascending' : 'descending') : 'none'}>
+                            <button onClick=${() => setSortBy(x.key)} className=${sortBy === x.key ? 'text-white' : 'hover:text-white'}>${x.label}${sortBy === x.key ? (x.ascending ? ' ↑' : ' ↓') : ''}</button></th>`)}
+                    </tr></thead>
+                    <tbody>${[...list].sort(sortByMetric(sortBy)).map((a) => html`<tr key=${a.name} className="border-b border-slate-800/60 hover:bg-slate-800/40">
+                        <td className="py-2 pr-3"><button onClick=${() => setPicked(a)} className="font-bold text-slate-200 hover:text-white text-left">${a.name}</button></td>
+                        ${ALLIANCE_METRICS.map((x) => { const v = metricValue(a, x.key); return html`<td key=${x.key} className="text-right tabular-nums text-slate-300 px-2 whitespace-nowrap">${v == null ? '—' : x.fmt(v)}</td>`; })}
+                    </tr>`)}</tbody>
+                </table>
+            </div>
+        <//>
+        <p className="text-[11px] text-slate-500">An order counts for the alliance of the buyer's (first) delivery airline, and for the period in which it was placed. Value is what buyers pay at their price level. Wait is the median time from placing an order until a seller first took it. Orders without a known alliance are under “No alliance”.</p>
+        ${tipNode}
+        ${picked && html`<${AllianceDetailModal} alliance=${picked} data=${data} days=${days} onClose=${() => setPicked(null)} />`}
+    </section>`;
+}
+
+// One alliance: its numbers, its orders over time, what it orders and who delivers to it.
+function AllianceDetailModal({ alliance: a, data, days, onClose }) {
+    const [bind, tipNode] = useChartTip();
+    const suppliers = data.trade.filter((c) => c.buyer === a.name).sort((x, y) => y.aircraft - x.aircraft);
+    const tiles = [['Orders', a.orders], ['Aircraft', a.aircraft], ['Value', fmtUSDShort(a.value)], ['Buyers', a.buyers],
+        ['Price level', a.priceLevel == null ? '—' : `${a.priceLevel}%`], ['Median wait', fmtHours(a.waitHours)]];
+    const bars = (rows) => {
+        const max = Math.max(1, ...rows.map((r) => r[1]));
+        return html`<ul className="space-y-1.5">${rows.map(([label, n]) => html`<li key=${label} className="grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-2 text-xs">
+            <span className="text-slate-200 truncate">${label}</span>
+            <span className="h-3 flex items-center min-w-0"><span className="h-full rounded-r" style=${{ width: `max(${(n / max * 100).toFixed(1)}%, 3px)`, backgroundColor: VIZ.bar }}></span></span>
+            <span className="font-bold text-white tabular-nums">${n}</span>
+        </li>`)}</ul>`;
+    };
+    return html`<${Modal} open=${true} onClose=${onClose} title=${a.name} subtitle=${`Alliance · ${periodText(days)}`} size="lg">
+        <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-2 text-center">${tiles.map(([k, v]) => html`<div key=${k} className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+                <p className="text-lg md:text-xl font-black text-white tabular-nums">${v}</p><p className="text-[10px] font-bold text-slate-500">${k}</p></div>`)}</div>
+            <div>
+                <p className="label text-slate-500 mb-2">Orders per ${data.bucketDays === 1 ? 'day' : 'week'}</p>
+                <${MiniColumns} series=${a.series} max=${Math.max(1, ...a.series)} height="h-24" bind=${bind}
+                    tipFor=${(n, i) => html`<${TipRows} title=${bucketLabel(data.bucketStarts[i], data.bucketDays)} rows=${[['Orders', n]]} />`} />
+                <p className="flex justify-between text-[10px] text-slate-500 mt-1"><span>${bucketLabel(data.bucketStarts[0], data.bucketDays)}</span><span>now</span></p>
+            </div>
+            <div>
+                <p className="label text-slate-500 mb-2">Most-ordered aircraft</p>
+                ${bars(a.topAircraft.map((x) => [x.model, x.qty]))}
+            </div>
+            <div>
+                <p className="label text-slate-500 mb-2">Delivered by sellers from</p>
+                ${suppliers.length ? bars(suppliers.map((c) => [c.seller, c.aircraft])) : html`<p className="text-sm text-slate-400">Nothing delivered yet.</p>`}
+            </div>
+            <p className="text-[11px] text-slate-500">${a.completed} completed · ${a.active} waiting or in delivery · ${a.declined} declined · ${a.cancelled} cancelled · ${a.delivered} of ${a.aircraft} aircraft delivered.</p>
+        </div>
+        ${tipNode}
+    <//>`;
+}
+
 // Same local-time greeting as the buyer site, with a one-line summary of the queue.
 function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnread }) {
     const date = new Date(now);
@@ -869,6 +1163,7 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnre
 // Profile picture → small menu. Signing out needs this extra tap, so it can't happen by accident.
 function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
     const [open, setOpen] = useState(false);
+    const [guideOpen, setGuideOpen] = useState(false);
     const signOut = async () => {
         setOpen(false);
         if (await ask({ title: t('Sign out of the seller desk?'), confirmLabel: t('Sign out'), message: t("You'll need to sign in with Discord again to take orders.") })) sb.auth.signOut();
@@ -896,10 +1191,45 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
             </label>`}
             <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> ${t('Open the market')}</a>
             <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
+            <button onClick=${() => { setOpen(false); setGuideOpen(true); }} className="menu-item w-full"><${Icon} name="book-open" /> ${t('Seller guide')}</button>
             <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Seller welcome')}</a>
             <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
         </div>`}
+        <${SellerGuide} open=${guideOpen} onClose=${() => setGuideOpen(false)} isAdmin=${Boolean(seller?.is_admin)} />
     </div>`;
+}
+
+// Every desk feature, one line each (seller/js/guide.js), with a search box. Admin tools only for admins.
+function SellerGuide({ open, onClose, isAdmin }) {
+    useLang();
+    const [query, setQuery] = useState('');
+    const q = query.trim().toLowerCase();
+    const sections = GUIDE.filter((s) => isAdmin || !s.admin)
+        .map((s) => ({ ...s, items: s.items.filter(([name, text]) => !q || `${name} ${text}`.toLowerCase().includes(q)) }))
+        .filter((s) => s.items.length);
+    const note = t('The seller guide is shown in English.');
+    return html`<${Modal} open=${open} onClose=${() => { setQuery(''); onClose(); }} title=${t('Seller guide')} subtitle=${t('Every seller desk feature, one line each.')} size="lg">
+        <div className="space-y-4">
+            ${note !== 'The seller guide is shown in English.' && html`<p className="text-xs text-slate-400 flex items-center gap-1.5"><${Icon} name="languages" className="w-3.5 h-3.5 shrink-0" /> ${note}</p>`}
+            <label className="relative block">
+                <span className="sr-only">${t('Search the guide')}</span>
+                <${Icon} name="search" className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input type="search" value=${query} onInput=${(e) => setQuery(e.target.value)} placeholder=${t('Search the guide')} className="input !pl-9" />
+            </label>
+            ${!sections.length ? html`<p className="text-sm text-slate-400 py-6 text-center">${t('Nothing in the guide matches your search.')}</p>`
+            : sections.map((s) => html`<section key=${s.title} lang="en">
+                <h3 className="flex items-center gap-2 text-sm font-extrabold text-white mb-1.5">
+                    <span className="w-7 h-7 rounded-lg bg-sky-400/10 text-sky-300 flex items-center justify-center shrink-0"><${Icon} name=${s.icon} className="w-4 h-4" /></span>${s.title}</h3>
+                ${s.note && html`<p className="text-[11px] text-slate-500 mb-1.5">${s.note}</p>`}
+                <ul className="space-y-1.5 text-sm">
+                    ${s.items.map(([name, text]) => html`<li key=${name} className="flex gap-2 text-slate-300">
+                        <span className="text-slate-600 shrink-0" aria-hidden="true">•</span>
+                        <span><span className="font-bold text-white">${name}:</span> ${text}</span>
+                    </li>`)}
+                </ul>
+            </section>`)}
+        </div>
+    <//>`;
 }
 
 // The buyer airline's name, as a link to the buyer's Discord info.
@@ -1415,6 +1745,7 @@ const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', get label() { return t
 // (The admin tools below stay in English, like the admin screens they open.)
 const ADMIN_TOOLS = [
     { tab: 'team', icon: 'trophy', label: 'Sellers', hint: 'Leaderboard and stats' },
+    { tab: 'alliances', icon: 'chart-column', label: 'Alliances', hint: 'Who orders the most' },
     { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
     { tab: 'community', icon: 'sparkles', label: 'Community', hint: 'Rewards, notices, alert list' }
 ];
@@ -1437,7 +1768,7 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
 
 function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
     const tools = isAdmin ? [THEFT_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL];
-    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
+    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-1'}`}>
         ${tools.map((tool) => {
             const hint = tool.tab === 'thefts' && theftHint ? theftHint : tool.hint;
             const alert = tool.tab === 'thefts' && theftHint;
