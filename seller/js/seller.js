@@ -74,53 +74,37 @@ const PAGE_SIZES = [5, 10, 25, 50, 'all'];
 const LS_ORDER_VIEW = 'echo_seller_order_view_v1';
 const LS_MEOW = 'echo_seller_meow_v1';   // false = no sound for new orders
 
-// A soft "meow" when a new order comes in while the desk is open. Made with the Web Audio API (no sound file):
-// a buzzy tone through a vowel-like filter that opens and closes ("m-e-ow") while the pitch rises and falls.
+// A soft "meow" when a new order comes in while the desk is open: sounds/meow.mp3, the first meow of
+// visuals/meow.m4a, trimmed, with the background noise removed (ffmpeg afftdn + gate) and the volume evened out.
 // Browsers only allow sound after the page has been clicked or tapped once, so the audio starts on the first tap.
 let meowCtx = null;
+let meowSound = null;   // the decoded clip (a promise until it has loaded)
 let lastMeow = 0;
 function audio() {
     if (!meowCtx) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return null;
         meowCtx = new Ctx();
+        meowSound = fetch('/sounds/meow.mp3').then((r) => r.arrayBuffer()).then((b) => meowCtx.decodeAudioData(b))
+            .then((buf) => (meowSound = buf)).catch(() => (meowSound = null));
     }
     if (meowCtx.state === 'suspended') meowCtx.resume().catch(() => {});
     return meowCtx;
 }
 ['pointerdown', 'keydown'].forEach((type) => window.addEventListener(type, () => { if (store.get(LS_MEOW, true)) audio(); }, { once: true, capture: true }));
-function playMeow() {
+async function playMeow() {
     if (!store.get(LS_MEOW, true) || Date.now() - lastMeow < 3000) return;   // several orders at once: one meow
     const ctx = audio();
     if (!ctx || ctx.state !== 'running') return;
     lastMeow = Date.now();
-    const t0 = ctx.currentTime + 0.02, end = t0 + 0.7;
-    const voice = ctx.createOscillator();
-    voice.type = 'sawtooth';
-    voice.frequency.setValueAtTime(460, t0);
-    voice.frequency.linearRampToValueAtTime(720, t0 + 0.2);
-    voice.frequency.exponentialRampToValueAtTime(400, end);
-    const wobble = ctx.createOscillator();   // a little vibrato
-    const wobbleDepth = ctx.createGain();
-    wobble.frequency.value = 7;
-    wobbleDepth.gain.value = 9;
-    wobble.connect(wobbleDepth).connect(voice.frequency);
-    const vowel = ctx.createBiquadFilter();   // "m" (closed) → "e" (bright) → "ow" (round)
-    vowel.type = 'bandpass';
-    vowel.Q.value = 4;
-    vowel.frequency.setValueAtTime(500, t0);
-    vowel.frequency.linearRampToValueAtTime(1700, t0 + 0.18);
-    vowel.frequency.exponentialRampToValueAtTime(650, end);
-    const soften = ctx.createBiquadFilter();
-    soften.type = 'lowpass';
-    soften.frequency.value = 2600;
+    const buf = await meowSound;
+    if (!buf) return;
+    const source = ctx.createBufferSource();
     const volume = ctx.createGain();
-    volume.gain.setValueAtTime(0.0001, t0);
-    volume.gain.exponentialRampToValueAtTime(0.22, t0 + 0.08);
-    volume.gain.setValueAtTime(0.22, t0 + 0.3);
-    volume.gain.exponentialRampToValueAtTime(0.0001, end);
-    voice.connect(vowel).connect(soften).connect(volume).connect(ctx.destination);
-    [voice, wobble].forEach((o) => { o.start(t0); o.stop(end + 0.05); });
+    source.buffer = buf;
+    volume.gain.value = 0.7;
+    source.connect(volume).connect(ctx.destination);
+    source.start();
 }
 const ORDER_TABS = ['open', 'mine', 'all'];
 const NO_FILTERS = { alliance: '', types: '', qtyMin: '', qtyMax: '', listMin: '', listMax: '', mineOnly: false, unreadOnly: false };
