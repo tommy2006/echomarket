@@ -32,7 +32,7 @@ check **who bought each listing in-game before claiming the sale money**, so wro
 - A dark hangar at night: polished concrete floor with reflections, steel roof trusses, big hangar doors open to a
   starry apron, display stands with spotlights, small price tags and order tickets.
 - **One division colour per page**, in this order (9 pages: the opening + eight objects):
-  `#7d34ff`, `#d3ff4a`, `#e76fff`, `#82fdff`, `#ff7b3e`, `#5eff94`, `#7f9ff2`, `#eba09d`, `#fdecd8`.
+  `#7d34ff`, `#ff456a`, `#e76fff`, `#81fbfe`, `#ff7b3e`, `#5eff94`, `#7f9ff2`, `#eba09d`, `#fdecd8`, `#fae246`.
   The colour drives spotlights, the object's rim light, labels, buttons and progress. Dark button text on light colours.
 - **Transitions:** Kibori's fire becomes **jet-exhaust glow**: a hot engine-glow and heat-shimmer wipe that carries the
   next page's division colour across the screen (the same right-to-left direction as the Echo loader).

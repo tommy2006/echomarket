@@ -21,7 +21,8 @@ const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (id) => document.getElementById(id);
 
 // One alliance division colour per chapter (00 to 07); the 9th is for the takeoff itself.
-const COLOURS = ['#7d34ff', '#d3ff4a', '#e76fff', '#82fdff', '#ff7b3e', '#5eff94', '#7f9ff2', '#eba09d', '#fdecd8'];
+// The ten division colours, in the main site's order: Kyra, Aegis, Elysium, Lior, Rhea, Vilis, Elion, Aura, Eos, Uzuri.
+const COLOURS = ['#7d34ff', '#ff456a', '#e76fff', '#81fbfe', '#ff7b3e', '#5eff94', '#7f9ff2', '#eba09d', '#fdecd8', '#fae246'];
 const CHAPTERS = [...document.querySelectorAll('.chapter')];
 const LAST = CHAPTERS.length - 1;
 

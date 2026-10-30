@@ -22,8 +22,9 @@ const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// The nine alliance division colours: the opening, then one per exhibit.
-const COLOURS = ['#7d34ff', '#d3ff4a', '#e76fff', '#82fdff', '#ff7b3e', '#5eff94', '#7f9ff2', '#eba09d', '#fdecd8'];
+// The ten division colours (Kyra, Aegis, Elysium, Lior, Rhea, Vilis, Elion, Aura, Eos, Uzuri): the opening, then one
+// per exhibit (the nine views use the first nine; the sparks use all ten).
+const COLOURS = ['#7d34ff', '#ff456a', '#e76fff', '#81fbfe', '#ff7b3e', '#5eff94', '#7f9ff2', '#eba09d', '#fdecd8', '#fae246'];
 
 async function api(path, payload) {
     const { data } = await sb.auth.getSession();
@@ -241,7 +242,7 @@ function ticketTexture(colour) {
         g.font = `500 26px ${DISPLAY}`; g.textAlign = 'right'; g.fillText('ECHO MARKET', w - 40, 56); g.textAlign = 'left';
         g.fillStyle = '#1b1e29'; g.font = `600 46px ${BODY}`; g.fillText('6× Airbus A320neo', 40, 170);
         g.font = `400 32px ${BODY}`; g.fillStyle = '#444a5c';
-        g.fillText('Price level 70% · buyer airline FORZA (Proxima)', 40, 222);
+        g.fillText('Price level 70% · buyer airline FORZA (Lior)', 40, 222);
         g.fillText('Selling as: your airline', 40, 266);
         g.fillStyle = '#b26b00'; g.font = `700 34px ${DISPLAY}`; g.fillText('LIST VALUE  $663M', 40, 340);
         g.fillStyle = '#0b0d14';
@@ -594,7 +595,7 @@ function burst() {
     const b = $('burst'), sparks = b.querySelector('.burst-sparks');
     sparks.innerHTML = Array.from({ length: 36 }, (_, k) => {
         const a = (k / 36) * 360 + Math.random() * 8;
-        return `<i class="spark" style="--a:${a}deg;--r:${30 + Math.random() * 26}vmax;--c:${COLOURS[k % 9]};--d:${(Math.random() * 0.18).toFixed(2)}s"></i>`;
+        return `<i class="spark" style="--a:${a}deg;--r:${30 + Math.random() * 26}vmax;--c:${COLOURS[k % COLOURS.length]};--d:${(Math.random() * 0.18).toFixed(2)}s"></i>`;
     }).join('');
     b.classList.remove('on'); void b.offsetWidth; b.classList.add('on');
     clearTimeout(burst.t); burst.t = setTimeout(() => b.classList.remove('on'), 2600);

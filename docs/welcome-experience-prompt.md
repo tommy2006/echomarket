@@ -38,9 +38,9 @@ as a **night airport** for Echo Alliances. Its main purpose is to stop plane the
   spacing -0.012em, body weight 300 at 17px. Scale down sensibly on phones.
 - Base: a night sky (near-black `#05060c` with a faint starfield).
 - **One division colour per chapter**, in this order (accent for runway and edge lights, glows, the call-out
-  label, links, buttons, progress): `#7d34ff`, `#d3ff4a`, `#e76fff`, `#82fdff`, `#ff7b3e`, `#5eff94`, `#7f9ff2`,
-  `#eba09d`, `#fdecd8`. Colours move smoothly between chapters as you scroll. Text stays white or near-white for
-  contrast. On light accents (`#d3ff4a`, `#82fdff`, `#fdecd8`), button text is dark.
+  label, links, buttons, progress): `#7d34ff`, `#ff456a`, `#e76fff`, `#81fbfe`, `#ff7b3e`, `#5eff94`, `#7f9ff2`,
+  `#eba09d`, `#fdecd8`, `#fae246`. Colours move smoothly between chapters as you scroll. Text stays white or near-white for
+  contrast. On light accents (`#81fbfe`, `#fdecd8`, `#fae246`), button text is dark.
 
 ## 3. The 3D world (Three.js, no image files)
 A night airport that the camera taxis through as you scroll, one stop per chapter:

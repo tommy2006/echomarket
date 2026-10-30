@@ -109,10 +109,15 @@ create table if not exists public.alliances (
     name       text primary key,
     sort_order int not null default 0
 );
+-- The ten Echo divisions, in the main site's order. Proxima was renamed Lior on 30 October 2026 (same in-game
+-- alliance); renaming the row carries every airline along (airlines.alliance: on update cascade). Old orders keep
+-- their stored names unless supabase/divisions-2026-10-30.sql has been run.
+update public.alliances set name = 'Lior' where name = 'Proxima'
+    and not exists (select 1 from public.alliances where name = 'Lior');
 insert into public.alliances (name, sort_order) values
-    ('Kyra', 1), ('Proxima', 2), ('Aegis', 3), ('Elysium', 4), ('Rhea', 5),
+    ('Kyra', 1), ('Aegis', 2), ('Elysium', 3), ('Lior', 4), ('Rhea', 5),
     ('Vilis', 6), ('Elion', 7), ('Aura', 8), ('Eos', 9), ('Uzuri', 10)
-on conflict (name) do nothing;
+on conflict (name) do update set sort_order = excluded.sort_order;
 
 -- ---------------------------------------------------------------------
 --  3. Airline profiles — up to 20 per account

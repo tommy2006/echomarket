@@ -8,7 +8,7 @@ insert into public.market_settings (key, value, updated_by)
 values ('stats_reset_at', to_jsonb(now()), 'launch reset')
 on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by;
 
--- 2. The 10th division: Uzuri (shown after the other nine in every alliance list and in the Discord bot).
+-- 2. The 10th division: Uzuri (listed last, after the other nine divisions, in every alliance list and in the Discord bot).
 insert into public.alliances (name, sort_order) values ('Uzuri', 10)
 on conflict (name) do nothing;
 
