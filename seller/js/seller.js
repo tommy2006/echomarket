@@ -997,7 +997,8 @@ function AllianceStats() {
     if (!data) return html`<section className="space-y-3">${header}<${EchoLoader} className="py-16" /></section>`;
     const list = data.alliances;
     if (!list.length) return html`<section className="space-y-3">${header}
-        <${EmptyState} icon="chart-column" title="No orders yet" text=${`No orders were placed ${periodText(days)}.`} /></section>`;
+        <${EmptyState} icon="chart-column" title="No orders yet" text=${data.statsSince && (!days || Date.now() - days * 864e5 < new Date(data.statsSince).getTime())
+            ? `No orders since the launch (${fmtDate(data.statsSince)}) yet.` : `No orders were placed ${periodText(days)}.`} /></section>`;
 
     const m = ALLIANCE_METRICS.find((x) => x.key === metric);
     const ranked = [...list].sort(sortByMetric(metric));
@@ -1164,6 +1165,7 @@ function AllianceStats() {
                 </table>
             </div>
         <//>
+        ${data.statsSince && html`<p className="text-[11px] text-amber-300/80">Statistics were reset at launch: they count orders placed from ${fmtDate(data.statsSince)}.</p>`}
         <p className="text-[11px] text-slate-500">An order counts for the alliance of the buyer's (first) delivery airline, and for the period in which it was placed. Value is what buyers pay at their price level. Wait is the median time from placing an order until a seller first took it. Orders without a known alliance are under “No alliance”.</p>
         ${tipNode}
         ${picked && html`<${AllianceDetailModal} alliance=${picked} data=${data} days=${days} onClose=${() => setPicked(null)} />`}

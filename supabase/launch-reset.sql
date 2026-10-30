@@ -1,9 +1,9 @@
 -- Echo Market: public launch.
 -- Run once in Supabase → SQL Editor. Safe to run again (it just moves the reset date to "now").
 --
--- 1. Fresh seller leaderboard: the Sellers tab (seller desk) only counts orders taken and aircraft delivered
---    from this moment on, also for "All time". Nothing is deleted: orders, their timelines, the buyers'
---    history and the Alliances statistics stay as they are.
+-- 1. Fresh statistics: the seller desk's Sellers leaderboard and Alliances statistics only count activity
+--    from this moment on, also for "All time". Nothing is deleted: orders, their timelines and the buyers'
+--    history stay as they are.
 insert into public.market_settings (key, value, updated_by)
 values ('stats_reset_at', to_jsonb(now()), 'launch reset')
 on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by;

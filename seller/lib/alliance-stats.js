@@ -14,7 +14,7 @@
 // trade: aircraft delivered from each seller alliance to each buyer alliance (who supplies whom).
 // aircraft: the most popular aircraft types across all alliances (aircraft ordered, orders, delivered, value,
 //           average price level, alliances that ordered them).
-import { admin, orderItems, deliveryShares } from './server.js';
+import { admin, orderItems, deliveryShares, getSetting } from './server.js';
 
 const PAGE = 1000;
 async function all(query) {
@@ -38,7 +38,10 @@ const median = (list) => {
 
 export async function allianceStats(days) {
     const db = admin();
-    const since = days ? Date.now() - days * DAY : 0;
+    // Launch reset (supabase/launch-reset.sql, market_settings 'stats_reset_at'): only orders placed since then
+    // count, also for "all time" (the same date as the Sellers leaderboard).
+    const resetAt = new Date(await getSetting('stats_reset_at', 0) || 0).getTime() || 0;
+    const since = Math.max(days ? Date.now() - days * DAY : 0, resetAt);
     const [orders, claims] = await Promise.all([
         all(() => {
             const q = db.from('orders').select('id, buyer_id, alliance, items, total_qty, total_usd, filled, status, seller_id, seller_name, seller_alliance, helpers, previous_sellers, created_at')
@@ -122,7 +125,7 @@ export async function allianceStats(days) {
     })).sort((x, y) => y.aircraft - x.aircraft || y.orders - x.orders || x.model.localeCompare(y.model)).slice(0, 25);
 
     return {
-        ok: true, days, bucketDays, bucketStarts, alliances, totals, aircraft,
+        ok: true, days, bucketDays, bucketStarts, alliances, totals, aircraft, statsSince: resetAt ? new Date(resetAt).toISOString() : null,
         trade: [...trade].map(([key, aircraft]) => { const [buyer, seller] = key.split('|'); return { buyer, seller, aircraft }; }),
         generatedAt: new Date().toISOString()
     };
