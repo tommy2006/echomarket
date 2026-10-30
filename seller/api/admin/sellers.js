@@ -16,7 +16,7 @@
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
 import { allianceStats } from '../../lib/alliance-stats.js';
 import { advanceCup, cupView, startCup, cancelCup, disqualify, eligibleSellers, PAIRINGS } from '../../lib/cup.js';
-import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, RANKS, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, getSetting, RANKS, HttpError } from '../../lib/server.js';
 
 // Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
 // Opening the Sellers tab refreshes every role-based seller whose check is older than this, so the
@@ -74,12 +74,15 @@ export default handler(['POST'], async (req, res) => {
     if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });
     if (input.action === 'cup-disqualify') return res.json({ ok: true, cup: await disqualify(account, input.sellerId) });
     const one = typeof input.sellerId === 'string' && /^[0-9a-f-]{36}$/i.test(input.sellerId) ? input.sellerId : null;
-    const since = days ? Date.now() - days * 864e5 : 0;
+    // A fresh start (e.g. the public launch): market_settings 'stats_reset_at' = when the leaderboard starts
+    // counting. Older activity stays in the order timelines but no longer counts here, not even for "all time".
+    const resetAt = new Date(await getSetting('stats_reset_at', 0) || 0).getTime() || 0;
+    const since = Math.max(days ? Date.now() - days * 864e5 : 0, resetAt);
     const db = admin();
 
     const [events, orders, sellers] = await Promise.all([
         all(() => db.from('order_events').select('order_id, kind, actor_id, filled, created_at')
-            .in('kind', ['CLAIMED', 'PROGRESS', 'FULFILLED', 'HANDOFF', 'RELEASED'])
+            .in('kind', ['CLAIMED', 'JOINED', 'PROGRESS', 'FULFILLED', 'HANDOFF', 'RELEASED'])
             .order('created_at', { ascending: true }).order('id', { ascending: true })),
         all(() => db.from('orders').select('id, serial, total_qty, total_usd, filled, seller_id, status, airline_name, alliance, airlines, buyer_name, created_at')),
         db.from('sellers').select('*').then((r) => { if (r.error) throw r.error; return r.data || []; })
@@ -181,5 +184,5 @@ export default handler(['POST'], async (req, res) => {
         });
     }
 
-    res.json({ ok: true, days, sellers: list, totals, generatedAt: new Date().toISOString() });
+    res.json({ ok: true, days, sellers: list, totals, statsSince: resetAt ? new Date(resetAt).toISOString() : null, generatedAt: new Date().toISOString() });
 });

@@ -809,6 +809,7 @@ function SellerStats({ userId, onOpenOrder }) {
                     </div>
                 </button>
             </li>`)}</ol>`}
+            ${data.statsSince && html`<p className="text-[11px] text-amber-300/80">The leaderboard was reset: it counts from ${fmtDate(data.statsSince)}.</p>`}
             <p className="text-[11px] text-slate-500">Ranked by orders taken, then aircraft delivered. Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft delivered counts what each seller delivered themselves. Sale value (≈) uses each order's average price per aircraft and is only shown for reference.</p>
         `}
         ${picked && html`<${SellerDetailModal} seller=${picked} initialDays=${days} userId=${userId}

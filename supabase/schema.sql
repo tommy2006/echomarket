@@ -111,7 +111,7 @@ create table if not exists public.alliances (
 );
 insert into public.alliances (name, sort_order) values
     ('Kyra', 1), ('Proxima', 2), ('Aegis', 3), ('Elysium', 4), ('Rhea', 5),
-    ('Vilis', 6), ('Elion', 7), ('Aura', 8), ('Eos', 9)
+    ('Vilis', 6), ('Elion', 7), ('Aura', 8), ('Eos', 9), ('Uzuri', 10)
 on conflict (name) do nothing;
 
 -- ---------------------------------------------------------------------
