@@ -383,12 +383,19 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
 
         const { data: flag } = await admin().from('order_flags').select('*').eq('order_id', order.id).maybeSingle();
         const { data: declines } = await admin().from('order_declines').select('seller_name').eq('order_id', order.id);
-        // Buyer on the alert list (admins / Lead Ambassadors): the post says to be careful. Reason not shown.
-        const { data: alert } = await admin().from('order_alerts').select('order_id').eq('order_id', order.id).maybeSingle();
+        // Buyer on the alert list (admins / Lead Ambassadors): the post says to be careful, with the alert-list entry
+        // in full (reason, who added it, when). The buyer never sees it.
+        const { data: alert } = await admin().from('order_alerts').select('order_id, discord_id').eq('order_id', order.id).maybeSingle();
+        const alertDiscordId = alert && (alert.discord_id || order.buyer_discord_id);
+        const { data: entry } = alertDiscordId
+            ? await admin().from('watchlist').select('reason, added_by_name, created_at').eq('discord_id', alertDiscordId).maybeSingle()
+            : { data: null };
         const ping = pingSellers && SELLER_ROLE_ID;
         const embed = buildEmbed(order, title, flag, declines || []);
         if (alert && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status)) {
-            embed.fields.unshift({ name: '⚠️ Caution', value: CAUTION_TEXT, inline: false });
+            const since = entry && new Date(entry.created_at).toISOString().slice(0, 10);
+            const why = entry ? `\n**Reason:** ${md(entry.reason)}\n— on the alert list since ${since}${entry.added_by_name ? `, added by ${md(entry.added_by_name)}` : ''}` : '';
+            embed.fields.unshift({ name: '⚠️ Caution: buyer on the alert list', value: (CAUTION_TEXT + why).slice(0, 1024), inline: false });
             embed.color = EMBED_COLORS.declined;
         }
         const payload = {

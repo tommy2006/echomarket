@@ -62,7 +62,7 @@ export const GUIDE = [
         ['Moderation → Send message', 'An Information or Warning message to anyone by Discord ID (market notice + DM; warnings are logged).'],
         ['Moderation → Bot commands', 'Install/update the Discord slash commands and choose the ordering channel(s).'],
         ['Community → Announcements', 'A pop-up for every buyer plus a home banner until you delete it.'],
-        ['Community → Alert list', 'Add a Discord ID with a private reason; their orders show CAUTION to sellers.'],
+        ['Community → Alert list', 'Add a Discord ID with a reason; their orders show CAUTION to sellers, and the Discord order post shows the reason in full.'],
         ['Community → Budget rewards', "Raise a buyer's daily budget to Tier 1 ($25B) or Tier 2 ($40B), with an optional end date (boosters get Tier 3 automatically)."],
         ['/market in Discord', 'ban, unban, warn, message, info without opening the desk.']
     ] }

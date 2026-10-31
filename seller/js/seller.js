@@ -1962,7 +1962,7 @@ function AlertListCard({ items, run }) {
     };
     return html`<section className="card p-4 space-y-3">
         <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="eye" className="w-4 h-4" /> Alert list</p>
-            <p className="text-xs text-slate-400 mt-0.5">Orders from these Discord accounts warn the sellers (seller desk and Discord): "be cautious and check with the admins". The reason is for admins and Lead Ambassadors only; the buyer is never told.</p></div>
+            <p className="text-xs text-slate-400 mt-0.5">Orders from these Discord accounts warn the sellers (seller desk and Discord): "be cautious and check with the admins". The Discord order post shows the full entry, reason included; on the seller desk only admins and Lead Ambassadors see the reason. The buyer is never told.</p></div>
         <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID, e.g. 123456789012345678" />
         <${DiscordName} id=${id} />
         <input value=${reason} maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Reason, e.g. possible spy from a rival alliance" />
