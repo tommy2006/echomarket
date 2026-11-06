@@ -95,6 +95,7 @@ function App() {
     const [highlightOrder, setHighlightOrder] = useState(null);
     const [tourOpen, setTourOpen] = useState(false);
     const [rulesOpen, setRulesOpen] = useState(false);
+    const [standingOpen, setStandingOpen] = useState(false);   // Account standing
     const [announcements, setAnnouncements] = useState([]);              // pop-ups from the admins, for everyone
     const [seenAnnouncements, setSeenAnnouncements] = useState(() => store.get(LS_ANNOUNCEMENTS, []));
     const [celebrated, setCelebrated] = useState(false);                 // the budget "thank you" was closed
@@ -301,7 +302,7 @@ function App() {
     return html`<div className="min-h-screen pb-28 md:pb-12">
         <${Header} ...${shared} view=${view} cartCount=${cartCount} unread=${unread} isSeller=${isSeller}
             defaultAirline=${defaultAirline} activeCount=${activeOrders.length}
-            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} onTour=${() => setTourOpen(true)} onRules=${() => setRulesOpen(true)} />
+            onCart=${() => setCartOpen(true)} onBell=${() => setNotifOpen(true)} onSignOut=${signOut} onTour=${() => setTourOpen(true)} onRules=${() => setRulesOpen(true)} onStanding=${() => setStandingOpen(true)} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-8 space-y-6">
             ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
@@ -358,6 +359,7 @@ function App() {
             }} />
 
         ${rulesOpen && html`<${RulesModal} first=${rulesFirst} onClose=${closeRules} />`}
+        ${standingOpen && html`<${StandingModal} account=${account} onClose=${() => setStandingOpen(false)} />`}
         ${celebrate && html`<${BudgetCelebration} budget=${standing.budget} name=${account?.display_name || account?.discord_username || ''}
             onClose=${() => { setCelebrated(true); api('/api/me', { action: 'budget-seen', key: standing.budget.key }).catch(() => {}); }} />`}
         ${nightNotice && html`<${Modal} open=${true} onClose=${() => setNightNotice(false)} title=${t('🌙 Your order is in, expect a wait')} size="sm"
@@ -523,7 +525,7 @@ function FullPageSpinner() {
     return html`<${EchoLoader} full />`;
 }
 
-function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour, onRules }) {
+function Header({ session, account, view, cartCount, unread, isSeller, activeCount, onCart, onBell, onSignOut, onTour, onRules, onStanding }) {
     const [menu, setMenu] = useState(false);
     const menuRef = useRef(null);
     // The account menu closes when you click or tap anywhere outside it, or press Escape.
@@ -576,6 +578,7 @@ function Header({ session, account, view, cartCount, unread, isSeller, activeCou
                         <a href="#orders" className="menu-item"><${Icon} name="package" /> ${t('My orders')}</a>
                         <button onClick=${onTour} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
                         <button onClick=${onRules} className="menu-item w-full"><${Icon} name="scroll-text" /> ${t('Market rules')}</button>
+                        <button onClick=${onStanding} className="menu-item w-full"><${Icon} name="shield-check" /> ${t('Account standing')}</button>
                         <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Welcome walkthrough')}</a>
                         ${isSeller && CONFIG.SELLER_URL && html`<a href=${CONFIG.SELLER_URL} className="menu-item"><${Icon} name="store" /> ${t('Seller dashboard')}</a>`}
                         <button onClick=${onSignOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
@@ -1601,9 +1604,88 @@ function OrderThread({ order, messages, onMessage }) {
 }
 
 // =========================================================================
+//  Account standing: like Discord's, a colour-coded level and the buyer's record. The levels never say how
+//  many warnings lead to a ban (the API only sends the level: lib/moderation.js, standingLevel).
+// =========================================================================
+const STANDING_LEVELS = [
+    { name: 'All good', color: '#34D399', icon: 'check' },
+    { name: 'Caution', color: '#FACC15', icon: 'eye' },
+    { name: 'Under watch', color: '#FB923C', icon: 'eye' },
+    { name: 'At risk', color: '#F43F5E', icon: 'triangle-alert' },
+    { name: 'Banned', color: '#DC2626', icon: 'ban' }
+];
+// Written out in full so the translation builder finds them.
+const standingName = (i) => [t('All good'), t('Caution'), t('Under watch'), t('At risk'), t('Banned')][i];
+function standingText(level, ban) {
+    switch (level) {
+        case 0: return t('Thanks for trading fairly and keeping to the market rules. If you ever get a warning, it will appear here.');
+        case 1: return t('You have a warning on your record. Keep to the market rules to stay out of trouble.');
+        case 2: return t('After earlier problems, your account is watched more closely. Further warnings lead to a market ban.');
+        case 3: return t('Your account is at risk. Any further warning may get you banned from the market.');
+        default: return ban?.ends_at ? t("You can't use Echo Market until {date}.", { date: fmtDate(ban.ends_at) })
+            : ban ? t("You can't use Echo Market any more: this ban is permanent.") : t('You have the Market Banned role on the Echo Discord server.');
+    }
+}
+function StandingModal({ account, onClose }) {
+    const [data, setData] = useState(null);
+    const [error, setError] = useState('');
+    useEffect(() => { api('/api/me', { action: 'standing' }).then(setData).catch((err) => setError(err.message)); }, []);
+    const level = data ? Math.max(0, Math.min(4, Number(data.level) || 0)) : 0;
+    const L = STANDING_LEVELS[level];
+    const name = account?.display_name || account?.discord_username || '';
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Account standing')} subtitle=${t('Your record on Echo Market')}
+        footer=${html`<${Button} onClick=${onClose}>${t('Close')}<//>`}>
+        ${error ? html`<p className="text-sm text-rose-300">${error}</p>` : !data ? html`<${EchoLoader} size="sm" className="py-10" />` : html`
+        <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 text-center sm:text-left">
+            <div className="relative shrink-0">
+                ${account?.avatar_url ? html`<img src=${account.avatar_url} alt="" className="w-20 h-20 rounded-full border-4 border-slate-800 object-cover" />`
+                    : html`<div className="w-20 h-20 rounded-full border-4 border-slate-800 bg-slate-800 flex items-center justify-center text-2xl font-black text-white">${(name[0] || '?').toUpperCase()}</div>`}
+                <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full flex items-center justify-center border-4 border-slate-900" style=${{ background: L.color }}>
+                    <${Icon} name=${L.icon} className="w-3.5 h-3.5 text-slate-950" /></span>
+            </div>
+            <div className="min-w-0">
+                <h3 className="text-xl font-black text-white">${t('Your account is')} <span style=${{ color: L.color }}>${standingName(level).toLowerCase()}</span></h3>
+                <p className="text-sm text-slate-300 mt-1 leading-relaxed">${standingText(level, data.ban)}</p>
+                ${data.ban?.reason && html`<p className="text-xs text-slate-400 mt-2"><b className="text-slate-300">${t('Reason:')}</b> ${data.ban.reason}</p>`}
+            </div>
+        </div>
+
+        <div className="relative mt-7 mb-1" role="img" aria-label=${`${t('Account standing')}: ${standingName(level)}`}>
+            <div className="absolute top-3 left-[10%] right-[10%] h-1 rounded-full bg-slate-700"></div>
+            <div className="absolute top-3 left-[10%] h-1 rounded-full transition-all" style=${{ width: `${level * 20}%`, background: `linear-gradient(90deg, #34D399, ${L.color})` }}></div>
+            <ol className="relative grid grid-cols-5">
+                ${STANDING_LEVELS.map((x, i) => html`<li key=${i} className="flex flex-col items-center gap-2 min-w-0">
+                    <span className=${`rounded-full flex items-center justify-center ring-4 ring-slate-900 ${i === level ? 'w-7 h-7 -mt-0.5' : 'w-6 h-6'}`}
+                        style=${{ background: i === level ? x.color : i < level ? x.color + '80' : '#334155' }}>
+                        ${i === level && html`<${Icon} name=${x.icon} className="w-3.5 h-3.5 text-slate-950" />`}</span>
+                    <span className=${`text-[11px] sm:text-xs text-center leading-tight px-0.5 ${i === level ? 'font-extrabold' : 'text-slate-500'}`} style=${i === level ? { color: x.color } : null}>${standingName(i)}</span>
+                </li>`)}
+            </ol>
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-slate-800">
+            <p className="label text-slate-500 mb-2">${t('Your record')}</p>
+            ${!data.history.length ? html`<p className="text-sm text-slate-400 flex items-center gap-2"><${Icon} name="sparkles" className="w-4 h-4 text-emerald-300" />${t('Nothing on your record. Keep it up!')}</p>`
+            : html`<ul className="space-y-2">${data.history.map((h, i) => html`<li key=${i} className=${`flex gap-3 p-3 rounded-2xl border ${h.type === 'ban' ? (h.state === 'active' ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-slate-800 bg-slate-950/60') : 'border-amber-500/25 bg-amber-500/[0.05]'}`}>
+                <${Icon} name=${h.type === 'ban' ? 'ban' : 'triangle-alert'} className=${`w-4 h-4 mt-0.5 shrink-0 ${h.type === 'ban' ? (h.state === 'active' ? 'text-rose-300' : 'text-slate-400') : 'text-amber-300'}`} />
+                <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white">${h.type === 'ban'
+                        ? `${h.duration === 'permanent' ? t('Permanent market ban') : h.duration === 'month' ? t('Market ban: one month') : t('Market ban: one week')} · ${h.state === 'active' ? (h.ends_at ? t('until {date}', { date: fmtDate(h.ends_at) }) : t('active')) : h.state === 'lifted' ? t('lifted') : t('ended')}`
+                        : h.theft ? t('Warning: plane theft') : t('Warning')}</p>
+                    <p className="text-xs text-slate-300 mt-0.5 whitespace-pre-line break-words">${h.text}</p>
+                    <p className="text-[11px] text-slate-500 mt-1">${fmtDate(h.at)}</p>
+                </div>
+            </li>`)}</ul>`}
+            <p className="text-[11px] text-slate-500 mt-4">${t('Warnings stay on your record. If you think one is a mistake, contact a Market Admin on the Echo Discord server.')}</p>
+        </div>`}
+    <//>`;
+}
+
+// =========================================================================
 //  Members only / market bans / Discord timeouts: shown instead of the market.
 // =========================================================================
 function MarketGate({ standing, account, onSignOut }) {
+    const [standingOpen, setStandingOpen] = useState(false);
     const banned = standing.ban || standing.bannedRole;
     const ban = standing.ban;
     const timedOut = !banned && standing.inGuild && standing.timedOutUntil;
@@ -1631,9 +1713,11 @@ function MarketGate({ standing, account, onSignOut }) {
                 <p className="text-sm text-slate-400 mt-2">${account?.display_name ? t("{name}, your Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.", { name: account.display_name }) : t("Your Discord account isn't in the Echo Alliances Discord server. Join the server (or sign in with the Discord account that is in it), then check again.")}</p>`}
             <div className="mt-7 flex flex-wrap justify-center gap-2">
                 ${!banned && html`<${Button} icon="refresh-cw" onClick=${() => window.location.reload()}>${t('Check again')}<//>`}
+                ${banned && html`<${Button} icon="shield-check" onClick=${() => setStandingOpen(true)}>${t('Account standing')}<//>`}
                 <${Button} variant="secondary" icon="log-out" onClick=${onSignOut}>${t('Sign out')}<//>
             </div>
         </div>
+        ${standingOpen && html`<${StandingModal} account=${account} onClose=${() => setStandingOpen(false)} />`}
         <${Toasts} />
     </div>`;
 }

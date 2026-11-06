@@ -59,6 +59,7 @@ export const GUIDE = [
         ["Sellers tab → Sellers' Cup", 'Start a knockout Cup (name, seeding period, round length, bracket size, pairings, Discord channel); cancel it or disqualify a seller.'],
         ['Moderation → Market ban', 'Ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).'],
         ['Moderation → Lift ban', 'End a ban early.'],
+        ['Warning policy', 'Automatic: 3 warnings = 1-week ban; 3 more after it = permanent ban (DM, role, logged). The ban panel shows the count; Check older warnings applies it to warnings from before.'],
         ['Moderation → Send message', 'An Information or Warning message to anyone by Discord ID (market notice + DM; warnings are logged).'],
         ['Moderation → Bot commands', 'Install/update the Discord slash commands and choose the ordering channel(s).'],
         ['Community → Announcements', 'A pop-up for every buyer plus a home banner until you delete it.'],

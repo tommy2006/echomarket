@@ -1662,6 +1662,18 @@ function SellerThread({ order, messages, onMessage }) {
 const BAN_LENGTHS = [['week', '1 week'], ['month', '1 month'], ['permanent', 'Permanent']];
 const banUntil = (b) => (b.ends_at ? `until ${fmtDate(b.ends_at)}` : 'permanent');
 const isActiveBan = (b) => !b.revoked_at && (!b.ends_at || new Date(b.ends_at).getTime() > Date.now());
+// The leaders' warning policy (applied by the server, lib/moderation.js): STRIKES warnings → automatic one-week
+// ban; STRIKES more after it → automatic permanent ban. Staff see the count; buyers only see a level.
+const STRIKES = 3;
+function strikePolicy(bans, warnings) {
+    const autos = bans.filter((b) => b.auto_step).sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const last = autos[autos.length - 1];
+    const step = autos.reduce((m, b) => Math.max(m, b.auto_step), 0);
+    const count = Math.min(STRIKES, warnings.filter((w) => !last || w.created_at > last.created_at).length);
+    const text = step >= 2 ? 'Warning policy: final step reached (automatic permanent ban).'
+        : `Warning policy: ${count} of ${STRIKES} warnings towards ${step ? 'a permanent ban (after their automatic one-week ban)' : 'an automatic one-week ban'}.`;
+    return { step, count, text };
+}
 const deliveryText = (d = {}) => [d.dm === 'sent' ? 'DM sent' : d.dm && d.dm !== 'skipped' ? "DM couldn't be delivered" : null,
     d.role === true ? 'Market Banned role updated' : d.role === false ? 'role not changed (check the health page)' : null,
     d.logged ? 'logged' : d.logged === false ? 'not logged (no log channel)' : null].filter(Boolean).join(' · ');
@@ -1709,17 +1721,20 @@ function BuyerRecord({ discordId }) {
 function ModerationPanel({ target, onChanged }) {
     const [bans, setBans] = useState(null);
     const [msgs, setMsgs] = useState([]);
+    const [allWarnings, setAllWarnings] = useState([]);
     const [dialog, setDialog] = useState(null);   // 'ban' | 'message'
     const load = useCallback(async () => {
-        const [b, m] = await Promise.all([
+        const [b, m, w] = await Promise.all([
             sb.from('market_bans').select('*').eq('discord_id', target.discordId).order('created_at', { ascending: false }),
-            sb.from('market_messages').select('*').eq('discord_id', target.discordId).order('created_at', { ascending: false }).limit(20)
+            sb.from('market_messages').select('*').eq('discord_id', target.discordId).order('created_at', { ascending: false }).limit(20),
+            sb.from('market_messages').select('created_at').eq('discord_id', target.discordId).eq('kind', 'warning').limit(1000)
         ]);
-        setBans(b.data || []); setMsgs(m.data || []);
+        setBans(b.data || []); setMsgs(m.data || []); setAllWarnings(w.data || []);
     }, [target.discordId]);
     useEffect(() => { load(); }, [load]);
     const active = (bans || []).find(isActiveBan);
     const warnings = msgs.filter((m) => m.kind === 'warning');
+    const policy = bans && strikePolicy(bans, allWarnings);
     const lift = async () => {
         const note = await ask({ title: `Lift ${target.name}'s market ban?`, confirmLabel: 'Lift ban', message: 'They can use Echo Market again straight away and get a DM.', input: { required: false, placeholder: 'Optional note (shown to them)' } });
         if (note === false) return;
@@ -1734,6 +1749,11 @@ function ModerationPanel({ target, onChanged }) {
                 <p className="text-rose-100/80 text-xs mt-0.5">${active.reason} · by ${active.issued_by_name || 'an admin'}${active.source === 'bot' ? ' (bot)' : ''}</p>
             </div>` : html`<p className="text-sm text-slate-300">Not banned.${bans.length ? ` ${plural(bans.length, 'earlier ban')}.` : ''}</p>`}
             <p className="text-xs text-slate-400">${plural(warnings.length, 'warning')} · ${plural(msgs.length - warnings.length, 'info message')}${msgs[0] ? ` · last ${timeAgo(msgs[0].created_at)}` : ''}</p>
+            ${policy && html`<div className="text-xs">
+                <p className=${policy.step >= 2 ? 'text-rose-300 font-bold' : 'text-slate-300'}>🚦 ${policy.text}</p>
+                ${policy.step < 2 && html`<div className="flex gap-1 mt-1.5">${Array.from({ length: STRIKES }, (_, i) => html`<span key=${i}
+                    className=${`h-1.5 flex-1 rounded-full ${i < policy.count ? (policy.step ? 'bg-rose-400' : 'bg-amber-400') : 'bg-slate-700'}`}></span>`)}</div>`}
+            </div>`}
             <div className="flex flex-wrap gap-2">
                 <${Button} size="sm" variant="secondary" icon="megaphone" onClick=${() => setDialog('message')}>Send message<//>
                 ${active ? html`<${Button} size="sm" variant="secondary" icon="undo-2" onClick=${lift}>Lift ban<//>`
@@ -1777,6 +1797,7 @@ function MessageDialog({ target, onClose, onDone }) {
         try {
             const r = await api('/api/admin/moderation', { action: 'message', accountId: target.accountId || undefined, discordId: target.discordId, kind, body: text.trim() });
             toast(`${kind === 'warning' ? 'Warning' : 'Message'} sent. ${deliveryText(r.delivery)}`, 'success');
+            if (r.autoBan) toast(`That reached the warning policy: ${target.name} got an automatic ${r.autoBan.step === 1 ? 'one-week' : 'PERMANENT'} market ban (DMed and logged).`, 'error');
             onDone();
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
@@ -1835,6 +1856,38 @@ function DiscordCommandsCard() {
     </div>`;
 }
 
+// The warning policy for warnings given before it existed: who already has enough for an automatic ban.
+// New warnings apply the policy by themselves; this is for the backlog (and a check that nobody slipped through).
+function StrikeBacklogCard({ onChanged }) {
+    const [due, setDue] = useState(null);
+    const [busy, setBusy] = useState('');
+    const run = async (apply) => {
+        if (apply && !(await ask({ title: `Ban ${due.length} ${due.length === 1 ? 'person' : 'people'} under the warning policy?`, danger: true, confirmLabel: 'Apply the policy',
+            message: 'Each gets the automatic ban for their step (one week, or permanent after an earlier automatic ban), a DM and the Market Banned role. Every ban is logged in the moderation channel.' }))) return;
+        setBusy(apply ? 'apply' : 'check');
+        try {
+            const r = await api('/api/admin/moderation', { action: 'strikes', apply });
+            setDue(apply ? [] : r.due);
+            if (apply) { toast(`${r.due.filter((x) => x.done).length} automatic ban(s) given and logged.`, 'success'); onChanged?.(); }
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+    };
+    return html`<div className="card p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+                <p className="font-bold text-white text-sm flex items-center gap-2"><${Icon} name="traffic-cone" className="w-4 h-4 text-amber-300" /> Warning policy</p>
+                <p className="text-xs text-slate-400 mt-0.5">${STRIKES} warnings → automatic one-week ban · ${STRIKES} more after it → automatic permanent ban. New warnings apply it straight away; check here for people whose older warnings already reach it.</p>
+            </div>
+            <${Button} size="sm" variant="secondary" icon="search" busy=${busy === 'check'} onClick=${() => run(false)}>Check older warnings<//>
+        </div>
+        ${due && (!due.length ? html`<p className="text-sm text-emerald-300">Nobody is due an automatic ban.</p>` : html`
+            <ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800 bg-slate-950/60">${due.map((d) => html`<li key=${d.discordId} className="px-3 py-2 text-sm flex items-center gap-2">
+                <span className="flex-1 min-w-0 truncate text-white font-bold">${d.name}</span>
+                <span className="text-xs text-slate-400">${plural(d.warnings, 'warning')} → ${d.step === 1 ? 'one-week ban' : 'permanent ban'}</span>
+            </li>`)}</ul>
+            <${Button} size="sm" variant="danger" icon="ban" busy=${busy === 'apply'} onClick=${() => run(true)}>Apply the policy to ${due.length} ${due.length === 1 ? 'person' : 'people'}<//>`)}
+    </div>`;
+}
+
 // The Moderation tab: active bans, recent messages, and banning/messaging anyone by Discord ID
 // (also people who never used the market).
 function ModerationView({ userId }) {
@@ -1874,6 +1927,7 @@ function ModerationView({ userId }) {
             <p className="text-xs text-slate-500">Admins only. Market bans cover every airline of a Discord account. Everything here is DMed to the person and logged.</p>
         </div>
         <${DiscordCommandsCard} />
+        <${StrikeBacklogCard} onChanged=${load} />
         <div className="card p-4 space-y-2">
             <p className="field-label !mb-0">Ban or message anyone by Discord ID (also people who never used the market)</p>
             <div className="flex gap-2">

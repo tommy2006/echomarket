@@ -122,8 +122,9 @@ async function market(i) {
         case 'message':
             return later(i, async () => {
                 const target = await resolveTarget({ discordId: targetId, name: targetName });
-                const { delivery } = await sendMarketMessage({ target, kind: sub.name === 'warn' ? 'warning' : 'info', body: o.message, by, source: 'bot' });
-                return { content: `${sub.name === 'warn' ? '⚠️ Warning' : '📣 Message'} sent to **${targetName}**.\n${delivered(delivery)}` };
+                const { delivery, autoBan } = await sendMarketMessage({ target, kind: sub.name === 'warn' ? 'warning' : 'info', body: o.message, by, source: 'bot' });
+                const auto = autoBan ? `\n⛔ That reached the warning policy limit: **${targetName}** got an automatic ${autoBan.step === 1 ? 'one-week' : 'PERMANENT'} market ban (logged).` : '';
+                return { content: `${sub.name === 'warn' ? '⚠️ Warning' : '📣 Message'} sent to **${targetName}**.\n${delivered(delivery)}${auto}` };
             });
         case 'info':
             return later(i, async () => {
@@ -131,6 +132,7 @@ async function market(i) {
                 const lines = [
                     s.ban ? `⛔ **Market banned** ${s.ban.ends_at ? banText(s.ban) : 'permanently'}: ${s.ban.reason} (by ${s.ban.issued_by_name || 'an admin'})` : '✅ Not market-banned.',
                     `⚠️ ${s.warnings} warning${s.warnings === 1 ? '' : 's'} · 📣 ${s.messages - s.warnings} other message${s.messages - s.warnings === 1 ? '' : 's'}`,
+                    ...(s.policy ? [`🚦 ${s.policy}`] : []),
                     s.onMarket ? (s.orders.length ? `📦 Recent orders: ${s.orders.map((x) => `${orderRef(x)} (${x.status.toLowerCase()}, ${x.total_qty} aircraft)`).join(' · ')}` : '📦 No orders yet.') : 'Has never signed in on Echo Market.'
                 ];
                 return { content: `**${targetName}**\n${lines.join('\n')}` };

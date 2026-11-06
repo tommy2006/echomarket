@@ -4,9 +4,11 @@
 //   { ok, inGuild, membershipCheck, ban: { reason, duration, ends_at } | null, bannedRole, timedOutUntil,
 //     budget: { tier, limit, source, expiresAt, key, celebrate }, welcomeDone }
 // { action: 'budget-seen', key }: the buyer saw the "thank you" for this reward (shown once per reward).
+// { action: 'standing' }: the Account Standing page: { level 0-4, ban, history } (no warning counts or limits).
 // { action: 'welcome-done', answers }: the buyer finished the "Cleared for takeoff" welcome (welcome.html).
 //   The quiz answers are checked here too, so the welcome can't be skipped by calling the API directly.
 import { handler, requireUser, marketStanding, budgetFor, rateLimit, admin, body, MEMBERSHIP_CHECK, HttpError } from '../lib/server.js';
+import { accountStanding } from '../lib/moderation.js';
 
 // The welcome quiz (welcome.html): the right answer to each question.
 const WELCOME_ANSWERS = { q1: '4', q2: 'ask', q3: 'tell' };
@@ -19,6 +21,10 @@ export default handler(['POST'], async (req, res) => {
         const key = String(input.key || '').slice(0, 60);
         await admin().from('accounts').update({ budget_seen_key: key || null }).eq('id', account.id);
         return res.json({ ok: true });
+    }
+    if (input.action === 'standing') {
+        if (!account.discord_id) return res.json({ ok: true, level: 0, ban: null, history: [] });
+        return res.json({ ok: true, ...(await accountStanding(account.discord_id, { bannedRole: Boolean(account.market_banned_role) })) });
     }
     if (input.action === 'welcome-done') {
         const a = input.answers || {};

@@ -66,6 +66,7 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 - **Sellers tab → Sellers' Cup:** start a knockout Cup (name, seeding, round length, bracket size, pairings, channel); cancel it or disqualify a seller.
 - **Moderation → Market ban:** ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).
 - **Moderation → Lift ban:** end a ban early.
+- **Warning policy (automatic):** 3 warnings = 1-week ban; 3 more after it = permanent ban (DM + role + log). *Check older warnings* applies it to earlier warnings.
 - **Moderation → Send message:** an *Information* or *Warning* message to anyone by Discord ID (market notice + DM; warnings are logged).
 - **Moderation → Bot commands:** install/update the Discord slash commands and choose the ordering channel(s).
 - **Community → Announcements:** a pop-up for every buyer plus a home banner until you delete it.

@@ -485,6 +485,12 @@ create table if not exists public.market_bans (
     created_at      timestamptz not null default now()
 );
 create index if not exists market_bans_discord_idx on public.market_bans (discord_id);
+-- Warning policy (leaders, November 2026), applied automatically by lib/moderation.js:
+--   3 market warnings (all of them, also older ones)  → automatic one-week ban    (auto_step 1)
+--   3 more warnings after that one-week ban            → automatic permanent ban  (auto_step 2)
+-- Each step happens once per person (the unique index stops two at once).
+alter table public.market_bans add column if not exists auto_step smallint check (auto_step in (1, 2));
+create unique index if not exists market_bans_auto_step_idx on public.market_bans (discord_id, auto_step) where auto_step is not null;
 
 -- Messages from Market Admins to a buyer (information or a formal warning). Shown in the buyer's
 -- notifications and sent as a Discord DM.
@@ -689,7 +695,8 @@ create policy "bans: own or seller read" on public.market_bans
         public.is_seller() or discord_id = (select a.discord_id from public.accounts a where a.id = auth.uid()));
 drop policy if exists "market messages: own or seller read" on public.market_messages;
 create policy "market messages: own or seller read" on public.market_messages
-    for select to authenticated using (account_id = auth.uid() or public.is_seller());
+    for select to authenticated using (account_id = auth.uid() or public.is_seller()
+        or discord_id = (select a.discord_id from public.accounts a where a.id = auth.uid()));
 drop policy if exists "missing reports: buyer or seller read" on public.missing_reports;
 create policy "missing reports: buyer or seller read" on public.missing_reports
     for select to authenticated using (buyer_id = auth.uid() or public.is_seller());

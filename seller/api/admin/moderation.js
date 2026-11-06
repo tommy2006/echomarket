@@ -6,11 +6,14 @@
 //            ban. Gives the Market Banned role, DMs the person, logs it in DISCORD_LOG_CHANNEL_ID.
 //   unban    { banId, note }   lifts a ban early (removes the role if no other ban is active)
 //   message  { accountId | discordId, kind: 'info'|'warning', body }
-//            Shown in the buyer's notifications, DMed, and logged.
+//            Shown in the buyer's notifications, DMed, and logged. A warning can trigger an automatic ban
+//            (warning policy, lib/moderation.js): the reply then has autoBan: { step, ban }.
+//   strikes  { apply }   people whose existing warnings already reach the policy: a preview list, or
+//            (apply: true) give them their automatic bans now.
 // The rules themselves live in lib/moderation.js (shared with the Discord bot).
 // Reading bans and messages: the seller desk reads market_bans / market_messages directly (RLS).
 import { admin, handler, requireUser, requireActiveSeller, isStaff, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
-import { resolveTarget, issueBan, liftBan, sendMarketMessage } from '../../lib/moderation.js';
+import { resolveTarget, issueBan, liftBan, sendMarketMessage, strikeBacklog } from '../../lib/moderation.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
@@ -34,6 +37,8 @@ export default handler(['POST'], async (req, res) => {
             const target = await resolveTarget(input);
             return res.json({ ok: true, ...(await sendMarketMessage({ target, kind: input.kind, body: input.body, by })) });
         }
+        case 'strikes':
+            return res.json({ ok: true, due: await strikeBacklog({ apply: input.apply === true }) });
         default:
             throw new HttpError(400, 'Unknown action.');
     }
