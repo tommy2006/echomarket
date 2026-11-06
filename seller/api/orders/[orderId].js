@@ -35,7 +35,8 @@
 import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
-    orderHelpers, deliveryShares, shareText, sharesLines, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS, HttpError
+    orderHelpers, deliveryShares, shareText, sharesLines, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS,
+    isStaff, canSell, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 import { noticeSharedOrder } from '../../lib/cup.js';
@@ -135,6 +136,11 @@ export default handler(['POST'], async (req, res) => {
         return data[0];
     };
 
+    // A Community Manager without a seller role helps with buyers and thefts, but doesn't sell.
+    if (['claim', 'join', 'release', 'progress', 'note', 'decline', 'remind'].includes(input.action) && !canSell(seller)
+        && !(input.action === 'decline' && input.force)) {
+        throw new HttpError(403, 'Community Managers without a seller role can’t take or deliver orders.');
+    }
     switch (input.action) {
         case 'claim': {
             requireWelcome(seller);
@@ -376,9 +382,9 @@ export default handler(['POST'], async (req, res) => {
                 throw new HttpError(409, 'This order is being delivered. The seller handling it can pass on the rest instead.');
             }
 
-            // Who would still be able to take it once this seller passes?
+            // Who would still be able to take it once this seller passes? (Community Managers don't sell.)
             const [{ data: active }, { data: passed }] = await Promise.all([
-                db.from('sellers').select('user_id').eq('active', true),
+                db.from('sellers').select('user_id').eq('active', true).neq('rank', 'cm'),
                 db.from('order_declines').select('seller_id').eq('order_id', order.id)
             ]);
             const passedIds = new Set((passed || []).map((d) => d.seller_id));
@@ -456,7 +462,7 @@ Answer on Echo Market (Orders).`,
             // Close a buyer's missing-plane report after checking in-game who bought the planes.
             // { reportId, outcome: 'confirmed' | 'not_theft', note, culprits: [discordId, …] (confirmed only) }
             const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
-            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can close missing-plane reports.');
+            if (!onOrder && !isStaff(seller)) throw new HttpError(403, 'Only the sellers on this order, admins and Community Managers can close missing-plane reports.');
             const { data: report } = await db.from('missing_reports').select('*')
                 .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
             if (!report) throw new HttpError(404, 'Report not found.');
@@ -567,7 +573,7 @@ Answer on Echo Market (Orders).`,
             // Clear a confirmed theft: the warned culprit re-listed the planes for the buyer, checked in-game.
             // { reportId, note, verified: true }. The warning stays on the culprit's record.
             const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
-            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can clear a theft.');
+            if (!onOrder && !isStaff(seller)) throw new HttpError(403, 'Only the sellers on this order, admins and Community Managers can clear a theft.');
             const { data: report } = await db.from('missing_reports').select('*')
                 .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
             if (!report) throw new HttpError(404, 'Report not found.');
@@ -624,7 +630,7 @@ Answer on Echo Market (Orders).`,
         case 'missing-record-clear': {
             // The culprits re-listed the planes (report CLEARED): take the theft warnings off their record.
             const onOrder = deliveryShares(order).some((sh) => sh.sellerId === account.id);
-            if (!onOrder && !seller.is_admin) throw new HttpError(403, 'Only the sellers on this order and admins can change the culprits\' record.');
+            if (!onOrder && !isStaff(seller)) throw new HttpError(403, 'Only the sellers on this order, admins and Community Managers can change the culprits\' record.');
             const { data: report } = await db.from('missing_reports').select('*')
                 .eq('id', Math.floor(Number(input.reportId)) || 0).eq('order_id', order.id).maybeSingle();
             if (!report) throw new HttpError(404, 'Report not found.');

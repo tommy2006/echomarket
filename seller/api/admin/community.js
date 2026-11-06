@@ -1,10 +1,12 @@
-// POST /api/admin/community — admins only (Market Admins, Lead Ambassadors, admins added by hand).
+// POST /api/admin/community — admins (Market Admins, Lead Ambassadors, admins added by hand) and Community Managers.
 // Body: { action, ... }
 //   list                                   everything below, for the seller desk's Community tab
-//   reward-grant  { discordId, tier: 1|2, reason, expiresAt (ISO date or null = never) }
-//                 Raises a market user's daily budget (Tier 1 $25B, Tier 2 $40B). The reason is for admins only;
-//                 the buyer gets a "thank you" pop-up (and a DM). Tier 3 ($50B) is automatic for server boosters,
-//                 and Tier 1 / Tier 2 also come automatically from DISCORD_TIER1_ROLE_ID / DISCORD_TIER2_ROLE_ID.
+//   reward-grant  { discordId, tier: 1|2|3, reason, expiresAt (ISO date or null = never) }
+//                 { discordId, tier: 0, extraB: 5, reason, expiresAt }   custom: $5B extra on top of their tier
+//                 Raises a market user's daily budget (presets: Tier 1 $25B, Tier 2 $40B, Tier 3 $50B; custom
+//                 extras add up). The reason is for admins only; the buyer gets a "thank you" pop-up (and a DM).
+//                 Tier 3 is also automatic for server boosters, and Tier 1 / Tier 2 for DISCORD_TIER1_ROLE_ID /
+//                 DISCORD_TIER2_ROLE_ID.
 //   reward-revoke { id }
 //   announce      { title, body }          a pop-up shown to every buyer (until deleted)
 //   announce-delete { id }
@@ -13,8 +15,8 @@
 //   watch-remove  { id }
 // None of these tables is readable from the browser except announcements: everything goes through here.
 import {
-    admin, handler, requireUser, requireActiveSeller, accountName, body, cleanText, rateLimit, sendDM, syncDiscord,
-    BUDGET_TIERS, BUYER_URL, EMBED_COLORS, HttpError
+    admin, handler, requireUser, requireActiveSeller, isStaff, accountName, body, cleanText, rateLimit, sendDM, syncDiscord,
+    budgetFor, BUDGET_TIERS, BUYER_URL, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
 
 const OPEN = ['PENDING', 'CLAIMED', 'PARTIAL'];
@@ -29,7 +31,7 @@ const usdB = (n) => `$${n / 1e9}B`;
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const me = await requireActiveSeller(account);
-    if (!me.is_admin) throw new HttpError(403, 'Only admins and Lead Ambassadors can do this.');
+    if (!isStaff(me)) throw new HttpError(403, 'Only admins, Lead Ambassadors and Community Managers can do this.');
     await rateLimit('community:' + account.id, 120, 600);
     const input = body(req);
     const db = admin();
@@ -70,7 +72,9 @@ export default handler(['POST'], async (req, res) => {
         case 'reward-grant': {
             const discordId = discordIdOf(input.discordId);
             const tier = Number(input.tier);
-            if (![1, 2].includes(tier)) throw new HttpError(400, 'Choose Tier 1 or Tier 2 (Tier 3 is automatic for server boosters).');
+            if (![0, 1, 2, 3].includes(tier)) throw new HttpError(400, 'Choose Tier 1, 2 or 3, or a custom extra amount.');
+            const extra = tier === 0 ? Math.round(Number(input.extraB) * 1e9) : 0;
+            if (tier === 0 && !(extra >= 1e8 && extra <= 1e12)) throw new HttpError(400, 'The custom extra amount must be between $0.1B and $1,000B.');
             const reason = cleanText(input.reason, 500);
             if (!reason) throw new HttpError(400, 'Write the reason (only admins see it).');
             let expiresAt = null;
@@ -82,14 +86,18 @@ export default handler(['POST'], async (req, res) => {
             const { data: buyer } = await db.from('accounts').select('*').eq('discord_id', discordId).maybeSingle();
             if (!buyer) throw new HttpError(404, "That Discord account isn't on the market yet: they need to sign in on the market website once.");
             const { data: reward, error } = await db.from('budget_rewards').insert({
-                discord_id: discordId, tier, reason, expires_at: expiresAt, ...by
+                discord_id: discordId, tier, bonus_usd: extra, reason, expires_at: expiresAt, ...by
             }).select().single();
+            if (error?.code === '23514' || error?.code === 'PGRST204') throw new HttpError(503, 'Custom rewards need a database update: re-run supabase/schema.sql.');
             need(error);
             const until = expiresAt ? ` until ${new Date(expiresAt).toUTCString().replace(/ \d\d:\d\d:\d\d GMT/, '')}` : '';
+            const now = await budgetFor(buyer);   // with every reward they have, this one included
             const dm = await sendDM(buyer, {
                 title: '🎉 Your Echo Market daily budget was raised!',
                 color: EMBED_COLORS.request,
-                description: `Thank you for your active dedication to the Echo Alliances community! As a thank-you, your daily market budget is now **${usdB(BUDGET_TIERS[tier].limit)}**${until} (normally ${usdB(BUDGET_TIERS[0].limit)}).`,
+                description: extra
+                    ? `Congratulations, and thank you for being part of the Echo Alliances community! As a reward, you get **${usdB(extra)} extra** daily market budget${until}: your daily budget is now **${usdB(now.limit)}** (normally ${usdB(BUDGET_TIERS[0].limit)}).`
+                    : `Thank you for your active dedication to the Echo Alliances community! As a thank-you, your daily market budget is now **${usdB(now.limit)}**${until} (normally ${usdB(BUDGET_TIERS[0].limit)}).`,
                 url: BUYER_URL || undefined
             });
             return res.json({ ok: true, reward, dm });

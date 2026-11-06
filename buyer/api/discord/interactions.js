@@ -5,7 +5,8 @@
 // ran the command. The rules are the website's own: lib/moderation.js (bans, warnings) and lib/orders.js
 // (orders), so a ban or an order from Discord is exactly the same as one from the website.
 //
-//   /market ban|unban|warn|message|info   Market Admins only (DISCORD_MARKET_ADMIN_ROLE_ID), checked here too
+//   /market ban|unban|warn|message|info   Market Admins and Community Managers only (DISCORD_MARKET_ADMIN_ROLE_ID,
+//                                         DISCORD_COMMUNITY_MANAGER_ROLE_ID), checked here too
 //   /airline create|rename|list            any member who has signed in on the website once (deleting: website only)
 //   /order                                 same: up to 3 aircraft types, then "Send order" / "Add aircraft" /
 //                                          "Remove last" / "Cancel" buttons ("Add aircraft" opens a small form)
@@ -87,7 +88,8 @@ const delivered = (d = {}) => [d.dm === 'sent' ? 'DM sent' : d.dm && d.dm !== 's
 
 async function market(i) {
     const roles = i.member?.roles || [];
-    if (!ROLE_IDS.marketAdmin || !roles.includes(ROLE_IDS.marketAdmin)) return say('⛔ Only Market Admins can use `/market`.');
+    const staff = [ROLE_IDS.marketAdmin, ROLE_IDS.communityManager].filter(Boolean);
+    if (!staff.some((r) => roles.includes(r))) return say('⛔ Only Market Admins and Community Managers can use `/market`.');
     const sub = i.data.options?.[0];
     const o = opts(sub?.options);
     const me = i.member.user;
@@ -103,7 +105,7 @@ async function market(i) {
     switch (sub?.name) {
         case 'ban':
             if (targetId === me.id) return say("You can't ban yourself.");
-            if ((targetMember?.roles || []).includes(ROLE_IDS.marketAdmin)) return say("You can't market-ban another Market Admin.");
+            if (staff.some((r) => (targetMember?.roles || []).includes(r))) return say("You can't market-ban a Market Admin or Community Manager.");
             return later(i, async () => {
                 const target = await resolveTarget({ discordId: targetId, name: targetName });
                 const { ban, delivery } = await issueBan({ target, duration: o.length, reason: o.reason, by, source: 'bot' });

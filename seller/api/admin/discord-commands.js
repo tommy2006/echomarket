@@ -7,7 +7,7 @@
 // Uses the bot token on the server, so nobody has to handle it. Installing needs DISCORD_GUILD_ID and the bot
 // invited with the "applications.commands" scope (otherwise Discord answers "Missing Access").
 import {
-    handler, requireUser, requireActiveSeller, accountName, body, rateLimit, discordBot, getSetting, setSetting,
+    handler, requireUser, requireActiveSeller, isStaff, accountName, body, rateLimit, discordBot, getSetting, setSetting,
     DM_AVAILABLE, GUILD_IDS, HttpError
 } from '../../lib/server.js';
 import { COMMANDS } from '../../lib/discord-commands.js';
@@ -23,7 +23,7 @@ async function describeChannel(id) {
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const me = await requireActiveSeller(account);
-    if (!me.is_admin) throw new HttpError(403, 'Only admins can manage the Discord commands.');
+    if (!isStaff(me)) throw new HttpError(403, 'Only admins and Community Managers can manage the Discord commands.');
     await rateLimit('discord-commands:' + account.id, 20, 600);
     if (!DM_AVAILABLE) throw new HttpError(503, 'The bot token (DISCORD_BOT_TOKEN) is not set in this Vercel project.');
     if (!GUILD_IDS.length) throw new HttpError(503, 'DISCORD_GUILD_ID is not set in this Vercel project.');

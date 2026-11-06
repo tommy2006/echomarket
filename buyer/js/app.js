@@ -401,7 +401,7 @@ const TOUR_STEPS = [
 // =========================================================================
 //  Budget rewards: a "thank you" with fireworks, once per new reward (or when someone starts boosting).
 // =========================================================================
-const usdB = (n) => `$${Math.round(n / 1e9)}B`;
+const usdB = (n) => `$${+(n / 1e9).toFixed(1)}B`;   // $25B, $2.5B
 function BudgetCelebration({ budget, name, onClose }) {
     const booster = budget.source === 'booster';
     const until = budget.expiresAt ? new Date(budget.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : null;
@@ -409,7 +409,7 @@ function BudgetCelebration({ budget, name, onClose }) {
         <${Modal} open=${true} onClose=${onClose} size="sm" title=${booster ? t('💜 Thank you for boosting!') : t('🎉 Thank you!')}
             footer=${html`<${Button} icon="heart" onClick=${onClose}>${t("You're welcome")}<//>`}>
             <div className="text-center space-y-3">
-                <p className="label text-sky-300">${booster ? t('Server booster') : budget.source === 'role' ? t('Role reward · Tier {n}', { n: budget.tier }) : t('Reward · Tier {n}', { n: budget.tier })}</p>
+                <p className="label text-sky-300">${booster ? t('Server booster') : budget.source === 'role' ? t('Role reward · Tier {n}', { n: budget.tier }) : budget.source === 'reward' ? t('Reward · Tier {n}', { n: budget.tier }) : t('Special reward')}${budget.bonus ? ` · ${t('+{amount} extra', { amount: usdB(budget.bonus) })}` : ''}</p>
                 <p className="text-4xl font-black text-white tracking-tight">${usdB(budget.limit)}<span className="text-base font-bold text-slate-400"> ${t('daily budget')}</span></p>
                 <p className="text-sm text-slate-200 leading-relaxed">${booster
                     ? (name ? t('{name}, thank you for boosting the Echo Alliances server! Your boost keeps our community going. As a thank-you, your daily market budget is {limit} instead of {normal} for as long as you boost.', { name, limit: usdB(budget.limit), normal: usdB(10e9) })

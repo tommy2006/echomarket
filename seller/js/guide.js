@@ -63,7 +63,8 @@ export const GUIDE = [
         ['Moderation → Bot commands', 'Install/update the Discord slash commands and choose the ordering channel(s).'],
         ['Community → Announcements', 'A pop-up for every buyer plus a home banner until you delete it.'],
         ['Community → Alert list', 'Add a Discord ID with a reason; their orders show CAUTION to sellers, and the Discord order post shows the reason in full.'],
-        ['Community → Budget rewards', "Raise a buyer's daily budget to Tier 1 ($25B) or Tier 2 ($40B), with an optional end date (boosters get Tier 3 automatically)."],
+        ['Community → Budget rewards', "Raise a buyer's daily budget with a preset (Tier 1 $25B, Tier 2 $40B, Tier 3 $50B) or a custom extra amount on top (e.g. for an event win); optional end date."],
+        ['Community Managers', 'Lime desk: Theft reports, Alliances, Moderation and Community (no Sellers tab, no Cup); they only sell if they also have a seller role.'],
         ['/market in Discord', 'ban, unban, warn, message, info without opening the desk.']
     ] }
 ];

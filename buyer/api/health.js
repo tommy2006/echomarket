@@ -52,10 +52,10 @@ export default async function handler(req, res) {
             const { count: sellers } = await db.from('sellers').select('user_id', { count: 'exact', head: true }).eq('active', true);
             const { count: airlines } = await db.from('airlines').select('id', { count: 'exact', head: true });
             add('Database', 'schema.sql installed', true, `${alliances} alliances, ${accounts} accounts, ${airlines} airlines`, null, { private: true });
-            // The newest parts of schema.sql (Sellers' Cup table and accounts.timed_out_until, October 2026):
+            // The newest parts of schema.sql (November 2026: Community Managers, custom budget rewards):
             // tell whether it has been re-run since.
-            const { error: newest } = await db.from('seller_cups').select('id').limit(1)
-                .then((r) => (r.error ? r : db.from('accounts').select('timed_out_until').limit(1)));
+            const { error: newest } = await db.from('sellers').select('community_manager').limit(1)
+                .then((r) => (r.error ? r : db.from('budget_rewards').select('bonus_usd').limit(1)));
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,
@@ -140,6 +140,7 @@ export default async function handler(req, res) {
                 // Moderation roles. Market Banned is read by both sites (it blocks the market).
                 const modRoles = [['marketBanned', 'DISCORD_MARKET_BANNED_ROLE_ID', 'Market Banned', 'blocks the buyer market', 'BOTH']];
                 modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', APP === 'seller' ? 'admin rights on the seller desk' : 'may use the bot\'s /market commands', 'BOTH']);
+                modRoles.splice(1, 0, ['communityManager', 'DISCORD_COMMUNITY_MANAGER_ROLE_ID', 'Community Manager', APP === 'seller' ? 'moderation, community and theft tools on the seller desk (no selling)' : 'may use the bot\'s /market commands', 'BOTH']);
                 for (const [key, env, label, effect, where] of modRoles) {
                     const id = ROLE_IDS[key];
                     add('Discord roles', `${env} (${label})`, Boolean(id) && roleNames.has(id),

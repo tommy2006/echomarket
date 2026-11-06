@@ -150,7 +150,7 @@ export default handler(['POST'], async (req, res) => {
             };
         })
         // Seller-desk actions only: drop buyers whose only events are their own orders.
-        .filter((x) => x.onList || x.ordersTaken || x.aircraftSold)
+        .filter((x) => (x.onList && x.rank !== 'cm') || x.ordersTaken || x.aircraftSold)   // Community Managers don't sell
         // Ranked by orders taken, then aircraft delivered (sale value is only shown, never ranked on:
         // it would favour sellers of expensive types).
         .sort((x, y) => y.ordersTaken - x.ordersTaken || y.aircraftSold - x.aircraftSold || x.name.localeCompare(y.name));

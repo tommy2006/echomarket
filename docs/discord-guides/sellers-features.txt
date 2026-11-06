@@ -58,7 +58,7 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 ━━━━━━━━━━━━━━━━━━━━
 
 ## 🛡️ Admins only
-*Lead Ambassadors, Market Admins and sellers made admin by hand.*
+*Lead Ambassadors, Market Admins and sellers made admin by hand. 🟢 Community Managers get everything here except the Sellers tab and the Cup, and don't sell unless they also have a seller role.*
 - **Decline for all:** close any order for the whole team at once (spam, rule breaks); the buyer sees your reason.
 - **Delete:** remove an order forever.
 - **Alert reasons:** see *why* a buyer is on the alert list on their CAUTION orders.
@@ -70,6 +70,6 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 - **Moderation → Bot commands:** install/update the Discord slash commands and choose the ordering channel(s).
 - **Community → Announcements:** a pop-up for every buyer plus a home banner until you delete it.
 - **Community → Alert list:** add a Discord ID with a reason; their orders show CAUTION, and the Discord order post shows the reason in full.
-- **Community → Budget rewards:** raise a buyer's daily budget to Tier 1 ($25B) or Tier 2 ($40B), with an optional end date (boosters get Tier 3 automatically).
+- **Community → Budget rewards:** raise a buyer's daily budget with a preset (Tier 1/2/3) or a custom extra amount on top (e.g. event wins); optional end date.
 - **`/market` in Discord:** `ban`, `unban`, `warn`, `message`, `info` without opening the desk.
 -# Questions? Ask a Lead Ambassador.

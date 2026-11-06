@@ -539,6 +539,7 @@ What this switches on:
 | `DISCORD_GUILD_ID` | **both** (buyer is new) | Echo Alliances server ID: only its members can use the market |
 | `DISCORD_MARKET_BANNED_ROLE_ID` | **both** | Market Banned role ID |
 | `DISCORD_MARKET_ADMIN_ROLE_ID` | seller | Market Admin role ID |
+| `DISCORD_COMMUNITY_MANAGER_ROLE_ID` | seller | Community Manager role ID (optional: moderation, community and theft tools, no selling) |
 | `DISCORD_LOG_CHANNEL_ID` | seller | logging channel ID |
 | `CRON_SECRET` | seller | any random text, 16+ characters (lets Vercel run the daily clean-up of ended bans) |
 
@@ -562,6 +563,7 @@ Do these **in this order** (Discord checks the URL in step 2, so the website mus
 |---|---|
 | `DISCORD_PUBLIC_KEY` | Developer Portal → your app → **General Information** → **Public Key** |
 | `DISCORD_MARKET_ADMIN_ROLE_ID` | Market Admin role ID (same as in the seller project) |
+| `DISCORD_COMMUNITY_MANAGER_ROLE_ID` | Community Manager role ID (same as in the seller project; lets them use `/market`) |
 | `DISCORD_LOG_CHANNEL_ID` | logging channel ID (same as in the seller project) |
 
 (`DISCORD_GUILD_ID` and `DISCORD_MARKET_BANNED_ROLE_ID` are already there from Part 11.)

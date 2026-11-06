@@ -49,18 +49,26 @@ const SELLER_TOUR = [
 ];
 
 // Echo hierarchy (sellers.rank). Lead Ambassadors are admins; anyone else can be made admin by hand.
-const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Admin' };
+// 'cm' = Community Manager without a seller role (lime look): buyer-facing tools, no selling.
+const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Admin', cm: 'Community Manager' };
 // 'admin' = admin added by hand without any Discord seller role (black-and-white look); only shown while
 // they really are an admin.
 const rankOf = (row) => {
     const r = RANK_LABEL[row?.rank] ? row.rank : 'verified';
     return r === 'admin' && !(row.is_admin || row.isAdmin) ? 'verified' : r;
 };
-// "· admin" after the title, unless the title already says so.
-const adminSuffix = (row) => ((row?.is_admin || row?.isAdmin) && !['lead', 'admin'].includes(rankOf(row)) ? ' · admin' : '');
-// Effective admin, the same rule as the server's isAdminSeller().
-// admin_now: what the last role check said (includes the Market Admin role).
-const withAdmin = (row) => row && { ...row, is_admin: Boolean(row.admin_now ?? (row.is_admin || row.rank === 'lead' || row.market_admin)) };
+// "· admin" (or "· Community Manager") after the title, unless the title already says so.
+const adminSuffix = (row) => ((row?.is_admin || row?.isAdmin) && !['lead', 'admin'].includes(rankOf(row)) ? ' · admin'
+    : row?.is_cm && rankOf(row) !== 'cm' ? ' · Community Manager' : '');
+// Effective admin / Community Manager, the same rules as the server's isAdminSeller() / isCommunityManager().
+// admin_now, cm_now: what the last role check said (Market Admin and Community Manager roles).
+// is_staff: admins and Community Managers (Moderation, Community, every theft report). can_sell: not a CM-only.
+const withAdmin = (row) => {
+    if (!row) return row;
+    const is_admin = Boolean(row.admin_now ?? (row.is_admin || row.rank === 'lead' || row.market_admin));
+    const is_cm = Boolean(row.cm_now ?? (row.community_manager || row.rank === 'cm'));
+    return { ...row, is_admin, is_cm, is_staff: is_admin || is_cm, can_sell: row.rank !== 'cm' };
+};
 const LS_MSG_SEEN = 'echo_seller_msg_seen_v1';   // order id → newest buyer message id this seller has seen
 function RankBadge({ rank, admin }) {
     const c = window.ECHO_RANK_COLORS?.[rank] || {};
@@ -266,13 +274,13 @@ function App() {
                     if (me.source === 'discord_role' && age > 50 * 60e3) {
                         const r = await check;
                         if (r && !r.seller) me = null;
-                        else if (r?.rank) me = { ...me, rank: r.rank, admin_now: r.admin };   // promoted or demoted on Discord
+                        else if (r?.rank) me = { ...me, rank: r.rank, admin_now: r.admin, cm_now: r.cm };   // promoted or demoted on Discord
                     } else {
                         check.then((r) => {
                             if (r && !r.seller) { setSeller(null); return; }   // lost the seller role on Discord
                             if (!r?.rank) return;
                             setSeller((cur) => {
-                                const next = cur && withAdmin({ ...cur, rank: r.rank, admin_now: r.admin });
+                                const next = cur && withAdmin({ ...cur, rank: r.rank, admin_now: r.admin, cm_now: r.cm });
                                 if (next) window.setSellerTint?.(rankOf(next));
                                 return next;
                             });
@@ -290,7 +298,7 @@ function App() {
             sb.from('order_flags').select('*'),
             sb.from('airlines').select('*').eq('owner_id', userId).order('created_at'),
             sb.from('order_declines').select('*'),
-            sb.from('sellers').select('user_id').eq('active', true),
+            sb.from('sellers').select('user_id').eq('active', true).neq('rank', 'cm'),   // sellers (CMs don't sell)
             sb.from('order_messages').select('*').order('created_at').limit(2000),
             sb.from('missing_reports').select('*').order('created_at').limit(1000),
             sb.from('order_alerts').select('order_id').limit(2000),
@@ -298,8 +306,8 @@ function App() {
         ]);
         setCulprits(cul.data || []);   // (empty until schema.sql has the table)
         setAlerts(Object.fromEntries((oal.data || []).map((a) => [a.order_id, true])));
-        // Admins and Lead Ambassadors also see why someone is on the alert list.
-        if (me.is_admin) api('/api/admin/community', { action: 'list' })
+        // Admins, Lead Ambassadors and Community Managers also see why someone is on the alert list.
+        if (me.is_staff) api('/api/admin/community', { action: 'list' })
             .then((r) => setAlertReasons(Object.fromEntries((r.watchlist || []).map((w) => [w.discord_id, w.reason])))).catch(() => {});
         setMessages(msg.data || []);
         setReports(rep.data || []);   // (empty until schema.sql has the table)
@@ -395,7 +403,7 @@ function App() {
     const onOrder = (o) => deliveryShares(o).some((sh) => sh.sellerId === userId);
     const reportsToCheck = reports.filter((r) => r.status === 'OPEN')
         .map((r) => ({ r, o: orders.find((o) => o.id === r.order_id) }))
-        .filter(({ o }) => o && (seller?.is_admin || onOrder(o)));
+        .filter(({ o }) => o && (seller?.is_staff || onOrder(o)));
     const unreadOf = (orderId) => messagesOf(orderId).filter((m) => m.from_role === 'buyer' && m.id > (msgSeen[orderId] || 0)).length;
     const markSeen = (orderId) => {
         const newest = Math.max(0, ...messagesOf(orderId).map((m) => m.id));
@@ -508,7 +516,7 @@ function App() {
     if (seller === undefined) return html`<${EchoLoader} full />`;
     if (!seller) return html`<${NotASeller} account=${account} />`;
     // Every seller goes through the sellers' welcome once ("A new era begins"). Older databases: no column, no redirect.
-    if ('welcome_done_at' in seller && !seller.welcome_done_at) {
+    if ('welcome_done_at' in seller && !seller.welcome_done_at && seller.can_sell) {   // (Community Managers don't sell)
         window.location.replace('/welcome.html');
         return html`<${EchoLoader} full />`;
     }
@@ -523,9 +531,10 @@ function App() {
         all: { label: t('All orders'), icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         thefts: { label: t('Theft reports'), icon: 'shield-alert', fn: () => false },   // every seller
         alliances: { label: t('Alliances'), icon: 'chart-column', fn: () => false },     // every seller
-        // Admins only: seller performance and alliance statistics (the API refuses everyone else too).
-        ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false },
-                                mod: { label: 'Moderation', icon: 'shield', fn: () => false },
+        // Admins only: seller performance and the Cup. Admins and Community Managers: Moderation and Community
+        // (the API refuses everyone else too).
+        ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false } } : {}),
+        ...(seller.is_staff ? { mod: { label: 'Moderation', icon: 'shield', fn: () => false },
                                 community: { label: 'Community', icon: 'sparkles', fn: () => false } } : {})
     };
     if (!tabs[tab]) setTimeout(() => setTab('open'));
@@ -555,7 +564,7 @@ function App() {
                     <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${adminSuffix(seller)}</p>
                 </div>
                 <div className="flex-1"></div>
-                <${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />
+                ${seller.can_sell && html`<${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />`}
                 <${LanguageMenu} packs=${['app']} />
                 <a href=${CONFIG.BUYER_URL || "#"} className="hidden sm:flex p-2.5 rounded-full text-slate-400 hover:bg-slate-800 hover:text-white" title=${t('Open the market')}><${Icon} name="shopping-bag" className="w-5 h-5" /></a>
                 <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId} onTour=${() => setTourOpen(true)} />
@@ -567,7 +576,7 @@ function App() {
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} onShowUnread=${showUnread} />
             <${CupBanner} userId=${userId} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
-            <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin}
+            <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin} isStaff=${seller.is_staff}
                 theftHint=${investigating.length ? t('{n} under investigation', { n: investigating.length }) : reportsToCheck.length ? t('{n} to check', { n: reportsToCheck.length }) : ''} />
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
@@ -577,7 +586,7 @@ function App() {
                         <b>${orderRef(o)}</b><span className="opacity-80">${r.buyer_name}: “${r.details}”</span><span className="text-xs opacity-60">${timeAgo(r.created_at)}</span>
                     </button></li>`)}</ul>
             </div>`}
-            ${!airlines.length && html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5">
+            ${!airlines.length && seller.can_sell && html`<div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5">
                 <${Icon} name="triangle-alert" className="w-5 h-5 text-amber-300" />
                 <p className="flex-1 text-sm text-amber-100"><b>${t('You need an airline profile to take orders.')}</b> ${t("Buyers see which airline is selling to them. Create one on the market site's Airlines page (same Discord login), then come back.")}</p>
                 <a href=${(CONFIG.BUYER_URL || "") + "/#airlines"}><${Button} size="sm" variant="white">${t('Create airline')}<//></a>
@@ -623,8 +632,8 @@ function App() {
 
             ${tab === 'thefts' ? html`<${TheftsView} reports=${reports} orders=${orders} culpritsByReport=${culpritsByReport} seller=${seller} userId=${userId}
                 onOpenOrder=${openDetail} onReport=${onReport} onCulprits=${refreshCulprits} />`
-            : tab === 'community' && seller.is_admin ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
-            : tab === 'mod' && seller.is_admin ? html`<${ModerationView} userId=${userId} />`
+            : tab === 'community' && seller.is_staff ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
+            : tab === 'mod' && seller.is_staff ? html`<${ModerationView} userId=${userId} />`
             : tab === 'team' && seller.is_admin ? html`<${SellersTab} userId=${userId} onOpenOrder=${openDetail} />`
             : tab === 'alliances' ? html`<${AllianceStats} />`
             : loading ? html`<${EchoLoader} className="py-16" />`
@@ -646,7 +655,7 @@ function App() {
             culpritsByReport=${culpritsByReport} onReport=${onReport} onCulprits=${refreshCulprits}
             onMessage=${(m) => setMessages((l) => [...l.filter((x) => x.id !== m.id), m])}
             actions=${actions} onClose=${closeDetail} />`}
-        ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_admin} onClose=${() => setBuyerOf(null)}
+        ${buyerOf && html`<${BuyerModal} order=${buyerOf} orders=${orders} flags=${flags} isAdmin=${seller.is_staff} onClose=${() => setBuyerOf(null)}
             onOpenOrder=${(id) => { setBuyerOf(null); openDetail(id); }} />`}
         ${detailId && !detail && !loading && html`<${Modal} open=${true} onClose=${closeDetail} title=${t('Order not found')} size="sm">
             <p className="text-sm text-slate-400">${t("{ref} doesn't exist or was deleted.", { ref: detailId })}</p><//>`}
@@ -1901,7 +1910,7 @@ function ModerationView({ userId }) {
 // =========================================================================
 //  Community (admins and Lead Ambassadors): pop-up announcements for buyers, daily budget rewards, alert list.
 // =========================================================================
-const usdB = (n) => `$${Math.round(n / 1e9)}B`;
+const usdB = (n) => `$${+(n / 1e9).toFixed(1)}B`;   // $25B, $2.5B
 function CommunityView({ onAlertsChanged }) {
     const [data, setData] = useState(null);
     const [error, setError] = useState('');
@@ -1980,7 +1989,8 @@ function AlertListCard({ items, run }) {
 
 function RewardsCard({ data, run }) {
     const [id, setId] = useState('');
-    const [tier, setTier] = useState(1);
+    const [tier, setTier] = useState(1);   // 1, 2, 3 (presets) or 0 = custom extra
+    const [extraB, setExtraB] = useState('');
     const [reason, setReason] = useState('');
     const [never, setNever] = useState(true);
     const [until, setUntil] = useState('');
@@ -1990,39 +2000,43 @@ function RewardsCard({ data, run }) {
     const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
     const grant = async () => {
         setBusy(true);
-        const ok = await run({ action: 'reward-grant', discordId: id.trim(), tier, reason: reason.trim(), expiresAt: never ? null : new Date(until + 'T23:59:59Z').toISOString() },
+        const ok = await run({ action: 'reward-grant', discordId: id.trim(), tier, extraB: tier === 0 ? Number(extraB) : undefined, reason: reason.trim(), expiresAt: never ? null : new Date(until + 'T23:59:59Z').toISOString() },
             (r) => `Reward granted. The buyer sees a "thank you" pop-up${r.dm === 'sent' ? ' and got a DM' : ''}.`);
-        if (ok) { setId(''); setReason(''); setUntil(''); setNever(true); }
+        if (ok) { setId(''); setReason(''); setUntil(''); setNever(true); setExtraB(''); }
         setBusy(false);
     };
     return html`<section className="card p-4 space-y-3">
         <div><p className="font-bold text-white flex items-center gap-2"><${Icon} name="gift" className="w-4 h-4" /> Daily budget rewards</p>
-            <p className="text-xs text-slate-400 mt-0.5">Raise a market user's 24-hour limit as a thank-you for their activity. Tier 0 is ${usdB(tiers[0]?.limit || 10e9)} for everyone; server boosters get Tier 3 automatically. They get a celebration pop-up; the reason stays with the admins.</p></div>
-        <div className="grid sm:grid-cols-4 gap-1.5">${[0, 1, 2, 3].map((t) => html`<div key=${t} className=${`p-2.5 rounded-xl border text-center ${t === 1 || t === 2 ? 'border-slate-700' : 'border-slate-800 opacity-70'}`}>
+            <p className="text-xs text-slate-400 mt-0.5">Raise a market user's 24-hour limit as a thank-you. Tiers 1–3 are presets (their highest tier counts); a custom reward adds an extra amount on top of their tier, e.g. for a special event win, and several custom rewards add up. Tier 0 is ${usdB(tiers[0]?.limit || 10e9)} for everyone; server boosters get Tier 3 automatically. They get a celebration pop-up; the reason stays with the admins.</p></div>
+        <div className="grid sm:grid-cols-4 gap-1.5">${[0, 1, 2, 3].map((t) => html`<div key=${t} className=${`p-2.5 rounded-xl border text-center ${t ? 'border-slate-700' : 'border-slate-800 opacity-70'}`}>
             <p className="text-xs font-black text-white">Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</p>
-            <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members · Tier 1 role or granted' : t === 2 ? 'big contribution / even more active · Tier 2 role or granted' : 'server boosters (automatic)'}</p>
+            <p className="text-[10px] text-slate-400">${t === 0 ? 'everyone (default)' : t === 1 ? 'active members · Tier 1 role or granted' : t === 2 ? 'big contribution / even more active · Tier 2 role or granted' : 'server boosters (automatic) or granted'}</p>
         </div>`)}</div>
         <div className="grid sm:grid-cols-2 gap-2">
             <div className="space-y-1">
                 <input value=${id} onChange=${(e) => setId(e.target.value)} inputMode="numeric" className="input font-mono" placeholder="Discord user ID (must be on the market)" />
                 <${DiscordName} id=${id} />
             </div>
-            <div className="grid grid-cols-2 gap-1.5">${[1, 2].map((t) => html`<button key=${t} type="button" onClick=${() => setTier(t)}
-                className=${`py-2 rounded-xl border text-xs font-bold ${tier === t ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>Tier ${t} · ${usdB(tiers[t]?.limit || 0)}</button>`)}</div>
+            <div className="space-y-1.5">
+                <div className="grid grid-cols-4 gap-1.5">${[1, 2, 3, 0].map((t) => html`<button key=${t} type="button" onClick=${() => setTier(t)}
+                    className=${`py-2 rounded-xl border text-xs font-bold ${tier === t ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:border-slate-500'}`}>${t ? html`Tier ${t}<span className="block text-[10px] font-medium opacity-70">${usdB(tiers[t]?.limit || 0)}</span>` : html`Custom<span className="block text-[10px] font-medium opacity-70">+ extra</span>`}</button>`)}</div>
+                ${tier === 0 && html`<label className="flex items-center gap-2 text-xs text-slate-300">Extra daily budget: $
+                    <input type="number" min="0.1" max="1000" step="0.1" value=${extraB} onInput=${(e) => setExtraB(e.target.value)} className="input !py-1.5 !w-24" placeholder="5" /> B on top of their tier</label>`}
+            </div>
         </div>
         <input value=${reason} maxLength="500" onChange=${(e) => setReason(e.target.value)} className="input" placeholder="Reason (admins only), e.g. very active in events this month" />
         <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs text-slate-200"><input type="checkbox" checked=${never} onChange=${(e) => setNever(e.target.checked)} /> Never ends</label>
             ${!never && html`<label className="flex items-center gap-2 text-xs text-slate-300">Ends on <input type="date" min=${tomorrow} value=${until} onChange=${(e) => setUntil(e.target.value)} className="input !py-1.5 !w-auto" /></label>`}
             <span className="flex-1"></span>
-            <${Button} size="sm" icon="gift" busy=${busy} disabled=${!idOk || !reason.trim() || (!never && !until)} onClick=${grant}>Grant reward<//>
+            <${Button} size="sm" icon="gift" busy=${busy} disabled=${!idOk || !reason.trim() || (!never && !until) || (tier === 0 && !(Number(extraB) >= 0.1 && Number(extraB) <= 1000))} onClick=${grant}>Grant reward<//>
         </div>
         <div className="grid md:grid-cols-2 gap-3 pt-2 border-t border-slate-800">
             <div>
                 <p className="label text-slate-500 mb-1.5">Active rewards (${data.rewards.length})</p>
                 ${!data.rewards.length ? html`<p className="text-xs text-slate-500">None yet.</p>`
                 : html`<ul className="space-y-2">${data.rewards.map((r) => html`<li key=${r.id} className="flex gap-2 items-start">
-                    <div className="flex-1 min-w-0"><p className="text-sm text-white"><b>${r.name || r.discord_id}</b> · Tier ${r.tier} (${usdB(tiers[r.tier]?.limit || 0)})</p>
+                    <div className="flex-1 min-w-0"><p className="text-sm text-white"><b>${r.name || r.discord_id}</b> · ${r.tier ? `Tier ${r.tier} (${usdB(tiers[r.tier]?.limit || 0)})` : `Custom: +${usdB(Number(r.bonus_usd) || 0)} extra`}</p>
                         <p className="text-xs text-slate-300">${r.reason}</p>
                         <p className="text-[11px] text-slate-500">${r.granted_by_name} · ${r.expires_at ? `until ${fmtDate(r.expires_at)}` : 'no end date'}</p></div>
                     <${Button} size="sm" variant="ghost" icon="x" onClick=${async () => {
@@ -2068,9 +2082,11 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
     </nav>`;
 }
 
-function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
-    const tools = isAdmin ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS] : [THEFT_TOOL, ALLIANCES_TOOL];
-    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2'}`}>
+function AdminShortcuts({ tab, setTab, isAdmin, isStaff, theftHint = '' }) {
+    // Admins: everything. Community Managers: everything but Sellers. Sellers: theft reports and alliances.
+    const tools = isAdmin ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS]
+        : isStaff ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS.filter((x) => x.tab !== 'team')] : [THEFT_TOOL, ALLIANCES_TOOL];
+    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : isStaff ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2'}`}>
         ${tools.map((tool) => {
             const hint = tool.tab === 'thefts' && theftHint ? theftHint : tool.hint;
             const alert = tool.tab === 'thefts' && theftHint;
@@ -2080,7 +2096,7 @@ function AdminShortcuts({ tab, setTab, isAdmin, theftHint = '' }) {
                 <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : alert ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${tool.icon} className="w-4 h-4" /></span>
                 <span className="min-w-0">
                     <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${tool.label}</span>
-                    <span className=${`${isAdmin ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? t('Open · tap to go back to orders') : hint}</span>
+                    <span className=${`${isStaff ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? t('Open · tap to go back to orders') : hint}</span>
                 </span>
             </button>`;
         })}
@@ -2188,17 +2204,18 @@ function PassedBadge({ passed, userId, teamSize }) {
 function OrderActions({ order, userId, seller, actions, compact }) {
     const mine = order.seller_id === userId;
     const helping = !mine && isHelping(order, userId);
-    const canManage = mine || seller.is_admin;
+    const sell = seller.can_sell !== false;   // a Community Manager without a seller role doesn't sell
+    const canManage = sell && (mine || seller.is_admin);
     const canUpdate = canManage || helping;
     const size = compact ? 'sm' : 'md';
     const stop = (fn) => (e) => { e.stopPropagation(); fn(order); };
     return html`<div className="flex flex-wrap gap-1.5" onClick=${(e) => e.stopPropagation()}>
-        ${order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>${t('Take order')}<//>`}
+        ${sell && order.status === 'PENDING' && html`<${Button} size=${size} icon="hand" onClick=${stop(actions.claim)}>${t('Take order')}<//>`}
         ${['CLAIMED', 'PARTIAL', 'FULFILLED'].includes(order.status) && canUpdate && html`<${Button} size=${size} icon="truck" variant=${order.status === 'FULFILLED' ? 'secondary' : 'primary'} onClick=${stop(actions.progress)}>${t('Update delivery')}<//>`}
         ${deliveredOn(order, userId) && html`<${Button} size=${size} icon="bell-ring" onClick=${stop(actions.remind)}>${t('Remind buyer')}<//>`}
-        ${canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>${t('Take over')}<//>`}
+        ${sell && canTakeOver(order, userId) && html`<${Button} size=${size} icon="users" variant=${compact ? 'primary' : 'secondary'} onClick=${stop(actions.join)}>${t('Take over')}<//>`}
         ${['CLAIMED', 'PARTIAL'].includes(order.status) && (canManage || helping) && !compact && html`<${Button} size=${size} variant="secondary" icon=${helping ? 'log-out' : orderHelpers(order).length ? 'forward' : order.filled > 0 ? 'forward' : 'undo-2'} onClick=${stop(actions.release)}>${helping ? t('Stop delivering') : orderHelpers(order).length ? t('Hand over') : order.filled > 0 ? t('Pass on the rest') : t('Release')}<//>`}
-        ${order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>${t('Decline')}<//>`}
+        ${sell && order.status === 'PENDING' && !compact && html`<${Button} size=${size} variant="ghost" icon="ban" onClick=${stop(actions.decline)}>${t('Decline')}<//>`}
         ${seller.is_admin && ACTIVE_STATUSES.includes(order.status) && !compact && html`<${Button} size=${size} variant="ghost" icon="octagon-x" className="!text-rose-300" onClick=${stop(actions.forceDecline)}>${t('Decline for all')}<//>`}
         ${!compact && html`<${Button} size=${size} variant="ghost" icon="flag" onClick=${stop(actions.flag)}>${t('Flag')}<//>`}
         ${seller.is_admin && !compact && html`<${Button} size=${size} variant="ghost" icon="trash-2" className="!text-rose-300" onClick=${stop(actions.remove)}>${t('Delete')}<//>`}
@@ -2324,7 +2341,7 @@ function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, 
                 <p className="label text-slate-500 mb-2">${t('Missing planes')} (${reports.length})</p>
                 <div className="space-y-2">${[...reports].reverse().map((r) => html`<${MissingReport} key=${r.id} report=${r} order=${order}
                     culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits}
-                    canClose=${seller.is_admin || deliveryShares(order).some((sh) => sh.sellerId === userId)} onDone=${onReport} />`)}</div>
+                    canClose=${seller.is_staff || deliveryShares(order).some((sh) => sh.sellerId === userId)} onDone=${onReport} />`)}</div>
             </div>`}
             <div>
                 <p className="label text-slate-500 mb-2">${t('Messages with the buyer')}${messages.length ? ` (${messages.length})` : ''}</p>
@@ -2607,7 +2624,7 @@ function TheftsView({ reports, orders, culpritsByReport, seller, userId, onOpenO
                     <span className="ml-auto text-xs font-bold text-sky-300 flex items-center gap-1">${t('Open order')}<${Icon} name="chevron-right" className="w-3.5 h-3.5" /></span>
                 </button>
                 <${MissingReport} report=${r} order=${o} culprits=${culpritsByReport[r.id] || []} onCulprits=${onCulprits} onDone=${onReport}
-                    canClose=${seller.is_admin || deliveryShares(o).some((sh) => sh.sellerId === userId)} />
+                    canClose=${seller.is_staff || deliveryShares(o).some((sh) => sh.sellerId === userId)} />
             </div>`;
         })}${bar}</div>`}
     </section>`;

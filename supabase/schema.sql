@@ -209,8 +209,12 @@ alter table public.sellers add column if not exists rank text not null default '
 alter table public.sellers add column if not exists welcome_done_at timestamptz;
 -- true while the seller has the "Market Admin" Discord role (admin rights; kept with the role checks).
 alter table public.sellers add column if not exists market_admin boolean not null default false;
+-- Community Manager (Discord role DISCORD_COMMUNITY_MANAGER_ROLE_ID): below admin. Seller desk access with the
+-- Theft reports, Alliances, Moderation and Community tools, but no selling unless they also have a seller role
+-- (rank 'cm' = Community Manager without a seller role: lime look, can't take orders).
+alter table public.sellers add column if not exists community_manager boolean not null default false;
 alter table public.sellers drop constraint if exists sellers_rank_check;
-alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified', 'admin'));
+alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified', 'admin', 'cm'));
 
 create or replace function public.is_seller()
 returns boolean language sql stable security definer set search_path = public as $$
@@ -841,6 +845,14 @@ create table if not exists public.budget_rewards (
     created_at      timestamptz not null default now()
 );
 create index if not exists budget_rewards_discord_idx on public.budget_rewards (discord_id);
+-- Tiers 1-3 are presets; a custom reward adds an extra amount on top of whatever tier applies (tier 0, bonus_usd > 0),
+-- e.g. for winning a special event. Several custom rewards add up.
+alter table public.budget_rewards add column if not exists bonus_usd bigint not null default 0;
+alter table public.budget_rewards drop constraint if exists budget_rewards_tier_check;
+alter table public.budget_rewards add constraint budget_rewards_tier_check check (tier between 0 and 3);
+alter table public.budget_rewards drop constraint if exists budget_rewards_kind_check;
+alter table public.budget_rewards add constraint budget_rewards_kind_check
+    check ((tier > 0 and bonus_usd = 0) or (tier = 0 and bonus_usd > 0 and bonus_usd <= 1000000000000));
 alter table public.budget_rewards enable row level security;   -- no policies: API only
 revoke all on public.budget_rewards from anon, authenticated;
 

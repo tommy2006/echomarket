@@ -115,17 +115,24 @@ export async function rateLimit(key, max, seconds, message = 'Too many tries. Wa
 
 // Seller ranks (Echo hierarchy): 'lead' = Lead Ambassador, 'ambassador' = Ambassador,
 // 'verified' = Verified Seller, plus 'admin' = Market Admin without any seller role (a black-and-white
-// look on the seller desk). Admins: Market Admins (Discord role, sellers.market_admin), Lead Ambassadors,
-// and anyone made admin by hand (sellers.is_admin, see SETUP.md 8.2).
+// look on the seller desk) and 'cm' = Community Manager without any seller role (lime look, no selling).
+// Admins: Market Admins (Discord role, sellers.market_admin), Lead Ambassadors, and anyone made admin by hand
+// (sellers.is_admin, see SETUP.md 8.2). Community Managers (sellers.community_manager) are below admin: they get
+// the Theft reports, Alliances, Moderation and Community tools, not the Sellers tab or the Cup.
 export const RANKS = ['lead', 'ambassador', 'verified'];
 export const isAdminSeller = (row) => Boolean(row && (row.is_admin || row.rank === 'lead' || row.market_admin));
-// Seller desk rank from Discord standing: the highest seller role, or 'admin' for a Market Admin who has
-// none; false = no access through roles.
-export const deskRank = (st) => (st ? st.rank || (st.marketAdmin ? 'admin' : false) : null);
+export const isCommunityManager = (row) => Boolean(row && (row.community_manager || row.rank === 'cm'));
+// Admins and Community Managers: the buyer-facing tools (moderation, community, every theft report).
+export const isStaff = (row) => Boolean(row && (row.is_admin || isCommunityManager(row)));
+// Taking and delivering orders: everyone on the desk except a Community Manager with no seller role.
+export const canSell = (row) => Boolean(row && row.rank !== 'cm');
+// Seller desk rank from Discord standing: the highest seller role, else 'admin' for a Market Admin, else
+// 'cm' for a Community Manager; false = no access through roles.
+export const deskRank = (st) => (st ? st.rank || (st.marketAdmin ? 'admin' : st.communityManager ? 'cm' : false) : null);
 
 export async function getSeller(accountId) {
     const { data } = await admin().from('sellers').select('*').eq('user_id', accountId).maybeSingle();
-    return data && data.active ? { ...data, is_admin_manual: data.is_admin, is_admin: isAdminSeller(data) } : null;
+    return data && data.active ? { ...data, is_admin_manual: data.is_admin, is_admin: isAdminSeller(data), is_cm: isCommunityManager(data) } : null;
 }
 
 // For seller ACTIONS: like getSeller(), but people who are sellers because of their Discord role must
@@ -142,22 +149,23 @@ export async function requireActiveSeller(account) {
     const rank = deskRank(st);
     if (rank === false) {
         await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
-        throw new HttpError(403, 'You no longer have a seller or Market Admin role on Discord, so your seller access was switched off.');
+        throw new HttpError(403, 'You no longer have a seller, Market Admin or Community Manager role on Discord, so your seller desk access was switched off.');
     }
     if (rank === null) {
         if (age < 60 * 60e3) return seller;
         throw new HttpError(503, "Couldn't confirm your seller role with Discord right now. Try again in a minute.");
     }
-    await markRoleChecked(account.id, rank, st.marketAdmin);
-    const row = { ...seller, rank, market_admin: st.marketAdmin };
-    return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }) };
+    await markRoleChecked(account.id, rank, st.marketAdmin, st.communityManager);
+    const row = { ...seller, rank, market_admin: st.marketAdmin, community_manager: st.communityManager };
+    return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }), is_cm: isCommunityManager(row) };
 }
-// Records a successful role check: the rank and Market Admin flag the Discord roles give.
-export async function markRoleChecked(accountId, rank, marketAdmin) {
+// Records a successful role check: the rank, Market Admin and Community Manager flags the Discord roles give.
+export async function markRoleChecked(accountId, rank, marketAdmin, communityManager) {
     const patch = {
         role_checked_at: new Date().toISOString(),
-        ...([...RANKS, 'admin'].includes(rank) ? { rank } : {}),
-        ...(typeof marketAdmin === 'boolean' ? { market_admin: marketAdmin } : {})
+        ...([...RANKS, 'admin', 'cm'].includes(rank) ? { rank } : {}),
+        ...(typeof marketAdmin === 'boolean' ? { market_admin: marketAdmin } : {}),
+        ...(typeof communityManager === 'boolean' ? { community_manager: communityManager } : {})
     };
     const { error } = await admin().from('sellers').update(patch).eq('user_id', accountId);
     if (error) console.warn('role check not saved (re-run schema.sql?):', error.message);
@@ -523,12 +531,15 @@ export async function dmBuyer(order, kind, extra = '', by = '') {
 //  counts as the Verified Seller role, which is how it worked before the hierarchy.
 // =====================================================================
 //    DISCORD_MARKET_ADMIN_ROLE_ID     Market Admin      → admin rights (seller desk access too)
+//    DISCORD_COMMUNITY_MANAGER_ROLE_ID Community Manager → desk access with the moderation / community / theft
+//                                                          tools, below admin; no selling without a seller role
 //    DISCORD_MARKET_BANNED_ROLE_ID    Market Banned     → no access to the buyer market (like a market ban)
 export const ROLE_IDS = {
     lead: env('DISCORD_LEAD_ROLE_ID'),
     ambassador: env('DISCORD_AMBASSADOR_ROLE_ID'),
     verified: env('DISCORD_VERIFIED_SELLER_ROLE_ID'),
     marketAdmin: env('DISCORD_MARKET_ADMIN_ROLE_ID'),
+    communityManager: env('DISCORD_COMMUNITY_MANAGER_ROLE_ID'),
     marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID'),
     // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
     // (the member's premium_since), which is exactly when Discord gives that role.
@@ -556,7 +567,7 @@ export async function discordStanding(discordId) {
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
-        const st = { inGuild: false, rank: null, marketAdmin: false, marketBanned: false, booster: false, roleTier: 0, timedOutUntil: null };
+        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, booster: false, roleTier: 0, timedOutUntil: null };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -567,6 +578,7 @@ export async function discordStanding(discordId) {
                 const rank = RANKS.find((r) => ROLE_IDS[r] && roles.includes(ROLE_IDS[r]));
                 if (rank && (!st.rank || RANKS.indexOf(rank) < RANKS.indexOf(st.rank))) st.rank = rank;
                 if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;
+                if (ROLE_IDS.communityManager && roles.includes(ROLE_IDS.communityManager)) st.communityManager = true;
                 if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
                 if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
                 const roleTier = ROLE_IDS.tier2 && roles.includes(ROLE_IDS.tier2) ? 2 : ROLE_IDS.tier1 && roles.includes(ROLE_IDS.tier1) ? 1 : 0;
@@ -661,8 +673,8 @@ export async function marketStanding(account, { fresh = false } = {}) {
 
 // =====================================================================
 //  Daily budget (24-hour limit, counted at list price). Everyone starts at Tier 0. Admins can grant
-//  Tier 1 / Tier 2 as a reward (budget_rewards, optional end date); server boosters get Tier 3 automatically.
-//  The highest one that applies wins.
+//  Tier 1 / 2 / 3 as a reward (budget_rewards, optional end date); server boosters get Tier 3 automatically.
+//  The highest tier that applies wins. Custom rewards (tier 0 + bonus_usd) add an extra amount on top of it.
 // =====================================================================
 export const BUDGET_TIERS = {
     0: { limit: 10_000_000_000, label: 'Standard' },
@@ -671,15 +683,32 @@ export const BUDGET_TIERS = {
     3: { limit: 50_000_000_000, label: 'Tier 3 · server booster' }
 };
 // Tier 1 / Tier 2 also come automatically from Discord roles (DISCORD_TIER1_ROLE_ID / DISCORD_TIER2_ROLE_ID).
-// { tier, limit, source: 'standard' | 'reward' | 'role' | 'booster', expiresAt, key } — key changes whenever a
-// new reward starts, so the buyer site knows when to celebrate.
+// { tier, limit, bonus, source: 'standard' | 'reward' | 'role' | 'booster', expiresAt, key } — limit includes the
+// custom extra (bonus); key changes whenever a new reward starts, so the buyer site knows when to celebrate.
 export async function budgetFor(account, { booster, roleTier } = {}) {
+    const base = await baseBudget(account, { booster, roleTier });
+    const extras = account?.discord_id ? await activeRewards(account.discord_id).then((list) => list.filter((r) => Number(r.bonus_usd) > 0)) : [];
+    if (!extras.length) return { ...base, bonus: 0 };
+    const bonus = extras.reduce((sum, r) => sum + Number(r.bonus_usd), 0);
+    const newest = extras.reduce((a, b) => (b.id > a.id ? b : a));
+    return {
+        ...base, bonus, limit: base.limit + bonus,
+        // A custom reward on its own: its end date. With a tier as well, the tier's.
+        expiresAt: base.source === 'standard' ? newest.expires_at : base.expiresAt,
+        key: `${base.key || 'standard'}+extra:${newest.id}`
+    };
+}
+async function activeRewards(discordId) {
+    const { data, error } = await admin().from('budget_rewards').select('*')
+        .eq('discord_id', discordId).is('revoked_at', null)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    return error ? [] : data || [];
+}
+async function baseBudget(account, { booster, roleTier } = {}) {
     let best = null;
     if (account?.discord_id) {
-        const { data, error } = await admin().from('budget_rewards').select('id, tier, expires_at')
-            .eq('discord_id', account.discord_id).is('revoked_at', null)
-            .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
-        if (!error) best = (data || []).sort((a, b) => b.tier - a.tier || (a.expires_at ? 1 : 0) - (b.expires_at ? 1 : 0))[0] || null;
+        best = (await activeRewards(account.discord_id)).filter((r) => r.tier > 0)
+            .sort((a, b) => b.tier - a.tier || (a.expires_at ? 1 : 0) - (b.expires_at ? 1 : 0))[0] || null;
     }
     const isBooster = booster ?? account?.booster === true;
     if (isBooster && (!best || best.tier < 3)) return { tier: 3, limit: BUDGET_TIERS[3].limit, source: 'booster', expiresAt: null, key: 'booster' };
@@ -763,11 +792,11 @@ export async function setSetting(key, value, by) {
 
 export const LOG_CHANNEL_ID = env('DISCORD_LOG_CHANNEL_ID');
 // Missing-plane reports: who to alert. Every seller who delivered on the order (now or earlier) and every
-// admin (admin flag, Lead Ambassador or Market Admin), each once. Returns their market accounts.
+// admin (admin flag, Lead Ambassador or Market Admin) and Community Manager, each once. Returns their market accounts.
 export async function missingReportRecipients(order) {
     const ids = new Set(deliveryShares(order).map((sh) => sh.sellerId).filter(Boolean));
-    const { data: team } = await admin().from('sellers').select('user_id, is_admin, rank, market_admin').eq('active', true);
-    (team || []).filter(isAdminSeller).forEach((s) => ids.add(s.user_id));
+    const { data: team } = await admin().from('sellers').select('*').eq('active', true);
+    (team || []).filter((s) => isAdminSeller(s) || isCommunityManager(s)).forEach((s) => ids.add(s.user_id));
     if (!ids.size) return [];
     const { data } = await admin().from('accounts').select('*').in('id', [...ids]);
     return data || [];

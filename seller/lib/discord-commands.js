@@ -6,7 +6,7 @@ const user = { type: USER, name: 'user', description: 'Who', required: true };
 
 export const COMMANDS = [
     {
-        name: 'market', description: 'Echo Market moderation (Market Admins only)', ...GUILD_ONLY,
+        name: 'market', description: 'Echo Market moderation (Market Admins and Community Managers)', ...GUILD_ONLY,
         // "0" = hidden from everyone until allowed in Server Settings → Integrations → Echo Market (Market Admin).
         default_member_permissions: '0',
         options: [
