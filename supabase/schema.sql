@@ -213,6 +213,13 @@ alter table public.sellers add column if not exists market_admin boolean not nul
 -- Theft reports, Alliances, Moderation and Community tools, but no selling unless they also have a seller role
 -- (rank 'cm' = Community Manager without a seller role: lime look, can't take orders).
 alter table public.sellers add column if not exists community_manager boolean not null default false;
+-- Unranked (set by admins in Sellers): left off the leaderboard, the Sellers' Cup and the activity alerts, e.g.
+-- tech-only admins or sellers who resigned but still have the role. unranked_note: who/why, shown on the desk.
+alter table public.sellers add column if not exists unranked boolean not null default false;
+alter table public.sellers add column if not exists unranked_note text;
+-- Activity alerts (seller/lib/activity.js, daily): when admins were last told this seller hasn't delivered
+-- for 5 days. One alert per quiet stretch; a new delivery starts a new stretch.
+alter table public.sellers add column if not exists activity_alert_at timestamptz;
 alter table public.sellers drop constraint if exists sellers_rank_check;
 alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified', 'admin', 'cm'));
 

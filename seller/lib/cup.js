@@ -48,9 +48,9 @@ export function roundName(round, total) {
 // Sellers who can take part: active, with a Discord seller role (rank), plus their account details.
 export async function eligibleSellers() {
     const db = admin();
-    const { data: sellers, error } = await db.from('sellers').select('user_id, rank, active, added_at').eq('active', true);
+    const { data: sellers, error } = await db.from('sellers').select('*').eq('active', true);
     if (error) throw error;
-    const list = (sellers || []).filter((s) => RANKS.includes(s.rank));
+    const list = (sellers || []).filter((s) => RANKS.includes(s.rank) && !s.unranked);   // Unranked sellers sit the Cup out
     if (!list.length) return [];
     const { data: accounts, error: accErr } = await db.from('accounts').select('id, display_name, discord_username, discord_id').in('id', list.map((s) => s.user_id));
     if (accErr) throw accErr;

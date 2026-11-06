@@ -5,7 +5,9 @@
 //   view      'alliances': alliance statistics instead (lib/alliance-stats.js), for every seller
 //             'cup': the Sellers' Cup (lib/cup.js) with live scores, for every seller (also moves it forward)
 //   action    admins only: 'cup-start' { name, roundDays, seedingDays, bracketSize, pairing, channelId },
-//             'cup-cancel' { reason }, 'cup-disqualify' { sellerId }
+//             'cup-cancel' { reason }, 'cup-disqualify' { sellerId },
+//             'unrank' { sellerId, unranked, note }: move a seller off (or back onto) the leaderboard. Unranked
+//             sellers are listed separately and are left out of the Sellers' Cup and the activity alerts.
 //
 // Worked out from the order timeline (order_events), so it can be limited to a period:
 //   ordersTaken   times the seller took an order (CLAIMED)
@@ -73,6 +75,18 @@ export default handler(['POST'], async (req, res) => {
     if (input.action === 'cup-start') return res.json({ ok: true, cup: await startCup(account, input) });
     if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });
     if (input.action === 'cup-disqualify') return res.json({ ok: true, cup: await disqualify(account, input.sellerId) });
+    if (input.action === 'unrank') {
+        const id = typeof input.sellerId === 'string' && /^[0-9a-f-]{36}$/i.test(input.sellerId) ? input.sellerId : null;
+        if (!id) throw new HttpError(400, 'Choose a seller.');
+        const on = input.unranked === true;
+        const why = String(input.note || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        const note = on ? `${why ? why + ' · ' : ''}unranked by ${accountName(account)} on ${new Date().toISOString().slice(0, 10)}` : null;
+        const { data, error } = await admin().from('sellers').update({ unranked: on, unranked_note: note, activity_alert_at: null })
+            .eq('user_id', id).select('user_id');
+        if (error) throw new HttpError(503, 'Unranked needs a database update: re-run supabase/schema.sql.');
+        if (!data?.length) throw new HttpError(404, 'That person is not on the seller list.');
+        return res.json({ ok: true, unranked: on, note });
+    }
     const one = typeof input.sellerId === 'string' && /^[0-9a-f-]{36}$/i.test(input.sellerId) ? input.sellerId : null;
     // A fresh start (e.g. the public launch): market_settings 'stats_reset_at' = when the leaderboard starts
     // counting. Older activity stays in the order timelines but no longer counts here, not even for "all time".
@@ -144,6 +158,8 @@ export default handler(['POST'], async (req, res) => {
                 rank: s?.rank || null,
                 active: Boolean(s?.active),
                 onList: Boolean(s),
+                unranked: Boolean(s?.unranked),
+                unrankedNote: s?.unranked_note || null,
                 source: s?.source || null,
                 inProgress: orders.filter((o) => o.seller_id === id && ['CLAIMED', 'PARTIAL'].includes(o.status)).length,
                 ...st

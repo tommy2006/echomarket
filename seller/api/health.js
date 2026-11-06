@@ -56,7 +56,8 @@ export default async function handler(req, res) {
             // tell whether it has been re-run since.
             const { error: newest } = await db.from('sellers').select('community_manager').limit(1)
                 .then((r) => (r.error ? r : db.from('budget_rewards').select('bonus_usd').limit(1)))
-                .then((r) => (r.error ? r : db.from('market_bans').select('auto_step').limit(1)));
+                .then((r) => (r.error ? r : db.from('market_bans').select('auto_step').limit(1)))
+                .then((r) => (r.error ? r : db.from('sellers').select('unranked, activity_alert_at').limit(1)));
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,

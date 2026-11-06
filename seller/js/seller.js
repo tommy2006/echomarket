@@ -758,13 +758,28 @@ function SellerStats({ userId, onOpenOrder }) {
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
     const [picked, setPicked] = useState(null);   // seller whose details are open
+    const [reload, setReload] = useState(0);
     useEffect(() => {
         let gone = false;
         setData(null); setError(null);
         api('/api/admin/sellers', { days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
         return () => { gone = true; };
-    }, [days]);
-    const max = Math.max(1, ...(data?.sellers || []).map((x) => x.ordersTaken));
+    }, [days, reload]);
+    const ranked = (data?.sellers || []).filter((x) => !x.unranked);
+    const unranked = (data?.sellers || []).filter((x) => x.unranked);
+    const max = Math.max(1, ...ranked.map((x) => x.ordersTaken));
+    // Unranked: tech-only admins and resigned sellers who still have the role. Off the leaderboard, the Cup and activity alerts.
+    const setUnranked = async (x, on) => {
+        const note = on ? await ask({ title: `Move ${x.name} to Unranked?`, confirmLabel: 'Move to Unranked',
+            message: "They leave the leaderboard, the Sellers' Cup (a running Cup counts it as leaving) and the 5-day activity alerts. Their desk access doesn't change. You can bring them back any time.",
+            input: { required: false, placeholder: 'Why (optional), e.g. tech admin, resigned' } }) : true;
+        if (note === false) return;
+        try {
+            await api('/api/admin/sellers', { action: 'unrank', sellerId: x.id, unranked: on, note: on ? note : undefined });
+            toast(on ? `${x.name} is now Unranked.` : `${x.name} is back on the leaderboard.`, 'success');
+            setReload((n) => n + 1);
+        } catch (err) { toast(err.message, 'error'); }
+    };
 
     return html`<section className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -792,38 +807,59 @@ function SellerStats({ userId, onOpenOrder }) {
             </div>
 
             ${!data.sellers.length ? html`<${EmptyState} icon="trophy" title="No sellers yet" text="Sellers appear here once they're on the seller list." />`
-            : html`<ol className="space-y-2">${data.sellers.map((x, i) => html`<li key=${x.id}>
-                <button onClick=${() => setPicked(x)} className=${`card w-full text-left !rounded-2xl md:!rounded-3xl p-3 md:p-4 hover:border-slate-600 ${x.active ? '' : 'opacity-60'}`}>
-                    <div className="flex items-center gap-3">
-                        <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${i + 1}</span>
-                        <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
-                        <div className="flex-1 min-w-0">
-                            <p className="font-bold text-white truncate flex items-center gap-2"><span className="truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</span>
-                                ${x.onList && html`<${RankBadge} rank=${rankOf(x)} admin=${x.isAdmin} />`}</p>
-                            <p className="text-[11px] text-slate-500 truncate">${[...sellerTags(x),
-                                x.inProgress ? `${x.inProgress} in progress` : null,
-                                x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
-                        </div>
-                        <div className="flex items-end gap-4 md:gap-6 shrink-0 text-right">
-                            <div><p className="text-2xl font-black text-white tabular-nums leading-none">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-400 mt-1">orders taken</p></div>
-                            <div><p className="text-lg font-bold text-slate-300 tabular-nums leading-none">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500 mt-1">aircraft delivered</p></div>
-                        </div>
-                        <${Icon} name="chevron-right" className="w-4 h-4 text-slate-600 shrink-0" />
-                    </div>
-                    <div className="flex items-center gap-3 mt-2.5 pl-9">
-                        <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Orders taken, compared with the most active seller">
-                            <div className="h-full rounded-full" style=${{ width: Math.round(x.ordersTaken / max * 100) + '%', backgroundColor: window.ECHO_RANK_COLORS?.[rankOf(x)]?.bar || '#F472B6' }}></div>
-                        </div>
-                        <span className="text-[10px] text-slate-600 tabular-nums shrink-0" title="Approximate value of the aircraft they delivered">≈ ${fmtUSDShort(x.saleValue)}</span>
-                    </div>
-                </button>
+            : html`<ol className="space-y-2">${ranked.map((x, i) => html`<li key=${x.id}>
+                <${SellerRow} x=${x} place=${i + 1} max=${max} userId=${userId} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, true)} />
             </li>`)}</ol>`}
+            ${unranked.length > 0 && html`<details className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4 group">
+                <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-bold text-slate-300">
+                    <${Icon} name="chevron-right" className="w-4 h-4 transition-transform group-open:rotate-90" />
+                    Unranked (${unranked.length})
+                    <span className="text-[11px] font-medium text-slate-500">· not on the leaderboard, in the Cup or in activity alerts</span>
+                </summary>
+                <ul className="space-y-2 mt-3">${unranked.map((x) => html`<li key=${x.id}>
+                    <${SellerRow} x=${x} userId=${userId} max=${max} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, false)} />
+                </li>`)}</ul>
+            </details>`}
             ${data.statsSince && html`<p className="text-[11px] text-amber-300/80">The leaderboard was reset: it counts from ${fmtDate(data.statsSince)}.</p>`}
             <p className="text-[11px] text-slate-500">Ranked by orders taken, then aircraft delivered. Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft delivered counts what each seller delivered themselves. Sale value (≈) uses each order's average price per aircraft and is only shown for reference.</p>
         `}
         ${picked && html`<${SellerDetailModal} seller=${picked} initialDays=${days} userId=${userId}
             onClose=${() => setPicked(null)} onOpenOrder=${(id) => { setPicked(null); onOpenOrder(id); }} />`}
     </section>`;
+}
+
+// One leaderboard row (place = null for Unranked rows), with the Unranked / Rank again button beside it.
+function SellerRow({ x, place, max, userId, onOpen, onUnrank }) {
+    const off = x.unranked;
+    return html`<div className="flex items-stretch gap-2">
+        <button onClick=${onOpen} className=${`card flex-1 min-w-0 text-left !rounded-2xl md:!rounded-3xl p-3 md:p-4 hover:border-slate-600 ${x.active && !off ? '' : 'opacity-60'}`}>
+            <div className="flex items-center gap-3">
+                <span className="w-6 text-center text-sm font-black text-slate-500 tabular-nums shrink-0">${place || '–'}</span>
+                <${Avatar} account=${{ avatar_url: x.avatarUrl, display_name: x.name }} size="w-9 h-9" />
+                <div className="flex-1 min-w-0">
+                    <p className="font-bold text-white truncate flex items-center gap-2"><span className="truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</span>
+                        ${x.onList && html`<${RankBadge} rank=${rankOf(x)} admin=${x.isAdmin} />`}</p>
+                    <p className="text-[11px] text-slate-500 truncate">${off && x.unrankedNote ? x.unrankedNote : [...sellerTags(x),
+                        x.inProgress ? `${x.inProgress} in progress` : null,
+                        x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
+                </div>
+                <div className="flex items-end gap-4 md:gap-6 shrink-0 text-right">
+                    <div><p className="text-2xl font-black text-white tabular-nums leading-none">${x.ordersTaken}</p><p className="text-[10px] font-bold text-slate-400 mt-1">orders taken</p></div>
+                    <div className="hidden sm:block"><p className="text-lg font-bold text-slate-300 tabular-nums leading-none">${x.aircraftSold}</p><p className="text-[10px] font-bold text-slate-500 mt-1">aircraft delivered</p></div>
+                </div>
+            </div>
+            ${!off && html`<div className="flex items-center gap-3 mt-2.5 pl-9">
+                <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden" title="Orders taken, compared with the most active seller">
+                    <div className="h-full rounded-full" style=${{ width: Math.round(x.ordersTaken / max * 100) + '%', backgroundColor: window.ECHO_RANK_COLORS?.[rankOf(x)]?.bar || '#F472B6' }}></div>
+                </div>
+                <span className="text-[10px] text-slate-600 tabular-nums shrink-0" title="Approximate value of the aircraft they delivered">≈ ${fmtUSDShort(x.saleValue)}</span>
+            </div>`}
+        </button>
+        ${x.onList && html`<button onClick=${onUnrank} title=${off ? 'Back to the leaderboard' : 'Move to Unranked (off the leaderboard and activity alerts)'}
+            aria-label=${off ? `Put ${x.name} back on the leaderboard` : `Move ${x.name} to Unranked`}
+            className="shrink-0 w-11 rounded-2xl md:rounded-3xl border border-slate-800 bg-slate-900/60 text-slate-500 hover:text-white hover:border-slate-600 flex items-center justify-center">
+            <${Icon} name=${off ? 'undo-2' : 'eye-off'} className="w-4 h-4" /></button>`}
+    </div>`;
 }
 
 // One seller: who they are, their numbers for a period, and every order they took in it.

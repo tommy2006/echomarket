@@ -56,6 +56,8 @@ export const GUIDE = [
         ['Delete', 'Remove an order forever.'],
         ['Alert reasons', 'See why a buyer is on the alert list on their CAUTION orders.'],
         ['Sellers tab', 'Leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.'],
+        ['Unranked', "Sellers tab → eye button: take tech-only admins or resigned sellers off the leaderboard, the Cup and activity alerts (collapsible Unranked list at the bottom)."],
+        ['Activity alerts', 'Automatic daily bot DM to admins (honey yellow) when a seller has delivered nothing for 5 days, so you can check on them.'],
         ["Sellers tab → Sellers' Cup", 'Start a knockout Cup (name, seeding period, round length, bracket size, pairings, Discord channel); cancel it or disqualify a seller.'],
         ['Moderation → Market ban', 'Ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).'],
         ['Moderation → Lift ban', 'End a ban early.'],
