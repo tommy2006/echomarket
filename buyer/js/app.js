@@ -284,7 +284,7 @@ function App() {
 
     if (!authReady) return html`<${FullPageSpinner} />`;
     if (session && !standing) return html`<${FullPageSpinner} />`;
-    if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole || standing.timedOutUntil)) {
+    if (session && standing && (!standing.inGuild || standing.ban || standing.bannedRole || standing.timedOutUntil || standing.resonant === false)) {
         return html`<${MarketGate} standing=${standing} account=${account} onSignOut=${signOut} />`;
     }
     // Everyone goes through the "Cleared for takeoff" welcome once (rules + how not to take others' planes).
@@ -1689,6 +1689,7 @@ function MarketGate({ standing, account, onSignOut }) {
     const banned = standing.ban || standing.bannedRole;
     const ban = standing.ban;
     const timedOut = !banned && standing.inGuild && standing.timedOutUntil;
+    const inactive = !banned && !timedOut && standing.inGuild && standing.resonant === false;
     // A timeout runs out on its own: reload when it ends (if that's within a day), so the market just opens.
     useEffect(() => {
         if (!timedOut) return;
@@ -1698,8 +1699,12 @@ function MarketGate({ standing, account, onSignOut }) {
     return html`<div className="min-h-screen flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
             <div className=${`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center border ${banned || timedOut ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
-                <${Icon} name=${banned ? 'ban' : timedOut ? 'timer' : 'users-round'} className="w-6 h-6" /></div>
-            ${timedOut ? html`
+                <${Icon} name=${banned ? 'ban' : timedOut ? 'timer' : inactive ? 'moon' : 'users-round'} className="w-6 h-6" /></div>
+            ${inactive ? html`
+                <h1 className="text-xl font-black text-white mt-5">${t('Echo Market is for active members')}</h1>
+                <p className="text-sm text-slate-300 mt-2">${t("You don't have the Resonants role on the Echo Alliances Discord server right now. Members who have been inactive for a while lose it. Once you have it again, check again.")}</p>
+                <p className="text-xs text-slate-400 mt-4">${t('Not sure how to get it back? Ask on the Echo Discord server.')}</p>`
+            : timedOut ? html`
                 <h1 className="text-xl font-black text-white mt-5">${t("You're timed out on the Echo Discord server")}</h1>
                 <p className="text-sm text-slate-300 mt-2">${t('While a Discord timeout lasts, you cannot use Echo Market. You can use it again after {date}.', { date: fmtDate(timedOut) })}</p>
                 <p className="text-xs text-slate-400 mt-4">${t('If you think this is a mistake, contact a moderator on the Echo Discord server.')}</p>`

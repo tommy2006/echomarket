@@ -541,6 +541,8 @@ export async function dmBuyer(order, kind, extra = '', by = '') {
 //    DISCORD_COMMUNITY_MANAGER_ROLE_ID Community Manager → desk access with the moderation / community / theft
 //                                                          tools, below admin; no selling without a seller role
 //    DISCORD_MARKET_BANNED_ROLE_ID    Market Banned     → no access to the buyer market (like a market ban)
+//    DISCORD_RESONANTS_ROLE_ID        Resonants         → optional: when set, ONLY members with this role may use the
+//                                                          buyer market (temporarily inactive members lose it)
 export const ROLE_IDS = {
     lead: env('DISCORD_LEAD_ROLE_ID'),
     ambassador: env('DISCORD_AMBASSADOR_ROLE_ID'),
@@ -548,6 +550,7 @@ export const ROLE_IDS = {
     marketAdmin: env('DISCORD_MARKET_ADMIN_ROLE_ID'),
     communityManager: env('DISCORD_COMMUNITY_MANAGER_ROLE_ID'),
     marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID'),
+    resonant: env('DISCORD_RESONANTS_ROLE_ID'),
     // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
     // (the member's premium_since), which is exactly when Discord gives that role.
     booster: env('DISCORD_BOOSTER_ROLE_ID'),
@@ -574,7 +577,8 @@ export async function discordStanding(discordId) {
             if (!guilds.ok) return null;
             guildIds = (guilds.json || []).map((g) => g.id);
         }
-        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, booster: false, roleTier: 0, timedOutUntil: null };
+        // resonant: has the Resonants role (always true when DISCORD_RESONANTS_ROLE_ID isn't set).
+        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, resonant: !ROLE_IDS.resonant, booster: false, roleTier: 0, timedOutUntil: null };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -587,6 +591,7 @@ export async function discordStanding(discordId) {
                 if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;
                 if (ROLE_IDS.communityManager && roles.includes(ROLE_IDS.communityManager)) st.communityManager = true;
                 if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
+                if (ROLE_IDS.resonant && roles.includes(ROLE_IDS.resonant)) st.resonant = true;
                 if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
                 const roleTier = ROLE_IDS.tier2 && roles.includes(ROLE_IDS.tier2) ? 2 : ROLE_IDS.tier1 && roles.includes(ROLE_IDS.tier1) ? 1 : 0;
                 st.roleTier = Math.max(st.roleTier, roleTier);
@@ -635,6 +640,7 @@ export async function marketStanding(account, { fresh = false } = {}) {
     let booster = account.booster === true;
     let roleTier = Number(account.role_tier) || 0;
     let timedOutUntil = account.timed_out_until || null;
+    let resonant = !ROLE_IDS.resonant || account.resonant !== false;
     if (MEMBERSHIP_CHECK) {
         const age = account.guild_checked_at ? Date.now() - new Date(account.guild_checked_at).getTime() : Infinity;
         if (fresh || inGuild == null || age > MEMBERSHIP_RECHECK_MINUTES * 60e3) {
@@ -659,6 +665,11 @@ export async function marketStanding(account, { fresh = false } = {}) {
                     await admin().from('accounts').update({ timed_out_until: st.timedOutUntil }).eq('id', account.id);
                 }
                 timedOutUntil = st.timedOutUntil;
+                // Resonants role (saved on its own too: an older database has no "resonant" column).
+                resonant = st.resonant;
+                if ('resonant' in account && account.resonant !== st.resonant) {
+                    await admin().from('accounts').update({ resonant: st.resonant }).eq('id', account.id);
+                }
             } else if (inGuild == null) {
                 inGuild = true;   // Discord unreachable and never checked: don't lock people out
             }
@@ -675,7 +686,8 @@ export async function marketStanding(account, { fresh = false } = {}) {
         await admin().from('accounts').update({ market_banned_role: false }).eq('id', account.id);
     }
     if (timedOutUntil && new Date(timedOutUntil).getTime() <= Date.now()) timedOutUntil = null;   // ran out
-    return { inGuild: inGuild !== false, bannedRole, ban, booster, roleTier, timedOutUntil };
+    if (inGuild === false) resonant = false;
+    return { inGuild: inGuild !== false, bannedRole, ban, booster, roleTier, timedOutUntil, resonant };
 }
 
 // =====================================================================
@@ -753,6 +765,7 @@ export async function requireMarketAccess(account) {
         const ends = banText({ ends_at: st.timedOutUntil }).replace(/^until /, '');
         throw new HttpError(403, `You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends (${ends}).`);
     }
+    if (!st.resonant) throw new HttpError(403, 'Echo Market is for active members: you need the Resonants role on the Echo Alliances Discord server. Once you have it again, try again.');
     return st;
 }
 

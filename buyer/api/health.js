@@ -57,7 +57,8 @@ export default async function handler(req, res) {
             const { error: newest } = await db.from('sellers').select('community_manager').limit(1)
                 .then((r) => (r.error ? r : db.from('budget_rewards').select('bonus_usd').limit(1)))
                 .then((r) => (r.error ? r : db.from('market_bans').select('auto_step').limit(1)))
-                .then((r) => (r.error ? r : db.from('sellers').select('unranked, activity_alert_at').limit(1)));
+                .then((r) => (r.error ? r : db.from('sellers').select('unranked, activity_alert_at').limit(1)))
+                .then((r) => (r.error ? r : db.from('accounts').select('resonant').limit(1)));
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,
@@ -141,13 +142,15 @@ export default async function handler(req, res) {
                 }
                 // Moderation roles. Market Banned is read by both sites (it blocks the market).
                 const modRoles = [['marketBanned', 'DISCORD_MARKET_BANNED_ROLE_ID', 'Market Banned', 'blocks the buyer market', 'BOTH']];
+                // Optional gate: only members with the Resonants role (active members) may use the buyer market.
+                if (APP === 'buyer') modRoles.push(['resonant', 'DISCORD_RESONANTS_ROLE_ID', 'Resonants', 'only members with it may use the market', 'BUYER']);
                 modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', APP === 'seller' ? 'admin rights on the seller desk' : 'may use the bot\'s /market commands', 'BOTH']);
                 modRoles.splice(1, 0, ['communityManager', 'DISCORD_COMMUNITY_MANAGER_ROLE_ID', 'Community Manager', APP === 'seller' ? 'moderation, community and theft tools on the seller desk (no selling)' : 'may use the bot\'s /market commands', 'BOTH']);
                 for (const [key, env, label, effect, where] of modRoles) {
                     const id = ROLE_IDS[key];
                     add('Discord roles', `${env} (${label})`, Boolean(id) && roleNames.has(id),
                         !id ? 'not set (optional, recommended)' : roleNames.get(id) ? `${roleNames.get(id)}: ${effect}` : 'role not found in the server',
-                        `Discord → Server Settings → Roles → right-click "${label}" → Copy Role ID. Add it as ${env} in ${where === 'BOTH' ? 'BOTH Vercel projects' : 'the SELLER Vercel project'}, then redeploy.`,
+                        `Discord → Server Settings → Roles → right-click "${label}" → Copy Role ID. Add it as ${env} in ${where === 'BOTH' ? 'BOTH Vercel projects' : `the ${where} Vercel project`}, then redeploy.`,
                         { private: Boolean(id) && roleNames.has(id) });
                 }
                 // Server boosters get budget Tier 3. Works without setup (Discord's own boost status); the role is optional.

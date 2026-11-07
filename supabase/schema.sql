@@ -656,6 +656,9 @@ alter table public.missing_report_culprits enable row level security;
 -- Discord timeout on the Echo server (e.g. from the Sapphire bot): no market until it ends. Read from Discord
 -- with the membership check (lib/server.js, marketStanding()).
 alter table public.accounts add column if not exists timed_out_until timestamptz;
+-- Resonants role (DISCORD_RESONANTS_ROLE_ID, optional): temporarily inactive members lose it and can't use the
+-- market. null = not checked yet / the gate isn't set up.
+alter table public.accounts add column if not exists resonant boolean;
 
 create or replace function public.has_market_access()
 returns boolean language sql stable security definer set search_path = public as $$
@@ -663,6 +666,7 @@ returns boolean language sql stable security definer set search_path = public as
         select 1 from public.accounts a
         where a.id = auth.uid() and a.in_guild is true and not a.market_banned_role
           and (a.timed_out_until is null or a.timed_out_until <= now())
+          and a.resonant is not false
           and not exists (select 1 from public.market_bans b
                           where b.discord_id = a.discord_id and b.revoked_at is null
                             and (b.ends_at is null or b.ends_at > now()))

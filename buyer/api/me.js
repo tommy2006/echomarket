@@ -44,6 +44,7 @@ export default handler(['POST'], async (req, res) => {
         membershipCheck: MEMBERSHIP_CHECK,
         bannedRole: st.bannedRole,
         timedOutUntil: st.timedOutUntil,   // a Discord timeout on the Echo server: no market until it ends
+        resonant: st.resonant,             // false = no Resonants role (temporarily inactive): no market
         ban: st.ban ? { reason: st.ban.reason, duration: st.ban.duration, ends_at: st.ban.ends_at, starts_at: st.ban.starts_at } : null,
         // celebrate: a new reward (or boosting) the buyer hasn't been thanked for yet. Never the admins' reason.
         budget: { ...budget, celebrate: Boolean(budget.key && 'budget_seen_key' in account && budget.key !== account.budget_seen_key) },
