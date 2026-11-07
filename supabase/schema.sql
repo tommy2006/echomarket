@@ -229,6 +229,8 @@ returns boolean language sql stable security definer set search_path = public as
         select 1 from public.sellers
         where user_id = auth.uid() and active
           and (source <> 'discord_role' or role_checked_at > now() - interval '1 hour')
+    ) and not exists (   -- the last check found them gone from the Echo server (left or banned)
+        select 1 from public.accounts where id = auth.uid() and in_guild = false
     );
 $$;
 

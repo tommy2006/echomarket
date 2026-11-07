@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "Nag-report ka na ng nawawalang eroplano sa order na ito. Sinusuri ito ng mga nagbebenta.",
  "You are already delivering this order.": "Dine-deliver mo na ang order na ito.",
  "You are banned from Echo Market {a}. Reason: {b}": "Naka-ban ka sa Echo Market {a}. Dahilan: {b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "Hindi ka na miyembro ng Echo Alliances Discord server, kaya hindi mo magagamit ang seller desk.",
  "You are not on the seller list.": "Wala ka sa seller list.",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "Naka-timeout ka sa Echo Alliances Discord server, kaya hindi mo magagamit ang Echo Market hanggang matapos ang timeout mo ({a}).",
  "You can report missing planes once at least part of the order has been delivered.": "Puwede kang mag-report ng nawawalang eroplano kapag na-deliver na kahit bahagi ng order.",

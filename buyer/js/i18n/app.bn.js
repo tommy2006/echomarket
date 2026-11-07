@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "এই অর্ডারে আপনি ইতিমধ্যে হারানো বিমানের রিপোর্ট করেছেন। বিক্রেতারা যাচাই করছেন।",
  "You are already delivering this order.": "আপনি ইতিমধ্যে এই অর্ডার ডেলিভারি দিচ্ছেন।",
  "You are banned from Echo Market {a}. Reason: {b}": "আপনাকে Echo Market থেকে ব্যান করা হয়েছে {a}। কারণ: {b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "আপনি আর Echo Alliances Discord সার্ভারের সদস্য নন, তাই বিক্রেতা ডেস্ক ব্যবহার করতে পারবেন না।",
  "You are not on the seller list.": "আপনি বিক্রেতা তালিকায় নেই।",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "আপনি Echo Alliances Discord সার্ভারে টাইমআউটে আছেন, তাই টাইমআউট শেষ না হওয়া পর্যন্ত ({a}) Echo Market ব্যবহার করতে পারবেন না।",
  "You can report missing planes once at least part of the order has been delivered.": "অর্ডারের অন্তত কিছু অংশ ডেলিভারি হওয়ার পরেই হারানো বিমানের রিপোর্ট করতে পারবেন।",

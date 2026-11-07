@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "你已为此订单报告过飞机丢失。卖家正在核查。",
  "You are already delivering this order.": "你已经在交付此订单。",
  "You are banned from Echo Market {a}. Reason: {b}": "你已被 Echo Market 封禁 {a}。理由：{b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "你已不再是 Echo Alliances Discord 服务器的成员，因此无法使用卖家工作台。",
  "You are not on the seller list.": "你不在卖家名单上。",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "你在 Echo Alliances Discord 服务器上被禁言，在禁言结束（{a}）之前无法使用 Echo Market。",
  "You can report missing planes once at least part of the order has been delivered.": "订单至少部分交付后，你才能报告飞机丢失。",

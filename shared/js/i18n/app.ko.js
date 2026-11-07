@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "이 주문에 대해 이미 분실 신고를 했어요. 판매자들이 확인 중이에요.",
  "You are already delivering this order.": "이미 이 주문을 납품하고 있어요.",
  "You are banned from Echo Market {a}. Reason: {b}": "Echo Market 이용이 정지되었어요 {a}. 사유: {b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "더 이상 Echo Alliances Discord 서버의 멤버가 아니므로 판매자 데스크를 사용할 수 없습니다.",
  "You are not on the seller list.": "판매자 목록에 없어요.",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "Echo Alliances Discord 서버에서 타임아웃 상태이므로 타임아웃이 끝날 때({a})까지 Echo Market을 사용할 수 없습니다.",
  "You can report missing planes once at least part of the order has been delivered.": "주문의 일부라도 납품된 후에 분실 신고를 할 수 있어요.",

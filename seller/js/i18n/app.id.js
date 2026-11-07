@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "Kamu sudah melaporkan pesawat hilang untuk pesanan ini. Para penjual sedang memeriksanya.",
  "You are already delivering this order.": "Kamu sudah mengirim pesanan ini.",
  "You are banned from Echo Market {a}. Reason: {b}": "Kamu di-ban dari Echo Market {a}. Alasan: {b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "Anda bukan lagi anggota server Discord Echo Alliances, jadi Anda tidak dapat menggunakan meja penjual.",
  "You are not on the seller list.": "Kamu tidak ada di daftar penjual.",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "Anda sedang di-timeout di server Discord Echo Alliances, jadi Anda tidak dapat menggunakan Echo Market sampai timeout berakhir ({a}).",
  "You can report missing planes once at least part of the order has been delivered.": "Kamu bisa melaporkan pesawat hilang setelah setidaknya sebagian pesanan terkirim.",

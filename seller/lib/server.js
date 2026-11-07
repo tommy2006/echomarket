@@ -135,17 +135,24 @@ export async function getSeller(accountId) {
     return data && data.active ? { ...data, is_admin_manual: data.is_admin, is_admin: isAdminSeller(data), is_cm: isCommunityManager(data) } : null;
 }
 
-// For seller ACTIONS: like getSeller(), but people who are sellers because of their Discord role must
-// still have that role. Re-checked with Discord at most every ROLE_RECHECK_MINUTES; losing the role
-// switches the seller off immediately. If Discord can't be reached, a check from the last hour still counts.
-const ROLE_RECHECK_MINUTES = 10;
+// For seller ACTIONS: like getSeller(), but checked with Discord on EVERY action. Anyone no longer in the
+// Echo server (left or banned) is refused; people who are sellers because of their Discord role must still
+// have that role, and losing it switches the seller off immediately. If Discord can't be reached, a role
+// check from the last hour still counts.
 export async function requireActiveSeller(account) {
     const seller = await getSeller(account.id);
     if (!seller) throw new HttpError(403, 'You are not on the seller list.');
+    const st = account.discord_id ? await discordStanding(account.discord_id) : null;
+    if (st && !st.inGuild && MEMBERSHIP_CHECK) {
+        await admin().from('accounts').update({ in_guild: false, guild_checked_at: new Date().toISOString() }).eq('id', account.id);
+        throw new HttpError(403, 'You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.');
+    }
     if (seller.source !== 'discord_role') return seller;
     const age = seller.role_checked_at ? Date.now() - new Date(seller.role_checked_at).getTime() : Infinity;
-    if (age < ROLE_RECHECK_MINUTES * 60e3) return seller;
-    const st = account.discord_id ? await discordStanding(account.discord_id) : { inGuild: false, rank: null, marketAdmin: false };
+    if (!account.discord_id) {
+        await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
+        throw new HttpError(403, 'You are not on the seller list.');
+    }
     const rank = deskRank(st);
     if (rank === false) {
         await admin().from('sellers').update({ active: false }).eq('user_id', account.id).eq('source', 'discord_role');
@@ -735,8 +742,10 @@ export async function endLapsedBanRole(discordId) {
     return setMarketBannedRole(discordId, false, 'Market ban ended');
 }
 export const banText = (ban) => ban?.ends_at ? `until ${new Date(ban.ends_at).toUTCString().replace(/:\d\d GMT/, ' UTC')}` : 'permanently';
+// Always asks Discord fresh (one quick lookup), so someone banned from the server, given the Market Banned
+// role or timed out can't place or change an order a moment later. If Discord can't be reached, the last check counts.
 export async function requireMarketAccess(account) {
-    const st = await marketStanding(account);
+    const st = await marketStanding(account, { fresh: true });
     if (!st.inGuild) throw new HttpError(403, 'Echo Market is only for members of the Echo Alliances Discord server. Join the server, then try again.');
     if (st.ban) throw new HttpError(403, `You are banned from Echo Market ${banText(st.ban)}. Reason: ${st.ban.reason}`);
     if (st.bannedRole) throw new HttpError(403, 'You have the Market Banned role on the Echo Discord server, so you cannot use Echo Market.');

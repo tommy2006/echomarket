@@ -771,6 +771,7 @@ export default {
  "You already reported missing planes on this order. The sellers are checking it.": "Bạn đã báo mất máy bay cho đơn này. Người bán đang kiểm tra.",
  "You are already delivering this order.": "Bạn đã đang giao đơn này.",
  "You are banned from Echo Market {a}. Reason: {b}": "Bạn bị cấm khỏi Echo Market {a}. Lý do: {b}",
+ "You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.": "Bạn không còn là thành viên của máy chủ Discord Echo Alliances, nên không thể dùng bàn bán hàng.",
  "You are not on the seller list.": "Bạn không có trong danh sách người bán.",
  "You are timed out on the Echo Alliances Discord server, so you cannot use Echo Market until your timeout ends ({a}).": "Bạn đang bị timeout trên máy chủ Discord Echo Alliances, nên không thể dùng Echo Market cho đến khi hết timeout ({a}).",
  "You can report missing planes once at least part of the order has been delivered.": "Bạn chỉ có thể báo mất máy bay khi ít nhất một phần đơn đã được giao.",
