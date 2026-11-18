@@ -19,7 +19,7 @@
 // The timeline is fixed when the Cup starts, so it doesn't matter when advanceCup() runs: whenever a seller opens
 // the desk, an admin opens the Cup tab, and once a day (cron). Pairings and results are posted in Discord once
 // the new state is saved (guarded by `version`, so two calls at the same time can't post twice).
-import { admin, accountName, discordBot, sendDM, deliveryShares, orderRef, md, RANKS, SELLER_URL, HttpError } from './server.js';
+import { admin, accountName, discordBot, sendDM, deliveryShares, orderRef, md, vacationingIds, RANKS, SELLER_URL, HttpError } from './server.js';
 
 export const PAIRINGS = {
     fold: 'Highest seed vs lowest seed, every round (1 v last, 2 v second-last, …)',
@@ -160,6 +160,13 @@ function resultsEmbed(cup, round, totalRounds) {
 async function post(cup, { content, embeds, users = [] }) {
     if (!cup.channel_id) return false;
     try {
+        // Sellers on vacation are named but not pinged.
+        if (users.length) {
+            const { data: accs } = await admin().from('accounts').select('id, discord_id').in('discord_id', [...new Set(users)]);
+            const away = await vacationingIds((accs || []).map((a) => a.id));
+            const awayDiscord = new Set((accs || []).filter((a) => away.has(a.id)).map((a) => a.discord_id));
+            users = users.filter((d) => !awayDiscord.has(d));
+        }
         const r = await discordBot(`/channels/${cup.channel_id}/messages`, 'POST', {
             content, embeds: embeds.map((e) => ({ ...e, footer: { text: `${cup.name} · Echo Market` }, timestamp: new Date().toISOString(), url: SELLER_URL || undefined })),
             allowed_mentions: { users: [...new Set(users)].slice(0, 100) }

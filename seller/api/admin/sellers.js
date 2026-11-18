@@ -8,6 +8,9 @@
 //             'cup-cancel' { reason }, 'cup-disqualify' { sellerId },
 //             'unrank' { sellerId, unranked, note }: move a seller off (or back onto) the leaderboard. Unranked
 //             sellers are listed separately and are left out of the Sellers' Cup and the activity alerts.
+//             'vacation-grant' { sellerId, days, note }: Lead Ambassador or Alliance Leader only (lib/vacation.js).
+//   Every seller, for themselves: view 'me' (their profile statistics and vacation, lib/profile.js),
+//             action 'vacation-start' { days | all: true }, 'vacation-end', 'vacation-seen'.
 //
 // Worked out from the order timeline (order_events), so it can be limited to a period:
 //   ordersTaken   times the seller took an order (CLAIMED)
@@ -17,6 +20,8 @@
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
 import { allianceStats } from '../../lib/alliance-stats.js';
+import { sellerProfile } from '../../lib/profile.js';
+import { grantVacation, startVacation, endVacation, seenVacationNews, canGrantVacation, vacationView } from '../../lib/vacation.js';
 import { advanceCup, cupView, startCup, cancelCup, disqualify, eligibleSellers, PAIRINGS } from '../../lib/cup.js';
 import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, getSetting, RANKS, HttpError } from '../../lib/server.js';
 
@@ -71,7 +76,13 @@ export default handler(['POST'], async (req, res) => {
         return res.json({ ok: true, ...(await cupView(cup)), now: new Date().toISOString(), pairings: PAIRINGS,
             eligible: me.is_admin && !active ? (await eligibleSellers()).length : undefined });
     }
+    // Every seller: their own profile and vacation.
+    if (input.view === 'me') return res.json(await sellerProfile(me, days));
+    if (input.action === 'vacation-start') return res.json(await startVacation(account, input));
+    if (input.action === 'vacation-end') return res.json(await endVacation(account));
+    if (input.action === 'vacation-seen') return res.json(await seenVacationNews(account));
     if (!me.is_admin) throw new HttpError(403, 'Only admins can see seller performance or manage the Cup.');
+    if (input.action === 'vacation-grant') return res.json(await grantVacation(account, me, input));
     if (input.action === 'cup-start') return res.json({ ok: true, cup: await startCup(account, input) });
     if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });
     if (input.action === 'cup-disqualify') return res.json({ ok: true, cup: await disqualify(account, input.sellerId) });
@@ -160,6 +171,7 @@ export default handler(['POST'], async (req, res) => {
                 onList: Boolean(s),
                 unranked: Boolean(s?.unranked),
                 unrankedNote: s?.unranked_note || null,
+                vacation: s ? (({ days, until, away }) => ({ days, until, away }))(vacationView(s)) : null,
                 source: s?.source || null,
                 inProgress: orders.filter((o) => o.seller_id === id && ['CLAIMED', 'PARTIAL'].includes(o.status)).length,
                 ...st
@@ -193,12 +205,12 @@ export default handler(['POST'], async (req, res) => {
             };
         }).filter(Boolean).sort((a, b) => b.takenAt.localeCompare(a.takenAt));
         return res.json({
-            ok: true, days,
+            ok: true, days, canGrantVacation: canGrantVacation(me),
             seller: { ...seller, discordId: acc?.discord_id || null, addedAt: row?.added_at || null,
                 roleCheckedAt: row?.role_checked_at || null, note: row?.note || null },
             orders: takenOrders
         });
     }
 
-    res.json({ ok: true, days, sellers: list, totals, statsSince: resetAt ? new Date(resetAt).toISOString() : null, generatedAt: new Date().toISOString() });
+    res.json({ ok: true, days, sellers: list, totals, canGrantVacation: canGrantVacation(me), statsSince: resetAt ? new Date(resetAt).toISOString() : null, generatedAt: new Date().toISOString() });
 });

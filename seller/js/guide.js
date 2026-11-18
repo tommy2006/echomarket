@@ -5,15 +5,19 @@ export const GUIDE = [
     { title: 'Your desk', icon: 'user', items: [
         ['Sign-in', 'Discord sign-in; your seller role (Verified Seller, Ambassador, Lead Ambassador) lets you in automatically.'],
         ['Rank colour', "The desk's accent colour follows your rank."],
-        ['Selling as', 'Profile picture → pick which of your airlines buyers see when you take an order.'],
+        ['Desk sections', 'Orders, Theft reports, Alliances (and the admin tools) sit in the top bar on a computer and in the bottom bar on phones and tablets.'],
+        ['Selling as', 'Top bar, next to your picture (on phones: profile picture menu): pick which of your airlines buyers see when you take an order.'],
+        ['Your profile', 'Profile picture → your name (or My profile): your orders taken and completed, aircraft delivered, sales volume, charts over time and by weekday, aircraft types and alliances you supply, and your records.'],
+        ['Vacation', 'Vacation days are granted by the Lead Alliance Ambassador or an Alliance Leader (you get a pop-up). Use some or all of them on your profile: the desk becomes a quiet holiday screen and the bot sends you nothing until you are back. Come back early from the bottom of that screen; unused whole days return to you.'],
         ['Tour & welcome', 'Profile picture → Show me around replays the tour; Seller welcome replays the intro.'],
         ['Seller guide', 'Profile picture → Seller guide opens this list.'],
         ['Alliances tab', 'Which alliances order the most: rankings, most popular aircraft, orders over time, order outcomes and who supplies whom.'],
         ["Sellers' Cup", 'While a Cup runs, a banner shows your seeding place or your current match score; See the Cup opens the bracket. Only orders you complete on your own count.'],
-        ['Language menu', 'Top bar; switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.'],
+        ['Language menu', 'Profile picture → Language (under Seller welcome); switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.'],
+        ['Sign out', 'Profile picture → Sign out, next to your rank badge.'],
         ['Greeting bar', 'Shows how many orders are waiting, the longest wait, and orders with new buyer messages (Show these orders).'],
         ['Live alerts', 'New orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.'],
-        ['New-order meow', 'A soft meow plays when a new order comes in while the desk is open; profile picture → Meow for new orders turns it on or off.']
+        ['New-order meow', 'A soft meow plays when a new order comes in while the desk is open; turn it on or off under Settings on your profile.']
     ] },
     { title: 'Order lists', icon: 'list', items: [
         ['Tabs', 'Open queue, My orders, All orders.'],
@@ -42,7 +46,7 @@ export const GUIDE = [
         ['Timeline & status history', 'Every step of the order, with who did what and when.']
     ] },
     { title: 'Missing planes & thefts', icon: 'shield-alert', items: [
-        ['Missing-plane report', 'You get a DM when a buyer says planes listed for them were bought by someone else.'],
+        ['Missing-plane report', 'You get a DM when a buyer says planes listed for them were bought by someone else. If you are on vacation, you get nothing: the buyer is told and can ask the other sellers (a post in the new-orders channel) to re-list early.'],
         ['Theft confirmed / Not a theft', 'Close the report on the order; the buyer sees your note.'],
         ['Warn culprits', 'Add one or more Discord IDs to warn them automatically, or choose Under investigation.'],
         ['Theft reports tab', 'Needs attention, Confirmed thefts, All reports; anyone can Identify & warn culprits later.'],
@@ -57,7 +61,8 @@ export const GUIDE = [
         ['Alert reasons', 'See why a buyer is on the alert list on their CAUTION orders.'],
         ['Sellers tab', 'Leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.'],
         ['Unranked', "Sellers tab → eye button: take tech-only admins or resigned sellers off the leaderboard, the Cup and activity alerts (collapsible Unranked list at the bottom)."],
-        ['Activity alerts', 'Automatic daily bot DM to admins (honey yellow) when a seller has delivered nothing for 5 days, so you can check on them.'],
+        ['Activity alerts', 'Automatic daily bot DM to admins (honey yellow) when a seller has delivered nothing for 5 days, so you can check on them. Vacation days are not counted.'],
+        ['Grant vacation days', 'Lead Alliance Ambassador or Alliance Leader only: Sellers tab → palm-tree button (or a seller\'s details) → 1 to 60 days, optional note. Rows show who is on vacation and who has days left.'],
         ["Sellers tab → Sellers' Cup", 'Start a knockout Cup (name, seeding period, round length, bracket size, pairings, Discord channel); cancel it or disqualify a seller.'],
         ['Moderation → Market ban', 'Ban a Discord account for 1 week, 1 month or permanently (all their airlines, DM + Market Banned role + log).'],
         ['Moderation → Lift ban', 'End a ban early.'],

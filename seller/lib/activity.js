@@ -6,7 +6,7 @@
 // The clock starts at the latest of: their last delivery, joining the seller list, finishing the seller
 // welcome, and the leaderboard reset (stats_reset_at). Each quiet stretch is reported once
 // (sellers.activity_alert_at); after a new delivery a new stretch can be reported again.
-import { admin, isAdminSeller, accountName, md, sendDM, getSetting, SELLER_URL, RANKS } from './server.js';
+import { admin, isAdminSeller, accountName, md, sendDM, getSetting, onVacation, SELLER_URL, RANKS } from './server.js';
 
 export const QUIET_DAYS = 5;
 export const HONEY = 0xF5B533;   // the activity alert colour: yellow-honey
@@ -20,7 +20,8 @@ export async function activityAlerts({ now = Date.now() } = {}) {
     if (sellers.length && !('unranked' in sellers[0])) return { skipped: 're-run supabase/schema.sql' };
     const resetAt = ms(await getSetting('stats_reset_at', 0));
     const cutoff = now - QUIET_DAYS * 864e5;
-    const watched = sellers.filter((s) => !s.unranked && RANKS.includes(s.rank)
+    // Sellers on vacation are never watched; afterwards their vacation days don't count as quiet days.
+    const watched = sellers.filter((s) => !s.unranked && RANKS.includes(s.rank) && !onVacation(s, now)
         && Math.max(ms(s.added_at), ms(s.welcome_done_at), resetAt) <= cutoff);
     if (!watched.length) return { watched: 0, quiet: [] };
 
@@ -37,7 +38,10 @@ export async function activityAlerts({ now = Date.now() } = {}) {
         const lastDelivery = last?.[0]?.created_at || null;
         const stretchStart = Math.max(ms(lastDelivery), ms(s.added_at), ms(s.welcome_done_at), resetAt);
         if (ms(s.activity_alert_at) > stretchStart) continue;   // this stretch was already reported
-        quiet.push({ seller: s, lastDelivery, stretchStart });
+        const away = Math.max(0, Math.min(now, ms(s.vacation_until)) - Math.max(stretchStart, ms(s.vacation_from)));
+        const quietMs = now - stretchStart - away;
+        if (quietMs < QUIET_DAYS * 864e5) continue;
+        quiet.push({ seller: s, lastDelivery, stretchStart, quietMs, away });
     }
     if (!quiet.length) return { watched: watched.length, quiet: [] };
 
@@ -49,15 +53,16 @@ export async function activityAlerts({ now = Date.now() } = {}) {
     const inProgress = (id) => (open || []).filter((o) => o.seller_id === id).length;
     const RANK = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller' };
 
-    const fields = quiet.slice(0, 24).map(({ seller: s, lastDelivery, stretchStart }) => {
+    const fields = quiet.slice(0, 24).map(({ seller: s, lastDelivery, quietMs, away }) => {
         const a = acc.get(s.user_id);
-        const days = Math.floor((now - stretchStart) / 864e5);
+        const days = Math.floor(quietMs / 864e5);   // vacation days left out
         const n = inProgress(s.user_id);
         return {
             name: `${a ? accountName(a) : 'Unknown seller'} · ${RANK[s.rank] || s.rank}`.slice(0, 250),
             value: [
                 a?.discord_id ? `<@${a.discord_id}>` : null,
-                lastDelivery ? `Last delivery **${day(lastDelivery)}** (${days} days ago)` : `**No deliveries** in ${days} days on the desk`,
+                (lastDelivery ? `Last delivery **${day(lastDelivery)}** · quiet for ${days} days` : `**No deliveries** in ${days} days on the desk`)
+                    + (away > 0 ? ' (not counting their vacation)' : ''),
                 n ? `⚠️ **${n} order${n === 1 ? '' : 's'} still in their hands**: buyers may be waiting` : 'No orders in their hands'
             ].filter(Boolean).join('\n')
         };

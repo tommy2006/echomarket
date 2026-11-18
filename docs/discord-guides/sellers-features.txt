@@ -4,15 +4,26 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 ## 👤 Your desk
 - **Sign-in:** Discord sign-in; your seller role (Verified Seller, Ambassador, Lead Ambassador) lets you in automatically.
 - **Rank colour:** the desk's accent colour follows your rank.
-- **Selling as:** profile picture → pick which of your airlines buyers see when you take an order.
+- **Desk sections:** *Orders*, *Theft reports*, *Alliances* (and the admin tools) sit in the top bar on a computer, in the bottom bar on phones and tablets.
+- **Selling as:** top bar next to your picture (phones: profile picture menu) → which of your airlines buyers see when you take an order.
 - **Tour & welcome:** profile picture → *Show me around* replays the tour; *Seller welcome* replays the intro.
 - **Seller guide:** profile picture → *Seller guide* opens this list on the desk, with a search box.
-- **Language menu:** top bar; switches the desk to EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.
+- **Language menu:** profile picture → *Language* (under *Seller welcome*): EN, ID, 中文, 한국어, বাংলা, हिन्दी, Tiếng Việt or Filipino.
+- **Sign out:** profile picture → *Sign out*, next to your rank badge.
 - **Alliances tab:** which alliances order the most: rankings, popular aircraft, orders over time, outcomes, who supplies whom.
 - **Sellers' Cup:** while a Cup runs, a banner shows your seed or match score; *See the Cup* opens the bracket. Only orders you complete alone count.
 - **Greeting bar:** shows how many orders are waiting, the longest wait, and orders with new buyer messages (*Show these orders*).
 - **Live alerts:** new orders, buyer messages and missing-plane reports pop up on the desk and as browser notifications.
-- **New-order meow:** a soft meow when a new order comes in while the desk is open; profile picture → *Meow for new orders* turns it on/off.
+- **New-order meow:** a soft meow when a new order comes in while the desk is open; on/off under *Settings* on your profile.
+
+━━━━━━━━━━━━━━━━━━━━
+
+## 🏝️ Your profile & vacation
+- **Your profile:** profile picture → your name (or *My profile*): orders taken and completed, aircraft delivered, sales volume, charts over time and by weekday, the aircraft and alliances you supply, and your records.
+- **Vacation days:** granted by the Lead Alliance Ambassador or an Alliance Leader (you get a pop-up). Use some or all of them on your profile.
+- **On vacation:** the desk becomes a quiet holiday screen and the bot sends you nothing (no DMs, pings in Cup posts or notifications) until you're back. Activity alerts don't count those days.
+- **Back early:** from the very bottom of the holiday screen; unused whole days return to you.
+- **Tip:** new-order posts ping the whole seller role, so mute that channel for total quiet.
 
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -47,7 +58,7 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 ━━━━━━━━━━━━━━━━━━━━
 
 ## 🚨 Missing planes & thefts
-- **Missing-plane report:** you get a DM when a buyer says planes listed for them were bought by someone else.
+- **Missing-plane report:** you get a DM when a buyer says planes listed for them were bought by someone else. On vacation you get nothing: the buyer is told and can ask the other sellers to re-list early (a post here in the new-orders channel).
 - **Theft confirmed / Not a theft:** close the report on the order; the buyer sees your note.
 - **Warn culprits:** add one or more Discord IDs to warn them automatically, or choose *Under investigation*.
 - **Theft reports tab:** *Needs attention*, *Confirmed thefts*, *All reports*; anyone can *Identify & warn culprits* later.
@@ -64,7 +75,8 @@ Everything the desk can do, in one place. **<https://desk.echoalliances.com>**
 - **Alert reasons:** see *why* a buyer is on the alert list on their CAUTION orders.
 - **Sellers tab:** leaderboard by orders taken and aircraft delivered (7/30/90 days or all time); click a seller for their orders.
 - **Unranked:** eye button in Sellers takes tech admins / resigned sellers off the leaderboard, Cup and activity alerts.
-- **Activity alerts:** a daily bot DM tells admins when a seller has delivered nothing for 5 days.
+- **Activity alerts:** a daily bot DM tells admins when a seller has delivered nothing for 5 days (vacation days don't count).
+- **Grant vacation days:** Lead Alliance Ambassador or Alliance Leader only: Sellers tab → palm-tree button → 1 to 60 days, optional note.
 - **Sellers tab → Sellers' Cup:** start a knockout Cup (name, seeding, round length, bracket size, pairings, channel); cancel it or disqualify a seller.
 
 ## 🛡️ Admins only (continued)

@@ -3,10 +3,14 @@
 //                                  a partly delivered order waiting for a new seller can't be cancelled)
 //   { action: 'message', body }    write to the seller team. Allowed once the order has waited
 //                                  CONTACT_AFTER_HOURS without being fully delivered, or to answer a seller.
-//   { action: 'report-missing', details }  planes listed in-game were bought by someone else (free text)
+//   { action: 'report-missing', details }  planes listed in-game were bought by someone else (free text). When a
+//                                  seller on the order is on vacation, the answer says so (vacation: their names).
+//   { action: 'relist-help', reportId }  that seller is on vacation: ask the other sellers (new-orders channel,
+//                                  pinging the seller role) whether one of them can re-list the planes early. Once per report.
 import {
     admin, handler, requireUser, body, cleanText, loadOrder, addEvent, syncDiscord, orderRef, accountName,
-    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, EMBED_COLORS, deliveryShares, shareText, missingReportRecipients, HttpError
+    requireMarketAccess, rateLimit, sendDM, md, SELLER_URL, EMBED_COLORS, deliveryShares, shareText, missingReportRecipients,
+    vacationingIds, postToSellers, HttpError
 } from '../../lib/server.js';
 
 export const CONTACT_AFTER_HOURS = 24;
@@ -64,8 +68,13 @@ export default handler(['POST'], async (req, res) => {
         const { data: open } = await db.from('missing_reports').select('id').eq('order_id', order.id).eq('status', 'OPEN').limit(1);
         if (open?.length) throw new HttpError(409, 'You already reported missing planes on this order. The sellers are checking it.');
         await rateLimit('missing-report:' + account.id, 5, 86400, 'You can send 5 missing-plane reports per day.');
+        // Sellers on the order who are on vacation right now (they get no DM; the buyer is told).
+        const onOrder = deliveryShares(order).filter((sh) => sh.sellerId && (sh.role !== 'earlier' || sh.total > 0));
+        const away = await vacationingIds(onOrder.map((sh) => sh.sellerId));
+        const awayNames = [...new Set(onOrder.filter((sh) => away.has(sh.sellerId)).map((sh) => sh.name || sh.airline).filter(Boolean))];
         const { data: report, error } = await db.from('missing_reports').insert({
-            order_id: order.id, buyer_id: order.buyer_id, buyer_name: accountName(account), details
+            order_id: order.id, buyer_id: order.buyer_id, buyer_name: accountName(account), details,
+            ...(awayNames.length ? { vacation_sellers: awayNames.join(', ').slice(0, 300) } : {})
         }).select().single();
         if (error) throw error;
         const ref = orderRef(order);
@@ -91,7 +100,35 @@ export default handler(['POST'], async (req, res) => {
             url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined,
             fields: listed ? [{ name: 'Sellers on this order (Discord) · what they listed', value: listed }] : []
         })));
-        return res.json({ ok: true, report, alerted: sent.filter((x) => x === 'sent').length });
+        return res.json({ ok: true, report, alerted: sent.filter((x) => x === 'sent').length, vacation: awayNames });
+    }
+
+    if (input.action === 'relist-help') {
+        await requireMarketAccess(account);
+        const { data: report } = await db.from('missing_reports').select('*').eq('id', Number(input.reportId)).eq('order_id', order.id).maybeSingle();
+        if (!report) throw new HttpError(404, 'Report not found.');
+        if (report.status !== 'OPEN') throw new HttpError(409, 'The sellers have already answered this report.');
+        if (!report.vacation_sellers) throw new HttpError(409, 'Your sellers are not on vacation, so they will look at this report themselves.');
+        if (report.relist_asked_at) throw new HttpError(409, 'You already asked the other sellers. One of them will get back to you.');
+        // Claim the request first, so two quick taps can't post twice.
+        const { data: claimed } = await db.from('missing_reports').update({ relist_asked_at: new Date().toISOString() })
+            .eq('id', report.id).is('relist_asked_at', null).select().maybeSingle();
+        if (!claimed) throw new HttpError(409, 'You already asked the other sellers. One of them will get back to you.');
+        const ref = orderRef(order);
+        const posted = await postToSellers({
+            title: `🏝️ Re-listing help wanted · ${ref}`,
+            color: 0x38BDF8,
+            description: `**${md(report.vacation_sellers)}** ${report.vacation_sellers.includes(',') ? 'are' : 'is'} on vacation, and **${md(accountName(account))}** (${md(order.airline_name)}) reported missing planes on ${ref}:
+> ${md(report.details).slice(0, 800)}
+
+Can anyone check in-game and re-list them early? Open the order on the seller desk.`,
+            url: SELLER_URL ? `${SELLER_URL}/#${order.id}` : undefined
+        }, { pingRole: true });
+        if (!posted) {
+            await db.from('missing_reports').update({ relist_asked_at: null }).eq('id', report.id);
+            throw new HttpError(503, "Couldn't reach the sellers' Discord channel right now. Try again in a minute.");
+        }
+        return res.json({ ok: true, report: claimed });
     }
 
     if (input.action !== 'cancel') throw new HttpError(400, 'Unknown action.');

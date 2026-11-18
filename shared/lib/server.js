@@ -147,6 +147,7 @@ export async function requireActiveSeller(account) {
         await admin().from('accounts').update({ in_guild: false, guild_checked_at: new Date().toISOString() }).eq('id', account.id);
         throw new HttpError(403, 'You are no longer a member of the Echo Alliances Discord server, so you cannot use the seller desk.');
     }
+    seller.standing = st;   // this check's Discord standing (null = Discord didn't answer), e.g. for vacation grants
     if (seller.source !== 'discord_role') return seller;
     const age = seller.role_checked_at ? Date.now() - new Date(seller.role_checked_at).getTime() : Infinity;
     if (!account.discord_id) {
@@ -165,6 +166,25 @@ export async function requireActiveSeller(account) {
     await markRoleChecked(account.id, rank, st.marketAdmin, st.communityManager);
     const row = { ...seller, rank, market_admin: st.marketAdmin, community_manager: st.communityManager };
     return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }), is_cm: isCommunityManager(row) };
+}
+
+// ---------------- Vacation (seller/lib/vacation.js): a seller on vacation gets nothing from the bot.
+export const onVacation = (row, now = Date.now()) => Boolean(row?.vacation_until && new Date(row.vacation_until).getTime() > now);
+// Which of these market account ids are sellers on vacation right now. Never throws (older database: none).
+export async function vacationingIds(ids) {
+    const list = [...new Set((ids || []).filter(Boolean))];
+    if (!list.length) return new Set();
+    const { data, error } = await admin().from('sellers').select('user_id, vacation_until').in('user_id', list)
+        .gt('vacation_until', new Date().toISOString());
+    return new Set(error ? [] : (data || []).map((r) => r.user_id));
+}
+async function accountOnVacation(account) {
+    let id = account?.id;
+    if (!id && account?.discord_id) {
+        const { data } = await admin().from('accounts').select('id').eq('discord_id', account.discord_id).maybeSingle();
+        id = data?.id;
+    }
+    return id ? (await vacationingIds([id])).has(id) : false;
 }
 // Records a successful role check: the rank, Market Admin and Community Manager flags the Discord roles give.
 export async function markRoleChecked(accountId, rank, marketAdmin, communityManager) {
@@ -385,6 +405,19 @@ async function webhookCall(url, method, payload) {
     }
 }
 
+// A one-off post in the new-orders channel (DISCORD_WEBHOOK_REQUEST), optionally pinging the seller role.
+// Returns true when posted. Never throws.
+export async function postToSellers({ title, description, color = EMBED_COLORS.request, url, fields = [] }, { pingRole = false } = {}) {
+    if (!WEBHOOKS.request) return false;
+    const ping = pingRole && SELLER_ROLE_ID;
+    const posted = await webhookCall(WEBHOOKS.request, 'POST', {
+        content: ping ? `<@&${SELLER_ROLE_ID}> ${title}` : undefined,
+        embeds: [{ title, description, color, url, fields, timestamp: new Date().toISOString() }],
+        allowed_mentions: { parse: [], roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
+    });
+    return Boolean(posted);
+}
+
 // Posts / edits / moves the order's Discord message to match its current status.
 // Never throws: Discord being down must not break the order itself.
 // Shown to sellers (Discord post and seller desk) on orders from buyers on the alert list.
@@ -463,11 +496,13 @@ export async function discordBot(path, method = 'GET', payload) {
     return { ok: res.ok, status: res.status, json };
 }
 
-// Returns 'sent' | 'blocked' | 'off' | 'unavailable' | 'error'. Never throws.
+// Returns 'sent' | 'blocked' | 'off' | 'vacation' | 'unavailable' | 'error'. Never throws.
 export async function sendDM(account, { title, description, color = EMBED_COLORS.progress, url, fields = [] }) {
     if (!BOT_TOKEN) return 'unavailable';
     if (!account?.discord_id) return 'error';
     if (account.dm_enabled === false) return 'off';
+    // Sellers on vacation get no DMs at all, of any kind.
+    if (await accountOnVacation(account).catch(() => false)) return 'vacation';
     try {
         const ch = await discordBot('/users/@me/channels', 'POST', { recipient_id: account.discord_id });
         let result = 'error';
@@ -551,6 +586,8 @@ export const ROLE_IDS = {
     communityManager: env('DISCORD_COMMUNITY_MANAGER_ROLE_ID'),
     marketBanned: env('DISCORD_MARKET_BANNED_ROLE_ID'),
     resonant: env('DISCORD_RESONANTS_ROLE_ID'),
+    // Optional: Alliance Leader. With the Lead Ambassador, the only people who may grant sellers vacation days.
+    allianceLeader: env('DISCORD_ALLIANCE_LEADER_ROLE_ID'),
     // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
     // (the member's premium_since), which is exactly when Discord gives that role.
     booster: env('DISCORD_BOOSTER_ROLE_ID'),
@@ -578,7 +615,7 @@ export async function discordStanding(discordId) {
             guildIds = (guilds.json || []).map((g) => g.id);
         }
         // resonant: has the Resonants role (always true when DISCORD_RESONANTS_ROLE_ID isn't set).
-        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, resonant: !ROLE_IDS.resonant, booster: false, roleTier: 0, timedOutUntil: null };
+        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, resonant: !ROLE_IDS.resonant, allianceLeader: false, booster: false, roleTier: 0, timedOutUntil: null };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -592,6 +629,7 @@ export async function discordStanding(discordId) {
                 if (ROLE_IDS.communityManager && roles.includes(ROLE_IDS.communityManager)) st.communityManager = true;
                 if (ROLE_IDS.marketBanned && roles.includes(ROLE_IDS.marketBanned)) st.marketBanned = true;
                 if (ROLE_IDS.resonant && roles.includes(ROLE_IDS.resonant)) st.resonant = true;
+                if (ROLE_IDS.allianceLeader && roles.includes(ROLE_IDS.allianceLeader)) st.allianceLeader = true;
                 if (ROLE_IDS.booster ? roles.includes(ROLE_IDS.booster) : Boolean(m.json.premium_since)) st.booster = true;
                 const roleTier = ROLE_IDS.tier2 && roles.includes(ROLE_IDS.tier2) ? 2 : ROLE_IDS.tier1 && roles.includes(ROLE_IDS.tier1) ? 1 : 0;
                 st.roleTier = Math.max(st.roleTier, roleTier);
@@ -873,6 +911,7 @@ export function pushEndpointAllowed(endpoint) {
 export async function sendPush(accountId, { title, body, tag, url }) {
     if (!PUSH_AVAILABLE || !accountId) return 0;
     try {
+        if ((await vacationingIds([accountId])).has(accountId)) return 0;   // on vacation: no notifications
         const { data: subs } = await admin().from('push_subscriptions').select('*').eq('account_id', accountId);
         if (!subs?.length) return 0;
         const wp = await webpush();

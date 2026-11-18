@@ -1514,10 +1514,34 @@ const REPORT_LABEL = {
     NOT_THEFT: reportLabel('Checked · not a theft', 'text-slate-200 border-slate-700 bg-slate-950', 'circle-check'),
     CLEARED: reportLabel('Re-listed for you · buy them in-game', 'text-emerald-200 border-emerald-500/30 bg-emerald-500/5', 'shield-check')
 };
+// A seller on the order is on vacation: the buyer is told, and can ask the other sellers to re-list early.
+function VacationNote({ order, report, onReported, compact = false }) {
+    const [busy, setBusy] = useState(false);
+    const ask = async () => {
+        setBusy(true);
+        try {
+            const r = await api(`/api/orders/${order.id}`, { action: 'relist-help', reportId: report.id });
+            onReported?.(r.report);
+            toast(t('The other sellers have been asked. One of them will get back to you.'), 'success');
+        } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+    };
+    return html`<div className=${`rounded-2xl border border-sky-400/30 bg-sky-400/[0.07] text-sky-100 ${compact ? 'p-3 text-xs' : 'p-4 text-sm'} space-y-2`}>
+        <p className="font-bold flex items-center gap-1.5"><span aria-hidden="true">🏝️</span> ${t('{names} is on vacation', { names: report.vacation_sellers })}</p>
+        <p>${t("Our sellers put a lot of their own time into delivering for the community, so we appreciate your patience while they take a well-earned break. The Market Admins have your report.")}</p>
+        ${report.relist_asked_at
+            ? html`<p className="font-bold">${t('You asked the other sellers to re-list your planes early. One of them will get back to you.')}</p>`
+            : html`<div className="flex flex-wrap items-center gap-2">
+                <p className="flex-1 min-w-[12rem]">${t("Rather not wait? Ask the other sellers whether one of them can re-list your planes early.")}</p>
+                <${Button} size="sm" icon="users" busy=${busy} onClick=${ask}>${t('Ask other sellers')}<//>
+            </div>`}
+    </div>`;
+}
+
 function MissingPlanes({ order, reports, onReported }) {
     const [open, setOpen] = useState(false);
     const [details, setDetails] = useState('');
     const [busy, setBusy] = useState(false);
+    const [justSent, setJustSent] = useState(null);   // a report whose seller is on vacation: shown in a pop-up
     if (!(order.filled > 0) || ['CANCELLED', 'DECLINED'].includes(order.status)) return null;
     const pending = reports.some((r) => r.status === 'OPEN');
     const send = async () => {
@@ -1527,7 +1551,8 @@ function MissingPlanes({ order, reports, onReported }) {
             const r = await api(`/api/orders/${order.id}`, { action: 'report-missing', details: details.trim() });
             onReported?.(r.report);
             setOpen(false); setDetails('');
-            toast(t('Report sent. The sellers on this order and the Market Admins have been alerted.'), 'success');
+            if (r.report?.vacation_sellers) setJustSent(r.report);
+            else toast(t('Report sent. The sellers on this order and the Market Admins have been alerted.'), 'success');
         } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
     };
     return html`<div className="space-y-2">
@@ -1541,6 +1566,7 @@ function MissingPlanes({ order, reports, onReported }) {
                 <p className="text-xs opacity-80">${t('You wrote: “{text}”', { text: r.details })} · ${timeAgo(r.created_at)}</p>
                 ${r.resolution_note && html`<p className="text-xs">${r.resolved_by_name || t('Seller')}: “${r.resolution_note}”</p>`}
                 ${r.status === 'CLEARED' && r.cleared_note && html`<p className="text-xs font-bold">${r.cleared_by_name || t('Seller')}: “${r.cleared_note}”</p>`}
+                ${r.status === 'OPEN' && r.vacation_sellers && html`<div className="pt-1"><${VacationNote} order=${order} report=${r} onReported=${onReported} compact /></div>`}
             </div>`;
         })}
         ${!pending && html`<div className="flex justify-end">
@@ -1554,6 +1580,10 @@ function MissingPlanes({ order, reports, onReported }) {
             <textarea autoFocus value=${details} maxLength="1000" rows="4" onChange=${(e) => setDetails(e.target.value)} className="input mt-3"
                 placeholder=${t('e.g. 2× A320neo from Dave Air were gone from the market when I logged in')}></textarea>
             <p className="text-xs text-slate-500 mt-2">${t("The sellers on this order and the Market Admins get a DM right away. You'll be told what they find.")}</p>
+        <//>`}
+        ${justSent && html`<${Modal} open=${true} onClose=${() => setJustSent(null)} title=${t('Report sent')} size="sm"
+            footer=${html`<${Button} variant="ghost" onClick=${() => setJustSent(null)}>${t("I'll wait")}<//>`}>
+            <${VacationNote} order=${order} report=${reports.find((x) => x.id === justSent.id) || justSent} onReported=${(rep) => { onReported?.(rep); setJustSent(null); }} />
         <//>`}
     </div>`;
 }

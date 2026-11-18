@@ -45,11 +45,13 @@ const SELLER_TOUR = [
     { target: 'tab-all', icon: 'users', title: () => t('4 · Help out'),
       get text() { return t('If an order is still unfinished {n} hours after it was taken, other sellers can Take over part of it. The buyer sees exactly who listed what.', { n: TAKEOVER_HOURS }); } },
     { target: 'account', icon: 'circle-user', title: () => t('5 · Your account'),
-      text: 'Replay this tour, open the market or sign out here.' }
+      text: 'Your profile (statistics, vacation days and settings), the language, this tour and signing out are all here.' }
 ];
 
 // Echo hierarchy (sellers.rank). Lead Ambassadors are admins; anyone else can be made admin by hand.
 // 'cm' = Community Manager without a seller role (lime look): buyer-facing tools, no selling.
+// On vacation right now (sellers.vacation_until in the future).
+const isAway = (row) => Boolean(row?.vacation_until && new Date(row.vacation_until).getTime() > Date.now());
 const RANK_LABEL = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Admin', cm: 'Community Manager' };
 // 'admin' = admin added by hand without any Discord seller role (black-and-white look); only shown while
 // they really are an admin.
@@ -293,6 +295,7 @@ function App() {
         if (me) window.setSellerTint?.(rankOf(me));
         setSeller(me);
         if (!me) { setLoading(false); return; }
+        if (isAway(me)) { setLoading(false); return; }   // on vacation: the holiday screen needs nothing else
         const [ord, fl, air, dec, team, msg, rep, oal, cul] = await Promise.all([
             sb.from('orders').select('*').order('created_at', { ascending: false }).limit(1000),
             sb.from('order_flags').select('*'),
@@ -323,8 +326,9 @@ function App() {
     useEffect(() => { if (userId) loadAll(); else { setSeller(undefined); setLoading(true); } }, [userId, loadAll]);
 
     // Live updates.
+    const away = isAway(seller);
     useEffect(() => {
-        if (!seller) return;
+        if (!seller || away) return;   // on vacation: no live updates, sounds or notifications at all
         const channel = sb.channel('seller-desk')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => {
                 if (p.eventType === 'DELETE') return setOrders((l) => l.filter((o) => o.id !== p.old.id));
@@ -376,13 +380,21 @@ function App() {
         const onVisible = () => { if (document.visibilityState === 'visible') loadAll(); };
         document.addEventListener('visibilitychange', onVisible);
         return () => { sb.removeChannel(channel); document.removeEventListener('visibilitychange', onVisible); };
-    }, [seller, loadAll]);
+    }, [seller, away, loadAll]);
 
     const sellAs = airlines.find((a) => a.id === sellAsId) || airlines[0] || null;
     // First visit to the seller desk: the short tour (once per seller, per device).
     useEffect(() => {
-        if (seller && userId && !store.get(LS_SELLER_TOUR + userId, false)) setTourOpen(true);
-    }, [Boolean(seller), userId]);
+        if (seller && !away && userId && !store.get(LS_SELLER_TOUR + userId, false)) setTourOpen(true);
+    }, [Boolean(seller), away, userId]);
+    // Vacation days just granted: the getaway pop-up (once; seen = cleared on the server).
+    const [newsSeen, setNewsSeen] = useState(false);
+    const vacationNews = !away && !newsSeen && seller?.vacation_news;
+    const closeNews = (toProfile) => {
+        setNewsSeen(true);
+        api('/api/admin/sellers', { action: 'vacation-seen' }).catch(() => {});
+        if (toProfile) { closeDetail(); setTab('profile'); window.scrollTo(0, 0); }
+    };
     const endTour = () => { setTourOpen(false); if (userId) store.set(LS_SELLER_TOUR + userId, true); };
     const messagesOf = (orderId) => messages.filter((m) => m.order_id === orderId);
     const reportsOf = (orderId) => reports.filter((r) => r.order_id === orderId);
@@ -515,6 +527,7 @@ function App() {
     if (!session) return html`<${SignInScreen} />`;
     if (seller === undefined) return html`<${EchoLoader} full />`;
     if (!seller) return html`<${NotASeller} account=${account} />`;
+    if (away) return html`<${VacationScreen} account=${account} seller=${seller} onBack=${loadAll} />`;
     // Every seller goes through the sellers' welcome once ("A new era begins"). Older databases: no column, no redirect.
     if ('welcome_done_at' in seller && !seller.welcome_done_at && seller.can_sell) {   // (Community Managers don't sell)
         window.location.replace('/welcome.html');
@@ -531,6 +544,7 @@ function App() {
         all: { label: t('All orders'), icon: 'list', fn: (o) => statusFilter === 'ALL' || o.status === statusFilter },
         thefts: { label: t('Theft reports'), icon: 'shield-alert', fn: () => false },   // every seller
         alliances: { label: t('Alliances'), icon: 'chart-column', fn: () => false },     // every seller
+        profile: { label: t('My profile'), icon: 'user-round', fn: () => false },        // every seller: their own
         // Admins only: seller performance and the Cup. Admins and Community Managers: Moderation and Community
         // (the API refuses everyone else too).
         ...(seller.is_admin ? { team: { label: 'Sellers', icon: 'trophy', fn: () => false } } : {}),
@@ -555,29 +569,39 @@ function App() {
     const paged = pageSize !== 'all' ? list.slice(0, pageSize) : list;
     const detail = orders.find((o) => o.id === detailId);
 
-    return html`<div className="min-h-screen pb-12">
+    // Desk sections: Orders plus the tools, in the top bar (desktop) or the bottom bar (phones and tablets).
+    const navItems = deskNav(seller);
+    const theftBadge = reportsToCheck.length || investigating.length;
+    const goTab = (k) => { closeDetail(); setTab(k === 'orders' ? (orderTab ? tab : 'open') : k); window.scrollTo(0, 0); };
+    const goHome = () => { closeDetail(); setTab('open'); window.scrollTo(0, 0); };
+
+    return html`<div className="min-h-screen pb-24 lg:pb-12">
         <header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
             <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
-                <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
-                <div className="leading-tight">
-                    <p className="font-extrabold text-white">${t('Seller desk')}</p>
-                    <p className="text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${adminSuffix(seller)}</p>
-                </div>
+                <button onClick=${goHome} className="flex items-center gap-3 shrink-0 text-left" aria-label=${t('Seller desk')}>
+                    <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
+                    <span className="leading-tight hidden min-[360px]:block">
+                        <span className="block font-extrabold text-white">${t('Seller desk')}</span>
+                        <span className="block text-[11px] text-sky-300">${RANK_LABEL[rankOf(seller)]}${adminSuffix(seller)}</span>
+                    </span>
+                </button>
+                <${TopNav} items=${navItems} tab=${tab} orderTab=${orderTab} theftBadge=${theftBadge} onGo=${goTab} />
                 <div className="flex-1"></div>
-                ${seller.can_sell && html`<${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />`}
-                <${LanguageMenu} packs=${['app']} />
-                <a href=${CONFIG.BUYER_URL || "#"} className="hidden sm:flex p-2.5 rounded-full text-slate-400 hover:bg-slate-800 hover:text-white" title=${t('Open the market')}><${Icon} name="shopping-bag" className="w-5 h-5" /></a>
-                <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId} onTour=${() => setTourOpen(true)} />
+                <div className="flex items-center gap-1.5">
+                    ${seller.can_sell && html`<${SellAsPicker} airlines=${airlines} sellAs=${sellAs} onChange=${setSellAsId} />`}
+                    <${AccountMenu} account=${account} seller=${seller} airlines=${airlines} sellAs=${sellAs} onSellAs=${setSellAsId}
+                        onTour=${() => { goHome(); setTourOpen(true); }} onProfile=${() => goTab('profile')} />
+                </div>
             </div>
         </header>
+        <${BottomNav} items=${navItems} tab=${tab} orderTab=${orderTab} theftBadge=${theftBadge} onGo=${goTab} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6 pt-4 md:pt-6 space-y-4 md:space-y-5">
+            ${orderTab && html`
             <${SellerGreeting} account=${account} now=${now} open=${orders.filter(tabs.open.fn)} mine=${counts.mine}
                 unreadOrders=${orders.filter((o) => unreadOf(o.id) > 0).length} onShowUnread=${showUnread} />
             <${CupBanner} userId=${userId} />
             <${OrderTabButtons} tab=${tab} setTab=${setTab} tabs=${tabs} counts=${counts} />
-            <${AdminShortcuts} tab=${tab} setTab=${setTab} isAdmin=${seller.is_admin} isStaff=${seller.is_staff}
-                theftHint=${investigating.length ? t('{n} under investigation', { n: investigating.length }) : reportsToCheck.length ? t('{n} to check', { n: reportsToCheck.length }) : ''} />
             ${reportsToCheck.length > 0 && html`<div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/[0.07] space-y-2">
                 <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="shield-alert" className="w-5 h-5 text-rose-300" />
                     ${t('{count} to check in-game', { count: plural(reportsToCheck.length, 'missing-plane report') })}</p>
@@ -598,8 +622,9 @@ function App() {
                 <${Stat} label=${t('In delivery (all sellers)')} value=${orders.filter((o) => ['CLAIMED', 'PARTIAL'].includes(o.status)).length} icon="truck" tone="text-violet-300" />
                 <${Stat} label=${t('Delivered')} value=${orders.filter((o) => o.status === 'FULFILLED').length} icon="circle-check" tone="text-emerald-300" />
             </div>
+            `}
 
-            <div id="order-list" className="flex flex-col lg:flex-row gap-2 lg:items-center scroll-mt-20">
+            ${orderTab && html`<div id="order-list" className="flex flex-col lg:flex-row gap-2 lg:items-center scroll-mt-20">
                 <div className="hidden md:flex p-1 rounded-full bg-slate-900 border border-slate-800 overflow-x-auto no-scrollbar">
                     ${ORDER_TABS.map((k) => html`<button key=${k} onClick=${() => setTab(k)} data-tour=${'tab-' + k}
                         className=${`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold ${tab === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>
@@ -617,7 +642,7 @@ function App() {
                     <${Button} size="md" variant=${filterCount ? 'primary' : 'secondary'} icon="sliders-horizontal" onClick=${() => setFiltersOpen(!filtersOpen)}
                         aria-expanded=${filtersOpen}>${t('Filters')}${filterCount ? ` · ${filterCount}` : ''}<//>
                 </div>`}
-            </div>
+            </div>`}
             ${orderTab && (filtersOpen || filterCount > 0) && html`<${OrderFilters} filters=${view.filters} alliances=${allianceOptions} tab=${tab}
                 statusFilter=${statusFilter} setStatusFilter=${setStatusFilter} open=${filtersOpen}
                 onChange=${(filters) => setView((v) => ({ ...v, filters }))} onToggle=${() => setFiltersOpen(!filtersOpen)}
@@ -630,7 +655,9 @@ function App() {
                 </select>
             </div>`}
 
-            ${tab === 'thefts' ? html`<${TheftsView} reports=${reports} orders=${orders} culpritsByReport=${culpritsByReport} seller=${seller} userId=${userId}
+            ${tab === 'profile' ? html`<${SellerProfile} account=${account} seller=${seller} inHands=${counts.mine}
+                onStarted=${(v) => setSeller((cur) => cur && { ...cur, vacation_days: v.days, vacation_from: v.from, vacation_until: v.until, vacation_news: null })} />`
+            : tab === 'thefts' ? html`<${TheftsView} reports=${reports} orders=${orders} culpritsByReport=${culpritsByReport} seller=${seller} userId=${userId}
                 onOpenOrder=${openDetail} onReport=${onReport} onCulprits=${refreshCulprits} />`
             : tab === 'community' && seller.is_staff ? html`<${CommunityView} onAlertsChanged=${(list) => setAlertReasons(Object.fromEntries(list.map((w) => [w.discord_id, w.reason])))} />`
             : tab === 'mod' && seller.is_staff ? html`<${ModerationView} userId=${userId} />`
@@ -693,6 +720,7 @@ function App() {
                 if (await act(modal.order, { action: 'flag', flagStatus, flagReason }, t('Flag saved.'))) setModal(null);
             }} />`}
 
+        ${vacationNews && !tourOpen && html`<${GetawayModal} news=${vacationNews} onClose=${() => closeNews(false)} onProfile=${() => closeNews(true)} />`}
         ${tourOpen && html`<${GuidedTour} steps=${SELLER_TOUR} label=${t('Seller desk tour')} name=${account?.display_name || account?.discord_username || ''}
             finishLabel=${t('Start selling')} finishIcon="check" onDone=${() => { endTour(); setTab('open'); }} />`}
         <${Toasts} />
@@ -759,6 +787,7 @@ function SellerStats({ userId, onOpenOrder }) {
     const [error, setError] = useState(null);
     const [picked, setPicked] = useState(null);   // seller whose details are open
     const [reload, setReload] = useState(0);
+    const [granting, setGranting] = useState(null);   // seller getting vacation days
     useEffect(() => {
         let gone = false;
         setData(null); setError(null);
@@ -808,7 +837,8 @@ function SellerStats({ userId, onOpenOrder }) {
 
             ${!data.sellers.length ? html`<${EmptyState} icon="trophy" title="No sellers yet" text="Sellers appear here once they're on the seller list." />`
             : html`<ol className="space-y-2">${ranked.map((x, i) => html`<li key=${x.id}>
-                <${SellerRow} x=${x} place=${i + 1} max=${max} userId=${userId} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, true)} />
+                <${SellerRow} x=${x} place=${i + 1} max=${max} userId=${userId} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, true)}
+                    onGrant=${data.canGrantVacation ? () => setGranting(x) : null} />
             </li>`)}</ol>`}
             ${unranked.length > 0 && html`<details className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4 group">
                 <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-bold text-slate-300">
@@ -817,20 +847,27 @@ function SellerStats({ userId, onOpenOrder }) {
                     <span className="text-[11px] font-medium text-slate-500">· not on the leaderboard, in the Cup or in activity alerts</span>
                 </summary>
                 <ul className="space-y-2 mt-3">${unranked.map((x) => html`<li key=${x.id}>
-                    <${SellerRow} x=${x} userId=${userId} max=${max} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, false)} />
+                    <${SellerRow} x=${x} userId=${userId} max=${max} onOpen=${() => setPicked(x)} onUnrank=${() => setUnranked(x, false)}
+                        onGrant=${data.canGrantVacation ? () => setGranting(x) : null} />
                 </li>`)}</ul>
             </details>`}
             ${data.statsSince && html`<p className="text-[11px] text-amber-300/80">The leaderboard was reset: it counts from ${fmtDate(data.statsSince)}.</p>`}
             <p className="text-[11px] text-slate-500">Ranked by orders taken, then aircraft delivered. Orders taken counts every time a seller took an order, including ones they later passed on. Aircraft delivered counts what each seller delivered themselves. Sale value (≈) uses each order's average price per aircraft and is only shown for reference.</p>
         `}
         ${picked && html`<${SellerDetailModal} seller=${picked} initialDays=${days} userId=${userId}
+            onGrant=${data?.canGrantVacation ? () => setGranting(picked) : null}
             onClose=${() => setPicked(null)} onOpenOrder=${(id) => { setPicked(null); onOpenOrder(id); }} />`}
+        ${granting && html`<${GrantVacationDialog} seller=${granting} onClose=${() => setGranting(null)}
+            onDone=${() => { setGranting(null); setPicked(null); setReload((n) => n + 1); }} />`}
+        ${data?.canGrantVacation && html`<p className="text-[11px] text-slate-500 flex items-center gap-1.5"><${Icon} name="tree-palm" className="w-3.5 h-3.5 shrink-0" /> As Lead Alliance Ambassador or Alliance Leader, you can grant vacation days with the palm-tree button beside each seller.</p>`}
     </section>`;
 }
 
 // One leaderboard row (place = null for Unranked rows), with the Unranked / Rank again button beside it.
-function SellerRow({ x, place, max, userId, onOpen, onUnrank }) {
+function SellerRow({ x, place, max, userId, onOpen, onUnrank, onGrant }) {
     const off = x.unranked;
+    const vac = x.vacation?.away ? `🏝️ on vacation until ${new Date(x.vacation.until).toLocaleDateString()}`
+        : x.vacation?.days ? `🌴 ${plural(x.vacation.days, 'vacation day')}` : null;
     return html`<div className="flex items-stretch gap-2">
         <button onClick=${onOpen} className=${`card flex-1 min-w-0 text-left !rounded-2xl md:!rounded-3xl p-3 md:p-4 hover:border-slate-600 ${x.active && !off ? '' : 'opacity-60'}`}>
             <div className="flex items-center gap-3">
@@ -839,7 +876,7 @@ function SellerRow({ x, place, max, userId, onOpen, onUnrank }) {
                 <div className="flex-1 min-w-0">
                     <p className="font-bold text-white truncate flex items-center gap-2"><span className="truncate">${x.name}${x.id === userId ? html` <span className="text-slate-500 font-medium text-xs">(you)</span>` : ''}</span>
                         ${x.onList && html`<${RankBadge} rank=${rankOf(x)} admin=${x.isAdmin} />`}</p>
-                    <p className="text-[11px] text-slate-500 truncate">${off && x.unrankedNote ? x.unrankedNote : [...sellerTags(x),
+                    <p className="text-[11px] text-slate-500 truncate">${off && x.unrankedNote ? x.unrankedNote : [vac, ...sellerTags(x),
                         x.inProgress ? `${x.inProgress} in progress` : null,
                         x.lastActive ? `last active ${timeAgo(x.lastActive)}` : 'no activity in this period'].filter(Boolean).join(' · ')}</p>
                 </div>
@@ -855,6 +892,9 @@ function SellerRow({ x, place, max, userId, onOpen, onUnrank }) {
                 <span className="text-[10px] text-slate-600 tabular-nums shrink-0" title="Approximate value of the aircraft they delivered">≈ ${fmtUSDShort(x.saleValue)}</span>
             </div>`}
         </button>
+        ${x.onList && onGrant && html`<button onClick=${onGrant} title="Grant vacation days" aria-label=${`Grant ${x.name} vacation days`}
+            className="shrink-0 w-11 rounded-2xl md:rounded-3xl border border-slate-800 bg-slate-900/60 text-slate-500 hover:text-sky-300 hover:border-slate-600 flex items-center justify-center">
+            <${Icon} name="tree-palm" className="w-4 h-4" /></button>`}
         ${x.onList && html`<button onClick=${onUnrank} title=${off ? 'Back to the leaderboard' : 'Move to Unranked (off the leaderboard and activity alerts)'}
             aria-label=${off ? `Put ${x.name} back on the leaderboard` : `Move ${x.name} to Unranked`}
             className="shrink-0 w-11 rounded-2xl md:rounded-3xl border border-slate-800 bg-slate-900/60 text-slate-500 hover:text-white hover:border-slate-600 flex items-center justify-center">
@@ -862,8 +902,43 @@ function SellerRow({ x, place, max, userId, onOpen, onUnrank }) {
     </div>`;
 }
 
+// Lead Alliance Ambassador / Alliance Leader: grant a seller vacation days (the server checks the role again).
+const GRANT_PRESETS = [1, 3, 7, 14];
+function GrantVacationDialog({ seller, onClose, onDone }) {
+    const [days, setDays] = useState(3);
+    const [note, setNote] = useState('');
+    const [busy, setBusy] = useState(false);
+    const grant = async () => {
+        setBusy(true);
+        try {
+            const r = await api('/api/admin/sellers', { action: 'vacation-grant', sellerId: seller.id, days, note: note.trim() });
+            toast(`${seller.name} got ${plural(r.granted, 'vacation day')} (${r.days} in total). They will see a pop-up on the desk.`, 'success');
+            onDone();
+        } catch (err) { toast(err.message, 'error'); setBusy(false); }
+    };
+    return html`<${Modal} open=${true} onClose=${onClose} size="sm" title=${`Grant ${seller.name} vacation days`}
+        subtitle=${seller.vacation?.days ? `They have ${plural(seller.vacation.days, 'day')} now.` : 'They have none right now.'}
+        footer=${html`<${Button} variant="ghost" onClick=${onClose}>Cancel<//><${Button} icon="tree-palm" busy=${busy} onClick=${grant}>Grant ${plural(days, 'day')}<//>`}>
+        <div className="space-y-4">
+            <div>
+                <p className="text-xs font-bold text-slate-400 mb-1.5">Days</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    ${GRANT_PRESETS.map((d) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
+                        className=${`px-3 py-1.5 rounded-full text-xs font-bold border ${days === d ? 'bg-white text-slate-950 border-white' : 'border-slate-700 text-slate-300 hover:text-white'}`}>${d}</button>`)}
+                    <input type="number" min="1" max="60" value=${days} aria-label="Days" onChange=${(e) => setDays(Math.min(60, Math.max(1, Math.floor(Number(e.target.value)) || 1)))} className="input !w-20 text-center" />
+                </div>
+            </div>
+            <label className="block">
+                <span className="block text-xs font-bold text-slate-400 mb-1.5">Note for them (optional)</span>
+                <input value=${note} maxLength="200" onChange=${(e) => setNote(e.target.value)} placeholder="e.g. Thanks for a great month!" className="input" />
+            </label>
+            <p className="text-[11px] text-slate-500">They choose when to use the days from their profile. While on vacation, their desk only shows a holiday screen and the bot sends them nothing.</p>
+        </div>
+    <//>`;
+}
+
 // One seller: who they are, their numbers for a period, and every order they took in it.
-function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }) {
+function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder, onGrant }) {
     const [days, setDays] = useState(initialDays);
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
@@ -893,7 +968,9 @@ function SellerDetailModal({ seller, initialDays, userId, onClose, onOpenOrder }
                         x.source === 'discord_role' && data?.seller?.roleCheckedAt && `role last confirmed ${timeAgo(data.seller.roleCheckedAt)}`,
                         `${x.inProgress || 0} in progress now`].filter(Boolean).join(' · ')}</p>
                     ${data?.seller?.note && html`<p className="text-xs text-slate-500 italic">${data.seller.note}</p>`}
+                    ${x.vacation && (x.vacation.away || x.vacation.days > 0) && html`<p className="text-xs text-sky-300">${x.vacation.away ? `🏝️ On vacation until ${fmtDate(x.vacation.until)}` : `🌴 ${plural(x.vacation.days, 'vacation day')} available`}</p>`}
                 </div>
+                ${onGrant && x.onList && html`<${Button} size="sm" variant="secondary" icon="tree-palm" className="ml-auto self-start shrink-0" onClick=${onGrant}>Grant vacation days<//>`}
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1497,16 +1574,11 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnre
     </section>`;
 }
 
-// Profile picture → small menu. Signing out needs this extra tap, so it can't happen by accident.
-function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
+// Profile picture → small menu. The top of it (picture, name, rank) opens the seller's profile. Signing out sits
+// beside the rank and still asks first, so it can't happen by accident.
+function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour, onProfile }) {
     const [open, setOpen] = useState(false);
     const [guideOpen, setGuideOpen] = useState(false);
-    const [meow, setMeow] = useState(() => store.get(LS_MEOW, true));
-    const toggleMeow = () => {
-        store.set(LS_MEOW, !meow);
-        setMeow(!meow);
-        if (!meow) { lastMeow = 0; audio(); setTimeout(playMeow, 150); }   // turning it on plays a sample
-    };
     const signOut = async () => {
         setOpen(false);
         if (await ask({ title: t('Sign out of the seller desk?'), confirmLabel: t('Sign out'), message: t("You'll need to sign in with Discord again to take orders.") })) sb.auth.signOut();
@@ -1518,12 +1590,20 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
         </button>
         ${open && html`<div className="fixed inset-0 z-40" onClick=${() => setOpen(false)}></div>
         <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-pop">
-            <div className="flex items-center gap-3 px-3 py-2.5 border-b border-slate-800 mb-1">
-                <${Avatar} account=${account} size="w-10 h-10" />
-                <div className="min-w-0">
-                    <p className="font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || t('Signed in')}</p>
-                    <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</p>
-                    <div className="mt-1.5"><${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} /></div>
+            <div className="border-b border-slate-800 mb-1 pb-1">
+                <button onClick=${() => { setOpen(false); onProfile?.(); }} title=${t('Open my seller profile')}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-800/70 group">
+                    <${Avatar} account=${account} size="w-10 h-10" />
+                    <span className="min-w-0 flex-1">
+                        <span className="block font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || t('Signed in')}</span>
+                        <span className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</span>
+                    </span>
+                    <${Icon} name="chevron-right" className="w-4 h-4 text-slate-500 group-hover:text-white shrink-0" />
+                </button>
+                <div className="flex items-center justify-between gap-2 px-3 pb-2">
+                    <${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} />
+                    <button onClick=${signOut} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold text-rose-300 hover:bg-rose-500/10 border border-rose-500/20">
+                        <${Icon} name="log-out" className="w-3.5 h-3.5" /> ${t('Sign out')}</button>
                 </div>
             </div>
             ${airlines.length > 0 && html`<label className="sm:hidden block px-3 py-2">
@@ -1532,17 +1612,341 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour }) {
                     ${airlines.map((a) => html`<option key=${a.id} value=${a.id}>${a.name} · ${a.alliance}</option>`)}
                 </select>
             </label>`}
+            <button onClick=${() => { setOpen(false); onProfile?.(); }} className="menu-item w-full"><${Icon} name="user-round" /> ${t('My profile')}</button>
             <a href=${CONFIG.BUYER_URL || '#'} className="menu-item"><${Icon} name="shopping-bag" /> ${t('Open the market')}</a>
             <button onClick=${() => { setOpen(false); onTour?.(); }} className="menu-item w-full"><${Icon} name="compass" /> ${t('Show me around')}</button>
-            <button onClick=${toggleMeow} aria-pressed=${meow} className="menu-item w-full">
-                <${Icon} name=${meow ? 'volume-2' : 'volume-x'} /> <span className="flex-1 text-left">${t('Meow for new orders')}</span>
-                <span className=${`text-[11px] font-bold ${meow ? 'text-sky-300' : 'text-slate-500'}`}>${meow ? t('On') : t('Off')}</span>
-            </button>
             <button onClick=${() => { setOpen(false); setGuideOpen(true); }} className="menu-item w-full"><${Icon} name="book-open" /> ${t('Seller guide')}</button>
             <a href="/welcome.html?replay=1" className="menu-item"><${Icon} name="plane-takeoff" /> ${t('Seller welcome')}</a>
-            <button onClick=${signOut} className="menu-item w-full text-rose-300"><${Icon} name="log-out" /> ${t('Sign out')}</button>
+            <div className="menu-item w-full !cursor-default"><${Icon} name="languages" /> <span className="flex-1">${t('Language')}</span><${LanguageMenu} packs=${['app']} className="lang-up-right" /></div>
         </div>`}
         <${SellerGuide} open=${guideOpen} onClose=${() => setGuideOpen(false)} isAdmin=${Boolean(seller?.is_admin)} />
+    </div>`;
+}
+
+// =========================================================================
+//  The seller's own profile (account menu → profile): their numbers and charts, vacation days, settings.
+//  Statistics from POST /api/admin/sellers { view: 'me', days } (seller/lib/profile.js).
+// =========================================================================
+const PROFILE_PERIODS = [7, 30, 90, 0];
+const fmtHoursT = (h) => (h == null ? '—' : h < 1 ? t('{n} min', { n: Math.max(1, Math.round(h * 60)) })
+    : h < 48 ? t('{n} h', { n: h < 10 ? h.toFixed(1) : Math.round(h) }) : t('{n} d', { n: Math.round(h / 24) }));
+const weekdayName = (i) => new Date(Date.UTC(2024, 0, 1 + i)).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' });
+const shortDay = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+function SellerProfile({ account, seller, inHands = 0, onStarted }) {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    const [bind, tipNode] = useChartTip();
+    useEffect(() => {
+        let gone = false;
+        setData(null); setError(null);
+        api('/api/admin/sellers', { view: 'me', days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
+        return () => { gone = true; };
+    }, [days]);
+    const name = account?.display_name || account?.discord_username || '';
+    const periodLabel = (d) => (d ? t('{n} days', { n: d }) : t('All time'));
+
+    return html`<section className="space-y-3 md:space-y-4">
+        <div className="card !rounded-3xl p-4 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+            <${Avatar} account=${account} size="w-16 h-16 md:w-20 md:h-20" />
+            <div className="min-w-0 flex-1">
+                <p className="label text-sky-300">${t('Seller profile')}</p>
+                <h1 className="text-2xl md:text-3xl font-black text-white truncate">${name}</h1>
+                <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-slate-400">
+                    <${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} />
+                    <span className="flex items-center gap-1.5"><${DiscordLogo} className="w-3.5 h-3.5" />${account?.discord_username || 'Discord'}</span>
+                    ${seller?.added_at && html`<span>· ${t('on the desk since {date}', { date: new Date(seller.added_at).toLocaleDateString() })}</span>`}
+                </div>
+            </div>
+            <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start sm:self-center">
+                ${PROFILE_PERIODS.map((d) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
+                    className=${`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${periodLabel(d)}</button>`)}
+            </div>
+        </div>
+
+        ${error ? html`<div className="card p-5 text-sm text-rose-300">${error}</div>`
+        : !data ? html`<${EchoLoader} className="py-16" />`
+        : html`<${ProfileStats} data=${data} bind=${bind} />`}
+
+        <div className="grid lg:grid-cols-2 gap-3 md:gap-4 items-start">
+            <${VacationCard} vacation=${data?.vacation} seller=${seller} inHands=${inHands} onStarted=${onStarted} />
+            <${ProfileSettings} />
+        </div>
+        ${tipNode}
+    </section>`;
+}
+
+function ProfileTile({ label, value, sub }) {
+    return html`<div className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4 min-w-0">
+        <p className="text-[11px] font-bold text-slate-500 truncate">${label}</p>
+        <p className="text-2xl md:text-3xl font-black text-white mt-1 tabular-nums truncate">${value}</p>
+        ${sub && html`<p className="text-[11px] text-slate-500 truncate">${sub}</p>`}
+    </div>`;
+}
+
+// One ranked horizontal bar per row (single series: one colour, the value written beside it).
+function BarRows({ rows, bind, unit }) {
+    const max = Math.max(1, ...rows.map((r) => r.n));
+    return html`<ol className="space-y-0.5">${rows.map((r, i) => html`<li key=${r.name} ...${bind(html`<${TipRows} title=${r.name} rows=${[[unit, r.n]]} />`)}
+        className="grid grid-cols-[1.25rem_minmax(0,8rem)_1fr_auto] sm:grid-cols-[1.5rem_minmax(0,12rem)_1fr_auto] items-center gap-2 py-1 rounded-lg hover:bg-slate-800/40 outline-none focus-visible:bg-slate-800/40">
+        <span className="text-xs font-black text-slate-500 tabular-nums text-center">${i + 1}</span>
+        <span className="text-sm text-slate-200 truncate">${r.name}</span>
+        <span className="h-4 flex items-center min-w-0"><span className="h-3 rounded-r" style=${{ width: `max(${(r.n / max * 100).toFixed(1)}%, 3px)`, backgroundColor: VIZ.bar }}></span></span>
+        <span className="text-sm font-bold text-white tabular-nums text-right min-w-[2.5rem]">${r.n}</span>
+    </li>`)}</ol>`;
+}
+
+function ProfileStats({ data, bind }) {
+    const { totals, mosts } = data;
+    const empty = !totals.ordersTaken && !totals.aircraft;
+    const bucketAt = (i) => new Date(new Date(data.firstBucket).getTime() + i * data.bucketDays * 864e5).toISOString();
+    const bucketName = (i) => (data.bucketDays === 1 ? shortDay(bucketAt(i)) : t('week of {date}', { date: shortDay(bucketAt(i)) }));
+    const seriesMax = Math.max(1, ...data.series);
+    const dayMax = Math.max(1, ...data.weekdays);
+    const unit = t('Aircraft delivered');
+    const mostTiles = [
+        ['plane', t('Favourite aircraft'), mosts.type?.name, mosts.type && t('{n} delivered', { n: mosts.type.n })],
+        ['users', t('Top alliance served'), mosts.alliance?.name, mosts.alliance && t('{n} delivered', { n: mosts.alliance.n })],
+        ['package', t('Biggest order'), mosts.biggest && (mosts.biggest.serial ? '#' + mosts.biggest.serial : mosts.biggest.id), mosts.biggest && t('{n} aircraft for {airline}', { n: mosts.biggest.aircraft, airline: mosts.biggest.airline })],
+        ['calendar-days', t('Best day'), mosts.bestDay && shortDay(mosts.bestDay.day), mosts.bestDay && t('{n} delivered', { n: mosts.bestDay.aircraft })],
+        ['zap', t('Fastest completion'), mosts.fastestHours != null ? fmtHoursT(mosts.fastestHours) : null, t('from taking an order to completing it')],
+        ['timer', t('Typical completion'), mosts.medianHours != null ? fmtHoursT(mosts.medianHours) : null, t('median, orders you completed')]
+    ];
+    return html`<div className="space-y-3 md:space-y-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
+            <${ProfileTile} label=${t('Orders taken')} value=${totals.ordersTaken} sub=${t('{n} in progress now', { n: totals.inProgress })} />
+            <${ProfileTile} label=${t('Orders completed')} value=${totals.ordersDone}
+                sub=${totals.ordersTaken ? t('{n}% of the orders you took', { n: Math.min(100, Math.round(totals.ordersDone / totals.ordersTaken * 100)) }) : null} />
+            <${ProfileTile} label=${unit} value=${totals.aircraft} sub=${t('by you, on every order')} />
+            <${ProfileTile} label=${t('Sales volume')} value=${'≈ ' + fmtUSDShort(totals.value)} sub=${t('aircraft × average price')} />
+        </div>
+
+        ${empty ? html`<${EmptyState} icon="chart-column" title=${t('Nothing delivered in this period yet')} text=${t('Take and deliver orders and your charts fill up here.')} />`
+        : html`
+            <div className="grid lg:grid-cols-[2fr_1fr] gap-3 md:gap-4">
+                <${VizCard} title=${t('Aircraft delivered over time')} about=${data.bucketDays === 1 ? t('Per day. Hover or tap a column for details.') : t('Per week. Hover or tap a column for details.')}>
+                    <${MiniColumns} series=${data.series} max=${seriesMax} height="h-36" bind=${bind}
+                        tipFor=${(n, i) => html`<${TipRows} title=${bucketName(i)} rows=${[[unit, n]]} />`} />
+                    <p className="flex justify-between text-[10px] text-slate-500 mt-2"><span>${bucketName(0)}</span><span>${t('now')}</span></p>
+                <//>
+                <${VizCard} title=${t('Your busiest days')} about=${t('Aircraft delivered by weekday (UTC).')}>
+                    <div className="h-36 flex items-end gap-1.5 border-b border-slate-700">
+                        ${data.weekdays.map((n, i) => html`<span key=${i} ...${bind(html`<${TipRows} title=${weekdayName(i)} rows=${[[unit, n]]} />`)}
+                            className="flex-1 h-full flex items-end outline-none hover:bg-slate-800/60 focus-visible:bg-slate-800/60 rounded-t">
+                            <span className="w-full rounded-t" style=${{ height: n ? `max(${(n / dayMax * 100).toFixed(1)}%, 2px)` : 0, backgroundColor: VIZ.bar }}></span>
+                        </span>`)}
+                    </div>
+                    <div className="flex gap-1.5 mt-1.5">${data.weekdays.map((_, i) => html`<span key=${i} className="flex-1 text-center text-[10px] text-slate-500 truncate">${weekdayName(i)}</span>`)}</div>
+                <//>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-3 md:gap-4">
+                <${VizCard} title=${t('Aircraft you deliver most')} about=${t('Your share of each order you delivered on.')}>
+                    ${data.types.length ? html`<${BarRows} rows=${data.types} bind=${bind} unit=${unit} />` : html`<p className="text-sm text-slate-400">—</p>`}
+                <//>
+                <${VizCard} title=${t('Alliances you supply')} about=${t("Aircraft you delivered, by the buyer's alliance.")}>
+                    ${data.alliances.length ? html`<${BarRows} rows=${data.alliances} bind=${bind} unit=${unit} />` : html`<p className="text-sm text-slate-400">—</p>`}
+                <//>
+            </div>
+
+            <div>
+                <p className="label text-slate-500 mb-2">${t('Your records')}</p>
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
+                    ${mostTiles.map(([icon, label, value, sub]) => html`<div key=${label} className="card !rounded-2xl md:!rounded-3xl p-3 md:p-4 flex items-start gap-3 min-w-0">
+                        <span className="w-9 h-9 shrink-0 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name=${icon} className="w-4 h-4" /></span>
+                        <span className="min-w-0">
+                            <span className="block text-[11px] font-bold text-slate-500 truncate">${label}</span>
+                            <span className="block text-base md:text-lg font-black text-white truncate">${value ?? '—'}</span>
+                            ${value != null && sub && html`<span className="block text-[11px] text-slate-500 truncate">${sub}</span>`}
+                        </span>
+                    </div>`)}
+                </div>
+            </div>
+        `}
+        ${data.statsSince && html`<p className="text-[11px] text-amber-300/80">${t('Statistics count from {date}.', { date: fmtDate(data.statsSince) })}</p>`}
+    </div>`;
+}
+
+// Vacation days: how many the seller has, and spending some (or all) of them.
+function VacationCard({ vacation, seller, inHands, onStarted }) {
+    const balance = vacation ? vacation.days : Number(seller?.vacation_days) || 0;
+    const [n, setN] = useState(1);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => { setN((x) => Math.min(Math.max(1, x), Math.max(1, balance))); }, [balance]);
+    const start = async (all) => {
+        const days = all ? balance : n;
+        const until = new Date(Date.now() + days * 864e5);
+        const ok = await ask({
+            title: t('Start a {n}-day vacation?', { n: days }), confirmLabel: t('Start my vacation'),
+            message: [
+                t('Until {date}, the seller desk only shows your holiday screen and the Echo Market bot sends you nothing.', { date: until.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }) }),
+                inHands ? t('You still have {n} active orders. Consider passing them on first, so buyers are not left waiting.', { n: inHands }) : '',
+                t('New-order posts on Discord ping the whole seller role. Mute that channel for total quiet.'),
+                t('You can come back early: unused whole days go back to your balance.')
+            ].filter(Boolean).join('\n\n')
+        });
+        if (!ok) return;
+        setBusy(true);
+        try {
+            const r = await api('/api/admin/sellers', { action: 'vacation-start', ...(all ? { all: true } : { days }) });
+            onStarted?.(r.vacation);
+        } catch (err) { toast(err.message, 'error'); setBusy(false); }
+    };
+    return html`<section className="card !rounded-3xl p-4 md:p-5 overflow-hidden relative">
+        <div className="absolute -right-4 -top-4 text-7xl opacity-20 select-none pointer-events-none" aria-hidden="true">🏝️</div>
+        <h2 className="font-extrabold text-white flex items-center gap-2"><${Icon} name="tree-palm" className="w-5 h-5 text-sky-300" />${t('Vacation')}</h2>
+        <p className="text-4xl font-black text-white mt-3 tabular-nums">${balance} <span className="text-base font-bold text-slate-400">${t('days available')}</span></p>
+        ${!balance ? html`<p className="text-sm text-slate-400 mt-2">${t('You have no vacation days right now. The Lead Alliance Ambassador or an Alliance Leader can grant you some.')}</p>`
+        : html`<div className="mt-4 space-y-3">
+            <div>
+                <p className="text-xs font-bold text-slate-400 mb-1.5">${t('How many days do you want to take?')}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    <button onClick=${() => setN(Math.max(1, n - 1))} disabled=${n <= 1} className="w-10 h-10 rounded-full border border-slate-700 text-white disabled:opacity-30 flex items-center justify-center" aria-label=${t('Fewer days')}><${Icon} name="minus" className="w-4 h-4" /></button>
+                    <input type="number" min="1" max=${balance} value=${n} aria-label=${t('Days')} onChange=${(e) => setN(Math.min(balance, Math.max(1, Math.floor(Number(e.target.value)) || 1)))}
+                        className="input !w-20 text-center text-lg font-black tabular-nums" />
+                    <button onClick=${() => setN(Math.min(balance, n + 1))} disabled=${n >= balance} className="w-10 h-10 rounded-full border border-slate-700 text-white disabled:opacity-30 flex items-center justify-center" aria-label=${t('More days')}><${Icon} name="plus" className="w-4 h-4" /></button>
+                    <span className="text-sm text-slate-400">${t('back on {date}', { date: shortDay(new Date(Date.now() + n * 864e5).toISOString()) })}</span>
+                </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+                <${Button} icon="tree-palm" busy=${busy} onClick=${() => start(false)}>${n === 1 ? t('Take 1 day off') : t('Take {n} days off', { n })}<//>
+                ${balance > 1 && html`<${Button} variant="secondary" busy=${busy} onClick=${() => start(true)}>${t('Use all {n} days', { n: balance })}<//>`}
+            </div>
+        </div>`}
+        ${vacation?.history?.length > 0 && html`<details className="mt-4 group">
+            <summary className="cursor-pointer list-none text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1.5">
+                <${Icon} name="chevron-right" className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />${t('Days you were granted')}</summary>
+            <ul className="mt-2 space-y-1.5 text-xs text-slate-400">${vacation.history.map((g, i) => html`<li key=${i}>
+                <b className="text-slate-200">${t('+{n} days', { n: g.days })}</b> · ${g.granted_by_name || '—'} · ${new Date(g.created_at).toLocaleDateString()}${g.note ? html` · <i>${g.note}</i>` : ''}</li>`)}</ul>
+        </details>`}
+    </section>`;
+}
+
+function ProfileSettings() {
+    const [meow, setMeow] = useState(() => store.get(LS_MEOW, true));
+    const toggleMeow = () => {
+        store.set(LS_MEOW, !meow);
+        setMeow(!meow);
+        if (!meow) { lastMeow = 0; audio(); setTimeout(playMeow, 150); }   // turning it on plays a sample
+    };
+    return html`<section className="card !rounded-3xl p-4 md:p-5">
+        <h2 className="font-extrabold text-white flex items-center gap-2"><${Icon} name="settings" className="w-5 h-5 text-sky-300" />${t('Settings')}</h2>
+        <button onClick=${toggleMeow} role="switch" aria-checked=${meow} className="mt-3 w-full flex items-center gap-3 p-3 rounded-2xl border border-slate-800 bg-slate-950/60 hover:border-slate-600 text-left">
+            <span className="w-9 h-9 shrink-0 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name=${meow ? 'volume-2' : 'volume-x'} className="w-4 h-4" /></span>
+            <span className="flex-1 min-w-0">
+                <span className="block text-sm font-bold text-white">${t('Meow for new orders')}</span>
+                <span className="block text-[11px] text-slate-500">${t('A short meow when a new order arrives while the desk is open (this device).')}</span>
+            </span>
+            <span className=${`w-11 h-6 shrink-0 rounded-full p-0.5 transition-colors ${meow ? 'bg-sky-400' : 'bg-slate-700'}`}>
+                <span className=${`block w-5 h-5 rounded-full bg-white transition-transform ${meow ? 'translate-x-5' : ''}`}></span>
+            </span>
+        </button>
+    </section>`;
+}
+
+// Vacation days just granted: a getaway-style pop-up that sends the seller to their profile to use them.
+function GetawayModal({ news, onClose, onProfile }) {
+    return html`<${Modal} open=${true} onClose=${onClose} size="sm" title=${t('Pack your bags!')}>
+        <div className="space-y-4">
+            <div className="relative h-40 rounded-2xl overflow-hidden" aria-hidden="true"
+                style=${{ background: 'linear-gradient(180deg, #fb923c 0%, #f472b6 38%, #60a5fa 62%, #1d4ed8 100%)' }}>
+                <span className="absolute left-[38%] top-[44%] -translate-x-1/2 -translate-y-1/2 w-24 h-24 rounded-full" style=${{ background: 'radial-gradient(circle, #fef9c3 0%, #fde047 50%, rgba(253,224,71,0) 70%)' }}></span>
+                <svg viewBox="0 0 400 160" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+                    <path d="M0 104 Q100 96 200 104 T400 104 V160 H0 Z" fill="#1e40af" opacity="0.85" />
+                    <path d="M0 116 Q100 108 200 116 T400 116 V160 H0 Z" fill="#1e3a8a" />
+                    <ellipse cx="300" cy="124" rx="74" ry="13" fill="#fcd9a0" />
+                    <path d="M298 122 C 300 96, 306 76, 318 62" stroke="#5b3a1a" strokeWidth="4" fill="none" strokeLinecap="round" />
+                    <path d="M318 62 C 300 56, 286 62, 278 72 M318 62 C 330 50, 346 52, 356 60 M318 62 C 316 48, 306 40, 294 40 M318 62 C 334 66, 342 76, 344 86 M318 62 C 306 68, 300 80, 300 90" stroke="#14532d" strokeWidth="6" fill="none" strokeLinecap="round" />
+                </svg>
+            </div>
+            <div className="text-center">
+                <p className="text-3xl font-black text-white">${t('{n} vacation days', { n: news.days })}</p>
+                <p className="text-sm text-slate-300 mt-1">${t('granted to you by {name}. Thank you for everything you do on the market!', { name: news.by })}</p>
+                ${news.note && html`<p className="text-sm text-slate-200 mt-3 p-3 rounded-2xl bg-slate-950 border border-slate-800 italic">“${news.note}”</p>`}
+                <p className="text-sm text-slate-400 mt-3">${t('Go to your profile to choose when to use them.')}</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+                <${Button} className="flex-1" icon="tree-palm" onClick=${onProfile}>${t('Go to my profile')}<//>
+                <${Button} variant="ghost" onClick=${onClose}>${t('Later')}<//>
+            </div>
+        </div>
+    <//>`;
+}
+
+// =========================================================================
+//  Vacation mode: the whole desk is replaced by this. No buttons, numbers, orders or messages: a greeting
+//  under a starry night sky over an island, on light blue. "Come back early" is far down and quiet on purpose.
+// =========================================================================
+const VACATION_STARS = Array.from({ length: 110 }, (_, i) => {
+    const r = (n) => { const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
+    return { x: r(1) * 1440, y: r(2) * 520, s: 0.6 + r(3) * 1.6, d: (r(4) * 4).toFixed(2), tw: r(5) > 0.6 };
+});
+function VacationScreen({ account, seller, onBack }) {
+    const until = new Date(seller.vacation_until);
+    const g = greetingFor(new Date());
+    const name = account?.display_name || account?.discord_username || '';
+    const dateText = until.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    // The vacation ends on its own: reload into the normal desk then (if that's within a day).
+    useEffect(() => {
+        const ms = until.getTime() - Date.now() + 2000;
+        if (ms > 0 && ms < 864e5) { const id = setTimeout(() => window.location.reload(), ms); return () => clearTimeout(id); }
+    }, [seller.vacation_until]);
+    useEffect(() => {
+        const prev = document.body.style.background;
+        document.body.style.background = '#cfe8ff';
+        return () => { document.body.style.background = prev; };
+    }, []);
+    const comeBack = async () => {
+        const left = Math.round((until.getTime() - Date.now()) / 864e5);   // same rounding as the server
+        const ok = await ask({ title: t('Come back to work early?'), confirmLabel: t('Yes, I am back'),
+            message: left > 0 ? t('Your vacation ends now. {n} unused days go back to your balance.', { n: left }) : t('Your vacation ends now.') });
+        if (!ok) return;
+        try { await api('/api/admin/sellers', { action: 'vacation-end' }); await onBack?.(); }
+        catch (err) { toast(err.message, 'error'); }
+    };
+    return html`<div className="fixed inset-0 z-[60] overflow-y-auto overflow-x-hidden" style=${{ background: '#cfe8ff' }}>
+        <section className="relative w-full h-[100svh] min-h-[560px] overflow-hidden">
+            <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMax slice" className="absolute inset-0 w-full h-full" aria-hidden="true">
+                <defs>
+                    <linearGradient id="vac-sky" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stopColor="#071538" /><stop offset="0.45" stopColor="#12307a" /><stop offset="0.72" stopColor="#2f62c9" /><stop offset="1" stopColor="#7fb2f0" />
+                    </linearGradient>
+                    <linearGradient id="vac-sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#1d4ed8" /><stop offset="1" stopColor="#0b1e5b" /></linearGradient>
+                    <radialGradient id="vac-moon"><stop offset="0.38" stopColor="#fffbe6" stopOpacity="0.5" /><stop offset="1" stopColor="#fef3c7" stopOpacity="0" /></radialGradient>
+                </defs>
+                <rect width="1440" height="900" fill="url(#vac-sky)" />
+                ${VACATION_STARS.map((st, i) => html`<circle key=${i} cx=${st.x} cy=${st.y} r=${st.s} fill="#ffffff" className=${st.tw ? 'vac-twinkle' : ''} style=${{ animationDelay: st.d + 's', opacity: st.tw ? undefined : 0.75 }} />`)}
+                <circle cx="880" cy="62" r="90" fill="url(#vac-moon)" />
+                <circle cx="880" cy="62" r="30" fill="#fffbea" />
+                <rect y="640" width="1440" height="260" fill="url(#vac-sea)" />
+                ${[0, 1, 2, 3, 4, 5].map((i) => html`<rect key=${i} x=${880 - (60 - i * 8)} y=${660 + i * 26} width=${(60 - i * 8) * 2} height="3" rx="1.5" fill="#fef9c3" opacity=${0.55 - i * 0.07} />`)}
+                <path d="M120 760 C 260 690, 520 680, 700 700 C 860 716, 960 740, 1010 770 L 1010 900 L 120 900 Z" fill="#f2c98a" />
+                <path d="M60 800 C 260 750, 600 740, 820 760 C 960 772, 1080 800, 1140 830 L 1140 900 L 60 900 Z" fill="#e5b06a" />
+                <g fill="none" strokeLinecap="round">
+                    <path d="M420 742 C 430 650, 450 560, 500 486" stroke="#4a2c12" strokeWidth="13" />
+                    <path d="M500 486 C 450 466, 400 480, 372 516 M500 486 C 540 446, 600 448, 640 476 M500 486 C 492 440, 462 412, 420 410 M500 486 C 556 494, 586 528, 590 566 M500 486 C 462 506, 440 548, 444 586" stroke="#0f3b22" strokeWidth="20" />
+                    <path d="M690 724 C 690 650, 700 590, 726 540" stroke="#4a2c12" strokeWidth="10" />
+                    <path d="M726 540 C 690 526, 656 538, 640 566 M726 540 C 756 512, 800 514, 826 536 M726 540 C 722 506, 698 486, 668 486 M726 540 C 766 548, 784 574, 786 602" stroke="#0f3b22" strokeWidth="16" />
+                    <path d="M452 640 Q 572 690 698 640" stroke="#f8e7c4" strokeWidth="5" />
+                </g>
+                <path d="M800 742 L 850 690 L 900 742 Z" fill="#7c4a1e" /><rect x="812" y="742" width="76" height="34" fill="#a16207" /><rect x="840" y="752" width="20" height="24" fill="#3b2410" />
+            </svg>
+            <div className="relative z-10 max-w-3xl mx-auto px-6 pt-[12vh] text-center text-white">
+                <p className="text-xs md:text-sm font-bold tracking-[0.3em] uppercase" style=${{ color: '#dbeafe' }}>${t('On vacation')} 🌴</p>
+                <h1 className="text-4xl md:text-6xl font-black tracking-tight mt-3 drop-shadow-lg">${greetingLine(g, name)}</h1>
+                <p className="text-lg md:text-2xl font-semibold mt-4 drop-shadow" style=${{ color: '#eff6ff' }}>${t('Enjoy your break. You have earned it.')}</p>
+                <p className="text-sm md:text-base mt-2" style=${{ color: '#dbeafe' }}>${t('The market will be right here when you are back on {date}.', { date: dateText })}</p>
+            </div>
+        </section>
+        <section className="max-w-xl mx-auto px-6 text-center" style=${{ color: '#1e3a8a' }}>
+            <p className="pt-16 text-lg font-bold">${name ? t('Rest well, {name}.', { name }) : t('Rest well.')} 🌙</p>
+            <p className="text-sm mt-2 opacity-70">${t('No orders, no pings, no messages. Just you and the sea.')}</p>
+            <div className="h-[90vh]"></div>
+            <button onClick=${comeBack} className="text-[11px] pb-10 opacity-40 hover:opacity-70">${t('Come back to work early')}</button>
+        </section>
+        <${Toasts} />
+        <${DialogHost} />
     </div>`;
 }
 
@@ -2147,13 +2551,13 @@ function RewardsCard({ data, run }) {
 
 // Admin tools, one tap away on the desk's front page (instead of at the end of a scrolling tab bar).
 // Every seller: the theft reports (identify and warn culprits) and the alliance statistics. Admins also get their tools.
-const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', get label() { return t('Theft reports'); }, get hint() { return t('Identify and warn culprits'); } };
-const ALLIANCES_TOOL = { tab: 'alliances', icon: 'chart-column', get label() { return t('Alliances'); }, get hint() { return t('Who orders the most'); } };
+const THEFT_TOOL = { tab: 'thefts', icon: 'shield-alert', get label() { return t('Theft reports'); }, get short() { return t('Thefts'); } };
+const ALLIANCES_TOOL = { tab: 'alliances', icon: 'chart-column', get label() { return t('Alliances'); } };
 // (The admin tools below stay in English, like the admin screens they open.)
 const ADMIN_TOOLS = [
-    { tab: 'team', icon: 'trophy', label: 'Sellers', hint: "Leaderboard, Sellers' Cup" },
-    { tab: 'mod', icon: 'shield', label: 'Moderation', hint: 'Bans, warnings, bot' },
-    { tab: 'community', icon: 'sparkles', label: 'Community', hint: 'Rewards, notices, alert list' }
+    { tab: 'team', icon: 'trophy', label: 'Sellers' },
+    { tab: 'mod', icon: 'shield', label: 'Moderation', short: 'Mod' },
+    { tab: 'community', icon: 'sparkles', label: 'Community' }
 ];
 // Phones: the order tabs as big buttons at the top, in the same style as the admin tools (desktop keeps the tab bar).
 function OrderTabButtons({ tab, setTab, tabs, counts }) {
@@ -2172,22 +2576,34 @@ function OrderTabButtons({ tab, setTab, tabs, counts }) {
     </nav>`;
 }
 
-function AdminShortcuts({ tab, setTab, isAdmin, isStaff, theftHint = '' }) {
-    // Admins: everything. Community Managers: everything but Sellers. Sellers: theft reports and alliances.
-    const tools = isAdmin ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS]
-        : isStaff ? [THEFT_TOOL, ALLIANCES_TOOL, ...ADMIN_TOOLS.filter((x) => x.tab !== 'team')] : [THEFT_TOOL, ALLIANCES_TOOL];
-    return html`<nav aria-label=${t('Theft reports')} className=${`grid gap-2 ${isAdmin ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : isStaff ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2'}`}>
-        ${tools.map((tool) => {
-            const hint = tool.tab === 'thefts' && theftHint ? theftHint : tool.hint;
-            const alert = tool.tab === 'thefts' && theftHint;
-            const on = tab === tool.tab;
-            return html`<button key=${tool.tab} onClick=${() => setTab(on ? 'open' : tool.tab)} aria-pressed=${on}
-                className=${`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 p-2.5 md:p-3 rounded-2xl border text-center sm:text-left transition-colors ${on ? 'bg-white text-slate-950 border-white' : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-600'}`}>
-                <span className=${`w-8 h-8 md:w-9 md:h-9 shrink-0 rounded-xl flex items-center justify-center ${on ? 'bg-slate-950/10' : alert ? 'bg-rose-500/15 text-rose-300' : 'bg-sky-400/10 text-sky-300'}`}><${Icon} name=${tool.icon} className="w-4 h-4" /></span>
-                <span className="min-w-0">
-                    <span className="block text-xs sm:text-sm font-extrabold sm:truncate">${tool.label}</span>
-                    <span className=${`${isStaff ? 'hidden sm:block' : 'block'} text-[11px] truncate ${on ? 'text-slate-600' : alert ? 'text-rose-300' : 'text-slate-500'}`}>${on ? t('Open · tap to go back to orders') : hint}</span>
-                </span>
+// The desk's sections: Orders, then the tools this seller may use. Admins: everything. Community Managers:
+// everything but Sellers. Sellers: theft reports and alliances. Desktop: in the top bar; phones and tablets: a
+// bottom bar, like the market site.
+const ORDERS_NAV = { tab: 'orders', icon: 'inbox', get label() { return t('Orders'); }, get short() { return t('Orders'); } };
+function deskNav(seller) {
+    const tools = seller.is_admin ? ADMIN_TOOLS : seller.is_staff ? ADMIN_TOOLS.filter((x) => x.tab !== 'team') : [];
+    return [ORDERS_NAV, THEFT_TOOL, ALLIANCES_TOOL, ...tools];
+}
+const navActive = (item, tab, orderTab) => (item.tab === 'orders' ? orderTab : tab === item.tab);
+function TopNav({ items, tab, orderTab, theftBadge, onGo }) {
+    return html`<nav aria-label=${t('Seller desk')} className="hidden lg:flex items-center gap-1 ml-4 min-w-0">
+        ${items.map((it) => html`<button key=${it.tab} onClick=${() => onGo(it.tab)} aria-current=${navActive(it, tab, orderTab) ? 'page' : undefined}
+            title=${it.label} aria-label=${it.label}
+            className=${`relative px-3 py-2 rounded-full text-sm font-bold flex items-center gap-2 whitespace-nowrap transition-colors ${navActive(it, tab, orderTab) ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>
+            <${Icon} name=${it.icon} className="w-4 h-4 shrink-0" /><span className=${items.length > 3 ? 'hidden xl:inline' : ''}>${it.label}</span>
+            ${it.tab === 'thefts' && theftBadge > 0 && html`<span className="text-[10px] min-w-4 px-1 rounded-full bg-rose-500 text-white">${theftBadge}</span>`}
+        </button>`)}
+    </nav>`;
+}
+function BottomNav({ items, tab, orderTab, theftBadge, onGo }) {
+    return html`<nav aria-label=${t('Seller desk')} className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-page/95 backdrop-blur border-t border-slate-800 flex px-1 pb-[env(safe-area-inset-bottom)]">
+        ${items.map((it) => {
+            const on = navActive(it, tab, orderTab);
+            return html`<button key=${it.tab} onClick=${() => onGo(it.tab)} aria-current=${on ? 'page' : undefined}
+                className=${`flex-1 min-w-0 flex flex-col items-center gap-1 py-2 text-[10px] font-bold ${on ? 'text-white' : 'text-slate-500'}`}>
+                <span className="relative"><${Icon} name=${it.icon} className="w-5 h-5" />
+                    ${it.tab === 'thefts' && theftBadge > 0 && html`<span className="absolute -top-1 -right-2 min-w-4 h-4 px-0.5 rounded-full bg-rose-500 text-white text-[9px] flex items-center justify-center">${theftBadge}</span>`}
+                </span><span className="truncate max-w-full px-0.5">${it.short || it.label}</span>
             </button>`;
         })}
     </nav>`;
@@ -2254,7 +2670,7 @@ function Stat({ label, value, icon, tone }) {
 function SellAsPicker({ airlines, sellAs, onChange }) {
     if (!airlines.length) return null;
     return html`<label data-tour="sellas" className="hidden sm:flex items-center gap-2 pl-3 pr-1 py-1 rounded-full border border-slate-800 bg-slate-900 text-xs" title=${t('The airline buyers see when you take an order')}>
-        <span className="text-slate-500 font-bold">${t('Selling as')}</span>
+        <span className="text-slate-500 font-bold whitespace-nowrap">${t('Selling as')}</span>
         <select value=${sellAs?.id || ''} onChange=${(e) => onChange(e.target.value)} className="bg-transparent font-bold text-white outline-none py-1 pr-1 max-w-40">
             ${airlines.map((a) => html`<option key=${a.id} value=${a.id} className="bg-slate-900">${a.name}</option>`)}
         </select>

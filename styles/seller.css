@@ -78,3 +78,8 @@ body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highligh
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
 input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+/* Vacation screen: a few stars twinkle (not for people who prefer less motion). */
+@keyframes vac-twinkle { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.25; } }
+.vac-twinkle { animation: vac-twinkle 3.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .vac-twinkle { animation: none; opacity: 0.8; } }

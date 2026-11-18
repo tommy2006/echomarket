@@ -58,7 +58,10 @@ export default async function handler(req, res) {
                 .then((r) => (r.error ? r : db.from('budget_rewards').select('bonus_usd').limit(1)))
                 .then((r) => (r.error ? r : db.from('market_bans').select('auto_step').limit(1)))
                 .then((r) => (r.error ? r : db.from('sellers').select('unranked, activity_alert_at').limit(1)))
-                .then((r) => (r.error ? r : db.from('accounts').select('resonant').limit(1)));
+                .then((r) => (r.error ? r : db.from('accounts').select('resonant').limit(1)))
+                .then((r) => (r.error ? r : db.from('sellers').select('vacation_days, vacation_until, vacation_news').limit(1)))
+                .then((r) => (r.error ? r : db.from('missing_reports').select('vacation_sellers, relist_asked_at').limit(1)))
+                .then((r) => (r.error ? r : db.from('vacation_grants').select('id').limit(1)));
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,
@@ -144,6 +147,8 @@ export default async function handler(req, res) {
                 const modRoles = [['marketBanned', 'DISCORD_MARKET_BANNED_ROLE_ID', 'Market Banned', 'blocks the buyer market', 'BOTH']];
                 // Optional gate: only members with the Resonants role (active members) may use the buyer market.
                 if (APP === 'buyer') modRoles.push(['resonant', 'DISCORD_RESONANTS_ROLE_ID', 'Resonants', 'only members with it may use the market', 'BUYER']);
+                // Optional: Alliance Leader. With the Lead Ambassador, the only people who may grant vacation days.
+                if (APP === 'seller') modRoles.push(['allianceLeader', 'DISCORD_ALLIANCE_LEADER_ROLE_ID', 'Alliance Leader', 'may grant sellers vacation days (with the Lead Ambassador)', 'SELLER']);
                 modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', APP === 'seller' ? 'admin rights on the seller desk' : 'may use the bot\'s /market commands', 'BOTH']);
                 modRoles.splice(1, 0, ['communityManager', 'DISCORD_COMMUNITY_MANAGER_ROLE_ID', 'Community Manager', APP === 'seller' ? 'moderation, community and theft tools on the seller desk (no selling)' : 'may use the bot\'s /market commands', 'BOTH']);
                 for (const [key, env, label, effect, where] of modRoles) {

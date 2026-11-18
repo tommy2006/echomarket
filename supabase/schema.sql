@@ -220,6 +220,24 @@ alter table public.sellers add column if not exists unranked_note text;
 -- Activity alerts (seller/lib/activity.js, daily): when admins were last told this seller hasn't delivered
 -- for 5 days. One alert per quiet stretch; a new delivery starts a new stretch.
 alter table public.sellers add column if not exists activity_alert_at timestamptz;
+-- Vacation days, granted by a Lead Ambassador or an Alliance Leader (seller desk → Sellers). The seller spends them
+-- from their profile: while vacation_until is in the future the desk shows only a holiday screen, the bot sends them
+-- nothing (DMs, push) and the activity alerts skip them. vacation_news: a grant the seller hasn't seen yet (pop-up).
+alter table public.sellers add column if not exists vacation_days  smallint not null default 0;
+alter table public.sellers add column if not exists vacation_from  timestamptz;
+alter table public.sellers add column if not exists vacation_until timestamptz;
+alter table public.sellers add column if not exists vacation_news  jsonb;
+create table if not exists public.vacation_grants (
+    id            bigint generated always as identity primary key,
+    seller_id     uuid not null references public.accounts(id) on delete cascade,
+    days          smallint not null check (days between 1 and 60),
+    note          text,
+    granted_by    uuid references public.accounts(id) on delete set null,
+    granted_by_name text,
+    created_at    timestamptz not null default now()
+);
+create index if not exists vacation_grants_seller_idx on public.vacation_grants (seller_id, created_at desc);
+alter table public.vacation_grants enable row level security;   -- no policies: only the API reads and writes it
 alter table public.sellers drop constraint if exists sellers_rank_check;
 alter table public.sellers add constraint sellers_rank_check check (rank in ('lead', 'ambassador', 'verified', 'admin', 'cm'));
 
@@ -566,6 +584,10 @@ alter table public.missing_reports add constraint missing_reports_status_check
 -- A confirmed theft whose culprit(s) are not known yet: "under investigation" until a seller attaches them
 -- (or closes the investigation without a name).
 alter table public.missing_reports add column if not exists investigating boolean not null default false;
+-- A seller on the order was on vacation when the buyer reported (their names), and when the buyer asked the other
+-- sellers to re-list early (once per report).
+alter table public.missing_reports add column if not exists vacation_sellers text;
+alter table public.missing_reports add column if not exists relist_asked_at  timestamptz;
 -- A cleared theft (planes re-listed) whose warnings a seller or admin then removed from the culprits' record.
 alter table public.missing_reports add column if not exists record_cleared_at      timestamptz;
 alter table public.missing_reports add column if not exists record_cleared_by      uuid references public.accounts(id) on delete set null;
@@ -768,6 +790,7 @@ revoke insert, update, delete, truncate, references, trigger on
     public.market_bans, public.market_messages, public.order_messages, public.missing_reports,
     public.missing_report_culprits
     from anon, authenticated;
+revoke all on public.vacation_grants from anon, authenticated;
 revoke all on public.market_bans, public.market_messages, public.order_messages, public.missing_reports,
     public.missing_report_culprits from anon;
 revoke insert, delete, truncate, references, trigger on public.accounts from anon, authenticated;

@@ -395,7 +395,7 @@ export function DialogHost() {
             <${Button} variant="ghost" onClick=${() => close(false)}>${t('Back')}<//>
             <${Button} variant=${d.danger ? 'danger' : 'primary'} disabled=${needsText}
                 onClick=${() => close(d.input ? text.trim() : true)}>${tx(d.confirmLabel)}<//>`}>
-        <p className="text-sm text-slate-300 leading-relaxed">${tx(d.message)}</p>
+        <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">${tx(d.message)}</p>
         ${d.input && html`<textarea autoFocus value=${text} onChange=${(e) => setText(e.target.value)} rows="3"
             placeholder=${tx(d.input.placeholder || '')} className="mt-4 w-full input"></textarea>`}
     <//>`;

@@ -538,6 +538,7 @@ What this switches on:
 |---|---|---|
 | `DISCORD_GUILD_ID` | **both** (buyer is new) | Echo Alliances server ID: only its members can use the market |
 | `DISCORD_MARKET_BANNED_ROLE_ID` | **both** | Market Banned role ID |
+| `DISCORD_ALLIANCE_LEADER_ROLE_ID` | seller | Alliance Leader role ID (optional: Alliance Leaders may grant sellers vacation days, like the Lead Ambassador. They also need the Sellers tab, i.e. admin rights on the desk) |
 | `DISCORD_RESONANTS_ROLE_ID` | buyer | Resonants role ID (optional: when set, only members with this role can use the market; temporarily inactive members who lost it can't) |
 | `DISCORD_MARKET_ADMIN_ROLE_ID` | seller | Market Admin role ID |
 | `DISCORD_COMMUNITY_MANAGER_ROLE_ID` | seller | Community Manager role ID (optional: moderation, community and theft tools, no selling) |
