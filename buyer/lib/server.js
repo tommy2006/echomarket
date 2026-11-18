@@ -324,6 +324,9 @@ export const WEBHOOKS = {
     fulfilled: env('DISCORD_WEBHOOK_FULFILLED') || FALLBACK_WEBHOOK
 };
 const SELLER_ROLE_ID = env('DISCORD_ROLE_ID');
+// The role pinged for new orders: the bot-managed "Order Pings" role when set (sellers on vacation don't have it,
+// see seller/lib/discord-sync.js), otherwise DISCORD_ROLE_ID.
+export const PING_ROLE_ID = env('DISCORD_ORDER_PINGS_ROLE_ID') || SELLER_ROLE_ID;
 
 // Embed side-bar colours, used for channel posts and DMs alike.
 // Black is 0x010101: Discord treats 0x000000 as "no colour" and would show its default grey.
@@ -409,11 +412,11 @@ async function webhookCall(url, method, payload) {
 // Returns true when posted. Never throws.
 export async function postToSellers({ title, description, color = EMBED_COLORS.request, url, fields = [] }, { pingRole = false } = {}) {
     if (!WEBHOOKS.request) return false;
-    const ping = pingRole && SELLER_ROLE_ID;
+    const ping = pingRole && PING_ROLE_ID;
     const posted = await webhookCall(WEBHOOKS.request, 'POST', {
-        content: ping ? `<@&${SELLER_ROLE_ID}> ${title}` : undefined,
+        content: ping ? `<@&${PING_ROLE_ID}> ${title}` : undefined,
         embeds: [{ title, description, color, url, fields, timestamp: new Date().toISOString() }],
-        allowed_mentions: { parse: [], roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
+        allowed_mentions: { parse: [], roles: ping ? [PING_ROLE_ID] : [], users: [] }
     });
     return Boolean(posted);
 }
@@ -438,7 +441,7 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
         const { data: entry } = alertDiscordId
             ? await admin().from('watchlist').select('reason, added_by_name, created_at').eq('discord_id', alertDiscordId).maybeSingle()
             : { data: null };
-        const ping = pingSellers && SELLER_ROLE_ID;
+        const ping = pingSellers && PING_ROLE_ID;
         const embed = buildEmbed(order, title, flag, declines || []);
         if (alert && !['FULFILLED', 'CANCELLED', 'DECLINED'].includes(order.status)) {
             const since = entry && new Date(entry.created_at).toISOString().slice(0, 10);
@@ -447,9 +450,9 @@ export async function syncDiscord(order, title, { pingSellers = false } = {}) {
             embed.color = EMBED_COLORS.declined;
         }
         const payload = {
-            content: ping ? `<@&${SELLER_ROLE_ID}> ${alert ? '⚠️ ' : ''}${title}` : undefined,
+            content: ping ? `<@&${PING_ROLE_ID}> ${alert ? '⚠️ ' : ''}${title}` : undefined,
             embeds: [embed],
-            allowed_mentions: { parse: [], roles: ping ? [SELLER_ROLE_ID] : [], users: [] }
+            allowed_mentions: { parse: [], roles: ping ? [PING_ROLE_ID] : [], users: [] }
         };
 
         // Same channel → edit in place (a ping needs a fresh message, so repost then).
@@ -486,10 +489,11 @@ const BOT_TOKEN = env('DISCORD_BOT_TOKEN');
 export const DISCORD_API = process.env.DISCORD_API_BASE || 'https://discord.com/api/v10';
 export const DM_AVAILABLE = Boolean(BOT_TOKEN);
 
-export async function discordBot(path, method = 'GET', payload) {
+export async function discordBot(path, method = 'GET', payload, { reason } = {}) {
     const res = await fetch(DISCORD_API + path, {
         method,
-        headers: { Authorization: `Bot ${BOT_TOKEN}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { Authorization: `Bot ${BOT_TOKEN}`, ...(payload ? { 'Content-Type': 'application/json' } : {}),
+            ...(reason ? { 'X-Audit-Log-Reason': encodeURIComponent(String(reason).slice(0, 400)) } : {}) },
         body: payload ? JSON.stringify(payload) : undefined
     });
     const json = await res.json().catch(() => ({}));
@@ -588,6 +592,10 @@ export const ROLE_IDS = {
     resonant: env('DISCORD_RESONANTS_ROLE_ID'),
     // Optional: Alliance Leader. With the Lead Ambassador, the only people who may grant sellers vacation days.
     allianceLeader: env('DISCORD_ALLIANCE_LEADER_ROLE_ID'),
+    // Optional, seller site: given by the bot while a seller is on vacation (seller/lib/discord-sync.js).
+    vacation: env('DISCORD_VACATION_ROLE_ID'),
+    // Optional: "Order Pings", kept by the bot on every active, ranked seller who isn't on vacation; new orders ping it.
+    orderPings: env('DISCORD_ORDER_PINGS_ROLE_ID'),
     // Optional: the "Server Booster" role. Without it, boosters are found from Discord's own boost status
     // (the member's premium_since), which is exactly when Discord gives that role.
     booster: env('DISCORD_BOOSTER_ROLE_ID'),
@@ -615,7 +623,8 @@ export async function discordStanding(discordId) {
             guildIds = (guilds.json || []).map((g) => g.id);
         }
         // resonant: has the Resonants role (always true when DISCORD_RESONANTS_ROLE_ID isn't set).
-        const st = { inGuild: false, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, resonant: !ROLE_IDS.resonant, allianceLeader: false, booster: false, roleTier: 0, timedOutUntil: null };
+        // roles: the member's role ids in the first (main) server.
+        const st = { inGuild: false, roles: null, rank: null, marketAdmin: false, communityManager: false, marketBanned: false, resonant: !ROLE_IDS.resonant, allianceLeader: false, booster: false, roleTier: 0, timedOutUntil: null };
         let known = false;
         for (const id of guildIds) {
             const m = await discordBot(`/guilds/${id}/members/${discordId}`);
@@ -623,6 +632,7 @@ export async function discordStanding(discordId) {
                 known = true;
                 st.inGuild = true;
                 const roles = m.json.roles || [];
+                if (!st.roles) st.roles = roles;
                 const rank = RANKS.find((r) => ROLE_IDS[r] && roles.includes(ROLE_IDS[r]));
                 if (rank && (!st.rank || RANKS.indexOf(rank) < RANKS.indexOf(st.rank))) st.rank = rank;
                 if (ROLE_IDS.marketAdmin && roles.includes(ROLE_IDS.marketAdmin)) st.marketAdmin = true;

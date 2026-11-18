@@ -7,6 +7,7 @@
 // /api/health?token=<that text>. The full view is never cached.
 import { timingSafeEqual } from 'crypto';
 import { APP, admin, SUPABASE_URL, SUPABASE_PUBLIC_KEY, BUYER_URL, SELLER_URL, WEBHOOKS, DM_AVAILABLE, PUSH_AVAILABLE, discordBot, ROLE_IDS } from '../lib/server.js';
+import { syncHealth } from '../lib/discord-sync.js';
 
 const has = (n) => Boolean(process.env[n]);
 
@@ -139,6 +140,14 @@ export default async function handler(req, res) {
                     for (const r of (roles.ok && roles.json) || []) roleNames.set(r.id, `@${r.name} in ${g.name}`);
                 }
                 const pingRole = process.env.DISCORD_ROLE_ID;
+                // Order Pings: the bot-managed role new orders ping instead (sellers on vacation don't have it).
+                {
+                    const id = ROLE_IDS.orderPings;
+                    add('Discord roles', 'DISCORD_ORDER_PINGS_ROLE_ID (Order Pings: pinged for new orders)', Boolean(id) && roleNames.has(id),
+                        !id ? 'not set (optional): DISCORD_ROLE_ID is pinged' : roleNames.get(id) ? `${roleNames.get(id)}: pinged for new orders, kept on active sellers by the bot` : 'role not found in the server',
+                        'Create an "Order Pings" role (no permissions, give it to nobody). Copy its ID and add it as DISCORD_ORDER_PINGS_ROLE_ID in BOTH Vercel projects, then redeploy.',
+                        { private: Boolean(id) && roleNames.has(id) });
+                }
                 if (pingRole) {
                     add('Discord roles', 'DISCORD_ROLE_ID (pinged for new orders)', roleNames.has(pingRole), roleNames.get(pingRole) || 'role not found in the server',
                         'Set DISCORD_ROLE_ID to the Verified Seller role ID (Server Settings → Roles → right-click → Copy Role ID) in BOTH Vercel projects.', { private: roleNames.has(pingRole) });
@@ -149,6 +158,7 @@ export default async function handler(req, res) {
                 if (APP === 'buyer') modRoles.push(['resonant', 'DISCORD_RESONANTS_ROLE_ID', 'Resonants', 'only members with it may use the market', 'BUYER']);
                 // Optional: Alliance Leader. With the Lead Ambassador, the only people who may grant vacation days.
                 if (APP === 'seller') modRoles.push(['allianceLeader', 'DISCORD_ALLIANCE_LEADER_ROLE_ID', 'Alliance Leader', 'may grant sellers vacation days (with the Lead Ambassador)', 'SELLER']);
+                if (APP === 'seller') modRoles.push(['vacation', 'DISCORD_VACATION_ROLE_ID', 'Vacation', 'given by the bot while a seller is on vacation', 'SELLER']);
                 modRoles.unshift(['marketAdmin', 'DISCORD_MARKET_ADMIN_ROLE_ID', 'Market Admin', APP === 'seller' ? 'admin rights on the seller desk' : 'may use the bot\'s /market commands', 'BOTH']);
                 modRoles.splice(1, 0, ['communityManager', 'DISCORD_COMMUNITY_MANAGER_ROLE_ID', 'Community Manager', APP === 'seller' ? 'moderation, community and theft tools on the seller desk (no selling)' : 'may use the bot\'s /market commands', 'BOTH']);
                 for (const [key, env, label, effect, where] of modRoles) {
@@ -188,6 +198,10 @@ export default async function handler(req, res) {
                     add('Discord roles', 'bot can give the Market Banned role', Boolean(ok),
                         ok ? 'yes' : !canManage ? 'the bot has no "Manage Roles" permission' : 'the bot\'s role is below Market Banned',
                         'Server Settings → Roles: give the bot\'s role (Echo Market) the "Manage Roles" permission and drag it ABOVE Market Banned.');
+                }
+                // Vacation / Order Pings roles and the order channels hidden during vacations (lib/discord-sync.js).
+                if (APP === 'seller') {
+                    for (const [name, ok, detail, fix] of await syncHealth()) add('Discord roles', name, ok, detail, fix, { private: true });
                 }
                 {
                     // Moderation log channel: bans, lifted bans and warnings are posted here by the bot

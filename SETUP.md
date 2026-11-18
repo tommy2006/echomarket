@@ -539,6 +539,8 @@ What this switches on:
 | `DISCORD_GUILD_ID` | **both** (buyer is new) | Echo Alliances server ID: only its members can use the market |
 | `DISCORD_MARKET_BANNED_ROLE_ID` | **both** | Market Banned role ID |
 | `DISCORD_ALLIANCE_LEADER_ROLE_ID` | seller | Alliance Leader role ID (optional: Alliance Leaders may grant sellers vacation days, like the Lead Ambassador. They also need the Sellers tab, i.e. admin rights on the desk) |
+| `DISCORD_VACATION_ROLE_ID` | seller | Vacation role ID (optional: the bot gives it while a seller is on vacation and takes it back when they return). Bot's role must be above it, with Manage Roles |
+| `DISCORD_ORDER_PINGS_ROLE_ID` | **both** | Order Pings role ID (optional: new orders ping this role instead of `DISCORD_ROLE_ID`; the bot keeps it on every active, ranked seller who isn't on vacation). Create it with no permissions and give it to nobody. Bot's role must be above it. After setting it, run the cron once: Vercel → seller project → Settings → Cron Jobs → Run |
 | `DISCORD_RESONANTS_ROLE_ID` | buyer | Resonants role ID (optional: when set, only members with this role can use the market; temporarily inactive members who lost it can't) |
 | `DISCORD_MARKET_ADMIN_ROLE_ID` | seller | Market Admin role ID |
 | `DISCORD_COMMUNITY_MANAGER_ROLE_ID` | seller | Community Manager role ID (optional: moderation, community and theft tools, no selling) |

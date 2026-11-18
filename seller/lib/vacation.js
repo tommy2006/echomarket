@@ -10,7 +10,9 @@
 //   - the activity alerts skip them, and the quiet-days clock restarts when they come back (lib/activity.js)
 //   - a missing-plane report on their order tells the buyer they're away (buyer/api/orders/[orderId].js)
 // Coming back early returns the unused days (rounded to the nearest day) to the balance.
+// On Discord (lib/discord-sync.js): the Vacation role, hidden order channels and no Order Pings role while away.
 import { admin, accountName, onVacation, HttpError } from './server.js';
+import { syncSellerById } from './discord-sync.js';
 
 export const MAX_GRANT = 60;      // days per grant
 export const MAX_BALANCE = 365;   // days a seller can hold
@@ -71,7 +73,8 @@ export async function startVacation(account, input) {
     const patch = { vacation_days: balance - days, vacation_from: new Date(now).toISOString(), vacation_until: new Date(now + days * DAY).toISOString(), vacation_news: null };
     const { error: upErr } = await db.from('sellers').update(patch).eq('user_id', account.id);
     if (upErr) throw upErr;
-    return { ok: true, vacation: vacationView({ ...row, ...patch }) };
+    const discord = await syncSellerById(account.id, { channels: true });
+    return { ok: true, vacation: vacationView({ ...row, ...patch }), discord };
 }
 
 // Back to work early: the unused whole days go back to the balance.
@@ -86,7 +89,8 @@ export async function endVacation(account) {
         activity_alert_at: null };
     const { error: upErr } = await db.from('sellers').update(patch).eq('user_id', account.id);
     if (upErr) throw upErr;
-    return { ok: true, returned: back, vacation: vacationView({ ...row, ...patch }) };
+    const discord = await syncSellerById(account.id, { channels: true });
+    return { ok: true, returned: back, vacation: vacationView({ ...row, ...patch }), discord };
 }
 
 export async function seenVacationNews(account) {

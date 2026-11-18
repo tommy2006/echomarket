@@ -8,6 +8,7 @@
 // colour and title on the seller desk). Without any seller role, admins get the plain 'admin' look and
 // everyone else keeps the rank set by hand.
 import { admin, handler, requireUser, discordStanding, deskRank, isAdminSeller, markRoleChecked, rateLimit, SELLER_ROLE_SYNC } from '../lib/server.js';
+import { syncSellerById } from '../lib/discord-sync.js';
 
 const RANK_NOTE = { lead: 'Lead Ambassador', ambassador: 'Ambassador', verified: 'Verified Seller', admin: 'Market Admin', cm: 'Community Manager' };
 
@@ -18,9 +19,14 @@ export default handler(['POST'], async (req, res) => {
     const { data: row, error } = await db.from('sellers').select('*').eq('user_id', account.id).maybeSingle();
     if (error) throw error;
 
-    const reply = (seller, changed, extra = {}) => res.json({ ok: true, seller, changed, ...extra });
     // One Discord lookup: seller rank, Market Admin role (admin rights), membership.
     const st = SELLER_ROLE_SYNC && account.discord_id ? await discordStanding(account.discord_id) : null;
+    // Before answering: Vacation / Order Pings roles and hidden order channels in step (lib/discord-sync.js),
+    // e.g. a vacation that ran out since their last visit. Uses the roles just read, so usually no extra calls.
+    const reply = async (seller, changed, extra = {}) => {
+        if (st?.inGuild && (row || seller)) await syncSellerById(account.id, { roles: st.roles || [] });
+        return res.json({ ok: true, seller, changed, ...extra });
+    };
     const adminNow = (r, rank) => isAdminSeller({ ...r, rank, market_admin: st ? st.marketAdmin : r?.market_admin });
     const cmNow = (r) => (st ? st.communityManager : Boolean(r?.community_manager));
     if (row && row.source !== 'discord_role') {
