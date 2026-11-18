@@ -69,15 +69,33 @@ export function wantsOrderPings(row, roles, now = Date.now()) {
     return RANKS.includes(rank);
 }
 
-// One Discord call, retried once after a short rate-limit wait.
+// One Discord call, paced by Discord's rate limits. Changes (PUT/DELETE) go one at a time: Discord allows only a
+// few role or permission changes per few seconds in a server. When Discord says the limit is used up (remaining 0),
+// the next change waits for its reset; a 429 ("too many requests") waits as long as Discord asks, up to 3 tries.
+const sleep = (s) => new Promise((ok) => setTimeout(ok, Math.max(0, s) * 1000));
+const MAX_WAIT = 15;   // seconds; a longer wait counts as a failure (the next run or desk visit finishes the job)
+let writeQueue = Promise.resolve();
+const nextFree = { read: 0, write: 0 };
 async function call(path, method, payload, reason) {
-    let r = await discordBot(path, method, payload, { reason });
-    if (r.status === 429) {
-        const wait = Math.min(3, Number(r.json?.retry_after) || 1);
-        await new Promise((ok) => setTimeout(ok, wait * 1000));
-        r = await discordBot(path, method, payload, { reason });
-    }
-    return r;
+    const kind = method === 'GET' ? 'read' : 'write';
+    const run = async () => {
+        let r;
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const wait = (nextFree[kind] - Date.now()) / 1000;
+            if (wait > MAX_WAIT) return { ok: false, status: 429, json: {} };
+            await sleep(wait);
+            r = await discordBot(path, method, payload, { reason });
+            if (r.rate?.remaining === '0' && r.rate.resetAfter) nextFree[kind] = Date.now() + r.rate.resetAfter * 1000 + 100;
+            if (r.status !== 429) return r;
+            const retry = Number(r.json?.retry_after) || r.rate?.resetAfter || 1;
+            nextFree[kind] = Math.max(nextFree[kind], Date.now() + retry * 1000 + 100);
+        }
+        return r;
+    };
+    if (kind === 'read') return run();
+    const p = writeQueue.then(run, run);
+    writeQueue = p.catch(() => {});
+    return p;
 }
 
 async function setRole(guild, discordId, roleId, on, reason) {
@@ -174,7 +192,7 @@ export async function syncSellerById(accountId, opts = {}) {
 }
 
 // Everyone on the seller list (the daily cron). Stops after budgetMs and says how far it got.
-export async function syncAllSellers({ budgetMs = 8000 } = {}) {
+export async function syncAllSellers({ budgetMs = 45000 } = {}) {
     const cfg = syncConfig();
     if (!cfg.guild) return { skipped: 'no bot or DISCORD_GUILD_ID' };
     const db = admin();
@@ -202,7 +220,7 @@ export async function syncAllSellers({ budgetMs = 8000 } = {}) {
             result.problems.push(...r.problems.map((p) => `${s.user_id.slice(0, 8)}: ${p}`));
         }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await worker();   // one seller at a time: the role changes share one Discord rate limit anyway
     result.problems = result.problems.slice(0, 20);
     return result;
 }

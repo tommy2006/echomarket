@@ -497,7 +497,9 @@ export async function discordBot(path, method = 'GET', payload, { reason } = {})
         body: payload ? JSON.stringify(payload) : undefined
     });
     const json = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, json };
+    // Rate-limit state (Discord's X-RateLimit headers), for callers that make many changes in a row.
+    const rate = { remaining: res.headers.get('x-ratelimit-remaining'), resetAfter: Number(res.headers.get('x-ratelimit-reset-after')) || 0 };
+    return { ok: res.ok, status: res.status, json, rate };
 }
 
 // Returns 'sent' | 'blocked' | 'off' | 'vacation' | 'unavailable' | 'error'. Never throws.
