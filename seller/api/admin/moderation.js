@@ -12,13 +12,14 @@
 //            (apply: true) give them their automatic bans now.
 // The rules themselves live in lib/moderation.js (shared with the Discord bot).
 // Reading bans and messages: the seller desk reads market_bans / market_messages directly (RLS).
-import { admin, handler, requireUser, requireActiveSeller, isStaff, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, requireAdminTraining, isStaff, accountName, body, rateLimit, HttpError } from '../../lib/server.js';
 import { resolveTarget, issueBan, liftBan, sendMarketMessage, strikeBacklog } from '../../lib/moderation.js';
 
 export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const me = await requireActiveSeller(account);
     if (!isStaff(me)) throw new HttpError(403, 'Only Market Admins and Community Managers can ban or message buyers.');
+    requireAdminTraining(me);
     await rateLimit('moderation:' + account.id, 60, 600);
     const input = body(req);
     const by = { accountId: account.id, name: accountName(account) };

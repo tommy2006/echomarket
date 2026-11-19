@@ -23,7 +23,7 @@ import { allianceStats } from '../../lib/alliance-stats.js';
 import { sellerProfile } from '../../lib/profile.js';
 import { grantVacation, startVacation, endVacation, seenVacationNews, canGrantVacation, vacationView } from '../../lib/vacation.js';
 import { advanceCup, cupView, startCup, cancelCup, disqualify, eligibleSellers, PAIRINGS } from '../../lib/cup.js';
-import { admin, handler, requireUser, requireActiveSeller, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, getSetting, RANKS, HttpError } from '../../lib/server.js';
+import { admin, handler, requireUser, requireActiveSeller, requireAdminTraining, isAdminSeller, accountName, body, rateLimit, discordStanding, deskRank, getSetting, RANKS, HttpError } from '../../lib/server.js';
 
 // Ranks come from Discord roles, but are normally only refreshed when that seller opens the desk.
 // Opening the Sellers tab refreshes every role-based seller whose check is older than this, so the
@@ -82,6 +82,7 @@ export default handler(['POST'], async (req, res) => {
     if (input.action === 'vacation-end') return res.json(await endVacation(account));
     if (input.action === 'vacation-seen') return res.json(await seenVacationNews(account));
     if (!me.is_admin) throw new HttpError(403, 'Only admins can see seller performance or manage the Cup.');
+    requireAdminTraining(me);
     if (input.action === 'vacation-grant') return res.json(await grantVacation(account, me, input));
     if (input.action === 'cup-start') return res.json({ ok: true, cup: await startCup(account, input) });
     if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });

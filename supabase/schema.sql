@@ -207,6 +207,10 @@ alter table public.sellers add column if not exists role_checked_at timestamptz;
 alter table public.sellers add column if not exists rank text not null default 'verified';
 -- When the seller finished the sellers' welcome (seller/welcome.html). Until then they can't take orders.
 alter table public.sellers add column if not exists welcome_done_at timestamptz;
+-- Training videos in the welcome (seller/lib/training.js): { videos: { <id>: { started, done } } }, recorded by the API.
+alter table public.sellers add column if not exists training jsonb not null default '{}'::jsonb;
+-- When an admin finished the admin training (the welcome's admin wing). Until then: no admin tools.
+alter table public.sellers add column if not exists admin_training_at timestamptz;
 -- true while the seller has the "Market Admin" Discord role (admin rights; kept with the role checks).
 alter table public.sellers add column if not exists market_admin boolean not null default false;
 -- Community Manager (Discord role DISCORD_COMMUNITY_MANAGER_ROLE_ID): below admin. Seller desk access with the

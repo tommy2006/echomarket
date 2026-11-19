@@ -168,6 +168,14 @@ export async function requireActiveSeller(account) {
     return { ...row, is_admin: isAdminSeller({ ...row, is_admin: seller.is_admin_manual }), is_cm: isCommunityManager(row) };
 }
 
+// Admins (Market Admins, Lead Ambassadors, admins added by hand) use the admin tools only after the admin training in
+// the sellers' welcome (seller/lib/training.js). Older databases (no admin_training_at column): no gate.
+export function requireAdminTraining(seller) {
+    if (isAdminSeller(seller) && 'admin_training_at' in seller && !seller.admin_training_at) {
+        throw new HttpError(403, `Finish the admin training first (a few short videos): ${SELLER_URL || ''}/welcome.html`);
+    }
+}
+
 // ---------------- Vacation (seller/lib/vacation.js): a seller on vacation gets nothing from the bot.
 export const onVacation = (row, now = Date.now()) => Boolean(row?.vacation_until && new Date(row.vacation_until).getTime() > now);
 // Which of these market account ids are sellers on vacation right now. Never throws (older database: none).

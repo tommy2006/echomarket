@@ -36,7 +36,7 @@ import {
     admin, handler, requireUser, requireActiveSeller, accountName, plain, body, cleanText,
     loadOrder, addEvent, syncDiscord, dmBuyer, sendPush, orderItems, sumFilled, orderRef, rateLimit, sendDM, md, BUYER_URL, SELLER_URL,
     orderHelpers, deliveryShares, shareText, sharesLines, TAKEOVER_HOURS, MAX_HELPERS, logModeration, dmDiscordUser, EMBED_COLORS,
-    isStaff, canSell, HttpError
+    isStaff, canSell, requireAdminTraining, HttpError
 } from '../../lib/server.js';
 import { resolveTarget, sendMarketMessage } from '../../lib/moderation.js';
 import { noticeSharedOrder } from '../../lib/cup.js';
@@ -376,6 +376,7 @@ export default handler(['POST'], async (req, res) => {
 
             if (input.force) {
                 if (!seller.is_admin) throw new HttpError(403, 'Only admins can decline an order for the whole team.');
+                requireAdminTraining(seller);
                 return closeForEveryone();
             }
             if (order.status !== 'PENDING') {
@@ -686,6 +687,7 @@ Answer on Echo Market (Orders).`,
 
         case 'delete': {
             if (!seller.is_admin) throw new HttpError(403, 'Only admins can delete orders. Decline it instead.');
+            requireAdminTraining(seller);
             // Closing it first makes syncDiscord remove the Discord message.
             await syncDiscord({ ...order, status: 'CANCELLED' }, 'deleted');
             const { error } = await db.from('orders').delete().eq('id', order.id);

@@ -64,7 +64,11 @@ const EXTRA = {
         "Question 2: a listing that isn't yours and isn't in #ffa-listings is someone else's order. When unsure, ask on #market-chat first.",
         "Question 3: own up. Tell #market-chat or an admin, then follow the seller team's instruction (it could be a re-list)."
     ],
-    'welcome-seller': ['A new era begins · Echo Market sellers']
+    'welcome-seller': ['A new era begins · Echo Market sellers',
+        // the admin wing's texts, set with say() (js/welcome.js)
+        'Echo Market · Admin training', 'Twelve things every admin knows',
+        "You help run the market. Your training is the sellers' welcome plus the admin wing: twelve exhibits, eight short videos and three pledges.",
+        "You're cleared to sell and to run the market. Three promises, then the desk is yours."]
 };
 
 const LIT = String.raw`'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\x60(?:[^\x60\\$]|\\.|\$(?!\{))*\x60`;

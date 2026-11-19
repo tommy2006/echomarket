@@ -15,7 +15,7 @@
 //   watch-remove  { id }
 // None of these tables is readable from the browser except announcements: everything goes through here.
 import {
-    admin, handler, requireUser, requireActiveSeller, isStaff, accountName, body, cleanText, rateLimit, sendDM, syncDiscord,
+    admin, handler, requireUser, requireActiveSeller, requireAdminTraining, isStaff, accountName, body, cleanText, rateLimit, sendDM, syncDiscord,
     budgetFor, BUDGET_TIERS, BUYER_URL, EMBED_COLORS, HttpError
 } from '../../lib/server.js';
 
@@ -32,6 +32,7 @@ export default handler(['POST'], async (req, res) => {
     const account = await requireUser(req);
     const me = await requireActiveSeller(account);
     if (!isStaff(me)) throw new HttpError(403, 'Only admins, Lead Ambassadors and Community Managers can do this.');
+    requireAdminTraining(me);
     await rateLimit('community:' + account.id, 120, 600);
     const input = body(req);
     const db = admin();

@@ -534,6 +534,11 @@ function App() {
         window.location.replace('/welcome.html');
         return html`<${EchoLoader} full />`;
     }
+    // Admins go through the admin training (the welcome's admin wing) once, before anything else.
+    if (seller.is_admin && 'admin_training_at' in seller && !seller.admin_training_at) {
+        window.location.replace('/welcome.html');
+        return html`<${EchoLoader} full />`;
+    }
 
     // ---- filtering
     const q = query.trim().toLowerCase();

@@ -278,3 +278,69 @@ html[data-quality="lite"] .hint { display: none; }
     #burst, #exhaust { display: none; }
     .detail-card { animation: none; }
 }
+
+/* ------------------------------------------------------------ training video players (js/welcome.js) */
+/* The frame tilts with the exhibit (set every frame); the controls are our own: no speed, no skipping ahead. */
+.pledge[hidden], .tv-checklist[hidden] { display: none; }
+.has-tv .card { max-width: 600px; }
+.tv { margin: 18px 0 0; }
+.tv-frame {
+    position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000;
+    border: 1px solid var(--accent); box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.8), 0 0 40px -14px var(--accent);
+    transform-style: preserve-3d; will-change: transform;
+}
+.tv-frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; cursor: pointer; }
+.tv-big {
+    position: absolute; left: 50%; top: 50%; width: 72px; height: 72px; margin: -36px 0 0 -36px; border-radius: 50%; border: 0; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); font-size: 26px; box-shadow: 0 0 40px -4px var(--accent); transition: transform .15s, opacity .25s;
+}
+.tv-big:hover { transform: scale(1.06); }
+.tv.playing .tv-big { opacity: 0; pointer-events: none; }
+.tv-ui {
+    position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 18px 10px 8px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.78)); transition: opacity .3s;
+}
+.tv.playing:not(:hover) .tv-ui { opacity: 0; }
+.tv.playing:focus-within .tv-ui { opacity: 1; }
+.tv-btn {
+    min-width: 30px; height: 28px; padding: 0 6px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.18); cursor: pointer;
+    background: rgba(255, 255, 255, 0.08); color: #fff; font-family: var(--mono); font-size: 11px; line-height: 1;
+}
+.tv-btn:hover { background: rgba(255, 255, 255, 0.18); }
+.tv-bar { position: relative; flex: 1; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.16); cursor: pointer; overflow: hidden; }
+.tv-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 99px; }
+.tv-seen { background: rgba(255, 255, 255, 0.28); }
+.tv-now { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.tv-time { font-family: var(--mono); font-size: 11px; color: #e5e7eb; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tv figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 10px; font-family: var(--mono);
+    font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.tv-state { color: var(--accent); }
+.tv.done .tv-state { color: #5eff94; }
+.tv.bad .tv-state { color: #ff8a8a; }
+.tv-frame:fullscreen { transform: none !important; border: 0; border-radius: 0; }
+.tv-frame:fullscreen .tv-ui { opacity: 1; }
+.tv-checklist { margin: 0 0 18px; padding: 14px 18px; border-radius: 16px; border: 1px dashed var(--accent); background: rgba(255, 255, 255, 0.03); }
+.tv-checklist p { margin: 0 0 6px; color: var(--text); }
+.tv-checklist .tv-check-head { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+.tv-checklist ul { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.tv-checklist a { display: inline-block; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 13px; }
+.tv-checklist a:hover { border-color: var(--accent); }
+.admin-badge { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.index-list .has-video { font-size: 10px; color: var(--accent); margin-left: 4px; }
+.index-list li.admin .n::after { content: '★'; font-size: 10px; margin-left: 2px; vertical-align: super; }
+@media (max-width: 720px) {
+    .tv-big { width: 58px; height: 58px; margin: -29px 0 0 -29px; font-size: 22px; }
+    .tv-time { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .tv-frame { transform: none !important; } }
+
+/* With the 3D hangar, the video plays on the exhibit's board: the card keeps only the controls. The <video> stays
+   rendered (tiny, almost invisible) so the browser keeps decoding frames for the board. Lite level: the card shows it. */
+html:not([data-quality="lite"]) .tv-frame { aspect-ratio: auto; background: rgba(0, 0, 0, 0.35); overflow: visible; transform: none !important; }
+html:not([data-quality="lite"]) .tv-frame video { position: fixed; right: 0; bottom: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; z-index: -1; }
+html:not([data-quality="lite"]) .tv-big { display: none; }
+html:not([data-quality="lite"]) .tv-ui { position: static; opacity: 1 !important; background: none; padding: 10px 12px; }
+html:not([data-quality="lite"]) .tv-pp { min-width: 44px; height: 34px; font-size: 13px; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+html .tv-frame:fullscreen { aspect-ratio: auto; background: #000; }
+html .tv-frame:fullscreen video { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; opacity: 1 !important; z-index: 0; pointer-events: auto; }
+html .tv-frame:fullscreen .tv-ui { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; background: linear-gradient(transparent, rgba(0, 0, 0, 0.78)); }

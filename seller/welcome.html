@@ -55,9 +55,9 @@
     <main>
         <section class="page hero" id="p0" data-page="0">
             <div class="hero-inner">
-                <p class="eyebrow" data-i18n>Echo Market · Sellers</p>
+                <p class="eyebrow" id="hero-eyebrow" data-i18n>Echo Market · Sellers</p>
                 <h1 class="era" data-i18n>A NEW ERA<br>BEGINS</h1>
-                <p class="hero-lead" data-i18n>Orders now come in on the web. Welcome to the alliance's new way of selling: eight exhibits, a few minutes, and the one habit that protects every buyer.</p>
+                <p class="hero-lead" id="hero-lead" data-i18n>Orders now come in on the web. Welcome to the alliance's new way of selling: eight exhibits, a few minutes, and the one habit that protects every buyer.</p>
                 <a class="cta" href="#index"><span data-i18n>Enter the hangar</span> <span aria-hidden="true">↓</span></a>
             </div>
         </section>
@@ -65,7 +65,7 @@
         <section class="page index-page" id="index" data-page="0">
             <div class="card wide">
                 <p class="eyebrow" data-i18n>The exhibits</p>
-                <h2 data-i18n>Eight things every seller knows</h2>
+                <h2 id="index-title" data-i18n>Eight things every seller knows</h2>
                 <ol class="index-list" id="index-list"></ol>
             </div>
         </section>
@@ -76,14 +76,17 @@
         <section class="page finale" id="pledge" data-page="8">
             <div class="card wide finale-card">
                 <h2 class="era era-sm" data-i18n>A NEW ERA<br>BEGINS</h2>
-                <p class="hero-lead" data-i18n>You're cleared to sell. Two promises, then the desk is yours.</p>
+                <p class="hero-lead" id="finale-lead" data-i18n>You're cleared to sell. Two promises, then the desk is yours.</p>
                 <p class="replay-note" id="replay-note" hidden data-i18n>You've already made these pledges. Read them again, or go straight back to the desk.</p>
                 <div class="pledges" id="pledges">
                     <label class="pledge"><input type="checkbox" id="pledge-check">
                         <span data-i18n><b>I check who bought every listing before I claim the money,</b> and I keep a note of any wrong buyer for the theft report.</span></label>
                     <label class="pledge"><input type="checkbox" id="pledge-serve">
                         <span data-i18n><b>I'm ready to serve Echo to the fullest of my ability</b> in the alliance's new era: fair, fast and honest with every buyer.</span></label>
+                    <label class="pledge" id="pledge-admin-wrap" hidden><input type="checkbox" id="pledge-admin">
+                        <span data-i18n><b>I use my admin powers fairly and carefully:</b> a clear reason on every action, a warning before a ban, and nothing private shared outside the admin team.</span></label>
                 </div>
+                <div class="tv-checklist" id="tv-checklist" hidden></div>
                 <button type="button" class="cta" id="enter" disabled>Open the seller desk</button>
                 <p class="msg" id="enter-msg" role="status"></p>
             </div>

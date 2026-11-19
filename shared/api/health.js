@@ -62,7 +62,8 @@ export default async function handler(req, res) {
                 .then((r) => (r.error ? r : db.from('accounts').select('resonant').limit(1)))
                 .then((r) => (r.error ? r : db.from('sellers').select('vacation_days, vacation_until, vacation_news').limit(1)))
                 .then((r) => (r.error ? r : db.from('missing_reports').select('vacation_sellers, relist_asked_at').limit(1)))
-                .then((r) => (r.error ? r : db.from('vacation_grants').select('id').limit(1)));
+                .then((r) => (r.error ? r : db.from('vacation_grants').select('id').limit(1)))
+                .then((r) => (r.error ? r : db.from('sellers').select('training, admin_training_at').limit(1)));
             add('Database', 'schema.sql up to date', !newest, newest ? 'older version' : 'latest',
                 'Re-run supabase/schema.sql in the Supabase SQL Editor (safe to run again).');
             add('Database', 'at least one seller', sellers > 0, `${sellers} active seller(s)`,

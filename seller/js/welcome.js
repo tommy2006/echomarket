@@ -3,6 +3,10 @@
 // to turn and open for a close-up, one alliance division colour per page, jet-exhaust transitions.
 // The layout borrows the feel of ThreeUI's free Kibori page; all code here is our own.
 // Finishing it: POST /api/welcome { pledges: { check, serve } } (records sellers.welcome_done_at).
+// Training videos (seller/media/training, at most 2 minutes each, subtitles in the picture) play on some exhibit cards, in players that tilt
+// with the turning exhibit. They can't be sped up or skipped ahead, and new sellers watch the five seller videos to the
+// end before the pledges. Admins also get the admin wing: four more exhibits, three admin videos and a third pledge,
+// once (sellers.admin_training_at). Watching is recorded by the API (seller/lib/training.js), not trusted from here.
 import { pickQuality, lowerThan, rememberQuality, pixelRatioFor, frameWatch, mixHex, inkFor, qualitySwitch } from './welcome-perf.js';
 import { t, tx, setLang, savedLang, languageMenu, translatePage, onLangChange } from './i18n.js';
 // three.js is loaded only when the device shows the 3D hangar (not at the 'lite' graphics level).
@@ -40,7 +44,40 @@ async function api(path, payload) {
     return json;
 }
 
-// ------------------------------------------------------------------ the eight exhibits (cards + close-ups)
+// ------------------------------------------------------------------ who is this?
+// Decided before the pages are built: admins get the admin wing.
+const ME = await (async () => {
+    if (!sb) return null;
+    const { data } = await sb.auth.getSession();
+    if (!data?.session) { window.location.replace('/'); return null; }   // sign in on the seller desk first
+    const { data: row } = await sb.from('sellers').select('*').eq('user_id', data.session.user.id).maybeSingle();
+    if (!row || row.active === false) { window.location.replace('/'); return null; }
+    return row;
+})().catch(() => null);
+const ADMIN = Boolean(ME && (ME.is_admin || ME.rank === 'lead' || ME.market_admin));
+const NEED_SELLER = Boolean(ME && 'welcome_done_at' in ME && !ME.welcome_done_at);
+const NEED_ADMIN = Boolean(ADMIN && 'admin_training_at' in ME && !ME.admin_training_at);
+// Replay (nothing due, or an older database without the column): the pledges and videos are optional.
+const REPLAY = Boolean(ME && (!('welcome_done_at' in ME) || (!NEED_SELLER && !NEED_ADMIN)));
+
+// ------------------------------------------------------------------ training videos
+// [id, exhibit index, length in seconds, admin]; the files are media/training/<id>.mp4 / .jpg / .vtt.
+const VIDEOS = [
+    ['s1-getting-started', 0, 100.5], ['s3-taking-and-delivering', 2, 94.3], ['s4-teamwork-and-flags', 4, 107.4],
+    ['s5-missing-planes', 5, 108.1], ['s2-finding-orders', 7, 88.8],
+    ['a1-admin-orders-and-sellers', 8, 54.2, true], ['a2-moderation', 9, 47.3, true], ['a3-community', 10, 40.7, true]
+].filter((v) => ADMIN || !v[3]).map(([id, exhibit, seconds, admin]) => ({ id, exhibit, seconds, admin: Boolean(admin) }));
+const videoTitle = (id) => ({
+    's1-getting-started': t('Getting started'), 's2-finding-orders': t('Finding orders'), 's3-taking-and-delivering': t('Taking & delivering'),
+    's4-teamwork-and-flags': t('Teamwork & flags'), 's5-missing-planes': t('Missing planes & thefts'),
+    'a1-admin-orders-and-sellers': t('Admin: orders & the Sellers tab'), 'a2-moderation': t('Admin: moderation'), 'a3-community': t('Admin: community')
+}[id] || id);
+const DONE = new Set(Object.entries(ME?.training?.videos || {}).filter(([, v]) => v?.done).map(([k]) => k));
+// Videos that must be watched before the pledges: none on a replay or an older database.
+const REQUIRED = ME && 'training' in ME && !REPLAY ? VIDEOS.filter((v) => NEED_ADMIN || !v.admin).map((v) => v.id) : [];
+const missingVideos = () => REQUIRED.filter((id) => !DONE.has(id));
+
+// ------------------------------------------------------------------ the exhibits (cards + close-ups)
 // A function, so the texts follow the language (re-read when it changes).
 const exhibits = () => [
     {
@@ -153,32 +190,105 @@ const exhibits = () => [
             [t('Paging'), t('Every list shows the latest 5 first, then 10 / 25 / 50 / All.')],
             [t('Next'), t('A short tour of the desk follows this welcome. You can replay both from the account menu.')]
         ]
+    },
+    // ---- the admin wing (admins only)
+    {
+        admin: true,
+        title: t('Admin powers on orders'), short: t('Decline for all, delete, the Sellers tab'),
+        lines: [
+            t('<b>Decline for all</b> closes an order for the whole team at once (spam, rule breaks). The buyer sees your reason.'),
+            t('<b>Delete</b> removes an order forever: only for spam or test orders.'),
+            t('The <b>Sellers</b> tab ranks every seller: open one to see their orders, mark them Unranked, or grant vacation days.')
+        ],
+        detail: [
+            [t('Decline for all'), t('Use it when an order breaks the rules or is spam. Write a reason the buyer can understand: they see it.')],
+            [t('Delete'), t('Removes the order and its history for everyone. Prefer Decline for all; delete only spam or test orders.')],
+            [t('Sellers tab'), t('Rankings over 7, 30 or 90 days or all time. Mark resigned sellers and tech-only admins <b>Unranked</b>, so they leave the leaderboard and the activity alerts.')],
+            [t('Vacation days'), t('Only the Lead Alliance Ambassador or an Alliance Leader can grant them, with the 🌴 button.')],
+            [t("Sellers' Cup"), t('Start, refresh, disqualify or cancel a knockout Cup from the Sellers tab.')]
+        ]
+    },
+    {
+        admin: true,
+        title: t('Moderation'), short: t('Look up, ban, warn, log'),
+        lines: [
+            t('Paste any Discord user ID in <b>Moderation</b> to see their record, even if they never used the market.'),
+            t('<b>Market ban</b> blocks every airline of that Discord account; <b>Send message</b> sends information or a warning.'),
+            t('Bans and warnings go out as DMs and are logged in the moderation log channel.')
+        ],
+        detail: [
+            [t('Be fair'), t('Warn before you ban, unless it is a clear theft or abuse. Always write a clear reason: the member sees it.')],
+            [t('Ban lengths'), t('A week, a month or permanently. Lift a ban early with <b>Lift ban</b> if the member made it right.')],
+            [t('Slash commands'), t('<b>/market</b> in Discord lets admins ban, unban, warn, message and look up a member without opening the desk.')],
+            [t('Ordering channels'), t('Choose which Discord channels allow ordering with /order, in Moderation.')]
+        ]
+    },
+    {
+        admin: true,
+        title: t('Community'), short: t('Announcements, alert list, budgets'),
+        lines: [
+            t('<b>Announcements</b> show a pop-up and a banner to every buyer until you delete them.'),
+            t('The <b>alert list</b> puts a caution badge on a buyer\'s orders, with a private reason for the team.'),
+            t('<b>Daily budget rewards</b> raise a member\'s daily limit to Tier 1 or Tier 2, with an optional end date.')
+        ],
+        detail: [
+            [t('Announcements'), t('Keep them short, and delete them once they are no longer true.')],
+            [t('Alert list'), t('For buyers the team should be careful with. It is not a punishment: use Moderation for that.')],
+            [t('Budgets'), t('Server boosters get Tier 3 automatically. Rewards you grant can end on a date you choose.')]
+        ]
+    },
+    {
+        admin: true, key: true,
+        kind: t('Prop · Compass'), title: t('What admins are for'), short: t('Your everyday duties'),
+        lines: [
+            t('Check <b>Theft reports → Needs attention</b> every day, and help sellers who are stuck.'),
+            t('Answer the bot\'s DMs: missing-plane reports, and sellers who have gone quiet.'),
+            t('Be the example: fair, fast and honest, with a clear reason on every admin action.')
+        ],
+        detail: [
+            [t('Theft reports'), t('Make sure every report gets an answer: confirmed with the culprits, not a theft, or under investigation.')],
+            [t('Quiet sellers'), t('The bot DMs Market Admins when a seller has not delivered for 5 days. Check in with them, and mark them Unranked if they have resigned.')],
+            [t('Decisions'), t('Stuck orders, disputes and rule breaks come to you. Decide quickly, and explain your decision.')],
+            [t('Privacy'), t('Discord IDs, warnings and the alert list are private. Never share them outside the admin team.')]
+        ]
     }
-];
+].filter((x) => ADMIN || !x.admin).map((x, i) => {
+    // An exhibit with a video is a display board on its stand, playing that video (buildBoard).
+    const video = VIDEOS.find((v) => v.exhibit === i)?.id || null;
+    return { ...x, video, kind: video ? t('Board · Training video') : x.kind };
+});
 let EXHIBITS = exhibits();
+const N = EXHIBITS.length;   // 8, or 12 with the admin wing
+const pad = (n) => String(n).padStart(2, '0');
+const exhibitColour = (i) => COLOURS[(i % 9) + 1];
 
 // Build the exhibit pages and the index from EXHIBITS.
 const cardHtml = (x, i) => `
-            ${x.key ? `<p class="key-badge">${t('The key habit')}</p>` : ''}
-            <p class="num">${String(i + 1).padStart(2, '0')} / 08</p>
+            ${x.admin ? `<p class="key-badge admin-badge">${t('Admin wing')}</p>` : x.key ? `<p class="key-badge">${t('The key habit')}</p>` : ''}
+            <p class="num">${pad(i + 1)} / ${pad(N)}</p>
             <p class="kind">${esc(x.kind)}</p>
             <h2>${esc(x.title)}</h2>
             <ul class="lines">${x.lines.map((l) => `<li>${l}</li>`).join('')}</ul>
             <div class="row"><button type="button" class="ghost" data-open="${i}">${t('Open the close-up')}</button><span class="hint"><span class="hint-mouse">${t('Drag the exhibit to turn it')}</span><span class="hint-touch">${t('Swipe the exhibit sideways to turn it')}</span></span></div>`;
-const indexHtml = () => EXHIBITS.map((x, i) => `<li><a href="#p${i + 1}"><span class="n">${String(i + 1).padStart(2, '0')}</span>
-    <span class="t">${esc(x.title)}</span><span class="s">${esc(x.short)}</span></a></li>`).join('');
+const indexHtml = () => EXHIBITS.map((x, i) => `<li${x.admin ? ' class="admin"' : ''}><a href="#p${i + 1}"><span class="n">${pad(i + 1)}</span>
+    <span class="t">${esc(x.title)}${x.video ? ' <span class="has-video" aria-hidden="true">▶</span>' : ''}</span><span class="s">${esc(x.short)}</span></a></li>`).join('');
 $('exhibits').outerHTML = EXHIBITS.map((x, i) => `
-    <section class="page${x.key ? ' key' : ''}" id="p${i + 1}" data-page="${i + 1}">
-        <div class="card">${cardHtml(x, i)}
+    <section class="page${x.key ? ' key' : ''}${x.admin ? ' admin' : ''}${x.video ? ' has-tv' : ''}" id="p${i + 1}" data-page="${i + 1}">
+        <div class="card"><div class="card-text">${cardHtml(x, i)}</div>${x.video ? '<div class="tv-slot"></div>' : ''}
         </div>
     </section>`).join('');
 $('index-list').innerHTML = indexHtml();
+document.querySelector('.nav-links').innerHTML = `<a href="#index" data-i18n>Index</a>${EXHIBITS.map((_, i) => `<a href="#p${i + 1}">${pad(i + 1)}</a>`).join('')}<a href="#pledge" data-i18n>Pledge</a>`;
+if (ADMIN) {
+    document.documentElement.dataset.admin = '1';
+    $('pledge-admin-wrap').hidden = false;
+}
 
 const PAGES = [...document.querySelectorAll('.page')];   // hero, index, 8 exhibits, pledge
 const LAST = PAGES.length - 1;
 // Which view and colour each page uses: 0 = opening, 1–8 = exhibit stands, 9 = finale.
-const VIEW_OF = PAGES.map((p) => (p.id === 'p0' || p.id === 'index' ? 0 : p.id === 'pledge' ? 9 : Number(p.dataset.page)));
-const colourOfView = (v) => COLOURS[Math.min(v, 8)];
+const VIEW_OF = PAGES.map((p) => (p.id === 'p0' || p.id === 'index' ? 0 : p.id === 'pledge' ? N + 1 : Number(p.dataset.page)));
+const colourOfView = (v) => (v === 0 ? COLOURS[0] : v <= N ? exhibitColour(v - 1) : COLOURS[8]);
 
 // ------------------------------------------------------------------ language
 // The menu sits in the top bar. Text in welcome.html is marked data-i18n; the exhibits are rebuilt, and the
@@ -193,23 +303,17 @@ function paintLanguage() {
     translatePage();
     document.title = t('A new era begins · Echo Market sellers');
     EXHIBITS = exhibits();
-    EXHIBITS.forEach((x, i) => { document.querySelector(`#p${i + 1} .card`).innerHTML = cardHtml(x, i); });
+    EXHIBITS.forEach((x, i) => { document.querySelector(`#p${i + 1} .card-text`).innerHTML = cardHtml(x, i); });
     $('index-list').innerHTML = indexHtml();
+    players.forEach((pl) => pl.paint());
+    paintChecklist();
     if (closeUp >= 0) fillDetail(closeUp);
     said.forEach((text, el) => { el.textContent = text ? tx(text) : ''; });
 }
 document.querySelector('.nav').insertBefore(languageMenu(PACKS), document.querySelector('.nav-progress'));
 
-// ------------------------------------------------------------------ who is this?
+// ------------------------------------------------------------------ replay or first time
 let gated = true;
-(async () => {
-    if (!sb) return;
-    const { data } = await sb.auth.getSession();
-    if (!data?.session) { window.location.replace('/'); return; }   // sign in on the seller desk first
-    const { data: row } = await sb.from('sellers').select('*').eq('user_id', data.session.user.id).maybeSingle();
-    if (!row || row.active === false) { window.location.replace('/'); return; }
-    if (!('welcome_done_at' in row) || row.welcome_done_at) setReplay();
-})();
 function setReplay() {
     gated = false;
     $('replay-note').hidden = false;
@@ -318,7 +422,41 @@ function makeJet(colour, { length = 30, parked = false } = {}) {
     return jet;
 }
 
+// A display board on a stand, playing the exhibit's training video. The <video> lives in the card's player (which has
+// the controls); the board shows it as a texture, with the poster frame until it has played, and a play button.
+function buildBoard(i, colour) {
+    const g = new THREE.Group();
+    const pl = players.get(EXHIBITS[i].video);
+    const metal = new THREE.MeshStandardMaterial({ color: 0x151925, metalness: 0.6, roughness: 0.4 });
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(25.4, 14.9, 1.2), metal));
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(25.9, 15.4, 0.5), new THREE.MeshBasicMaterial({ color: colour, toneMapped: false }));
+    edge.position.z = -0.1; g.add(edge);
+    const poster = new THREE.TextureLoader().load(`media/training/${pl.v.id}.jpg`);
+    poster.colorSpace = THREE.SRGBColorSpace;
+    const vtex = new THREE.VideoTexture(pl.video);
+    vtex.colorSpace = THREE.SRGBColorSpace;
+    const screenMat = new THREE.MeshBasicMaterial({ map: poster, toneMapped: false });
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(24, 13.5), screenMat);
+    screen.position.z = 0.62; g.add(screen);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(24, 13.5), new THREE.MeshBasicMaterial({ map: poster, color: 0x4a4f5c, toneMapped: false }));
+    back.rotation.y = Math.PI; back.position.z = -0.62; g.add(back);
+    const play = new THREE.Group();
+    play.add(new THREE.Mesh(new THREE.CircleGeometry(2.3, 48), new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.94, toneMapped: false })));
+    const tri = new THREE.Shape(); tri.moveTo(-0.7, -1.15); tri.lineTo(1.25, 0); tri.lineTo(-0.7, 1.15); tri.closePath();
+    const icon = new THREE.Mesh(new THREE.ShapeGeometry(tri), new THREE.MeshBasicMaterial({ color: 0x0b0d14, toneMapped: false }));
+    icon.position.z = 0.02; play.add(icon);
+    play.position.z = 0.75; g.add(play);
+    for (const x of [-8, 8]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 9), new THREE.MeshStandardMaterial({ color: 0x2a2f3c, metalness: 0.7, roughness: 0.3 }));
+        leg.position.set(x, -11.6, 0); g.add(leg);
+    }
+    g.position.y = 13.4; g.scale.setScalar(0.94);
+    g.userData.board = { pl, screen, screenMat, poster, vtex, play };
+    return g;
+}
+
 function buildExhibit(i, colour) {
+    if (EXHIBITS[i].video) return buildBoard(i, colour);
     const g = new THREE.Group();
     const c = new THREE.Color(colour);
     const metal = (col, m = 0.7, r = 0.3) => new THREE.MeshStandardMaterial({ color: col, metalness: m, roughness: r });
@@ -402,6 +540,20 @@ function buildExhibit(i, colour) {
             g.position.y = 8.5; g.scale.setScalar(0.6);
             break;
         }
+        case 11: {   // compass (an admin's duties)
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(6, 0.7, 16, 64), metal(c, 0.85, 0.25)); g.add(ring);
+            const face = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 5.6, 0.5, 64), new THREE.MeshStandardMaterial({ color: 0x0d111c, metalness: 0.3, roughness: 0.5 }));
+            face.rotation.x = Math.PI / 2; g.add(face);
+            const needle = new THREE.Group();
+            const north = new THREE.Mesh(new THREE.ConeGeometry(0.9, 4.6, 4), new THREE.MeshStandardMaterial({ color: 0xff456a, emissive: 0xff456a, emissiveIntensity: 0.4 }));
+            north.position.y = 2.3;
+            const south = new THREE.Mesh(new THREE.ConeGeometry(0.9, 4.6, 4), metal(0xe5e7eb, 0.6, 0.3)); south.rotation.z = Math.PI; south.position.y = -2.3;
+            needle.add(north, south); needle.position.z = 0.6;
+            const back = needle.clone(); back.position.z = -0.6;
+            g.add(needle, back); g.userData.needle = [needle, back];
+            g.position.y = 10;
+            break;
+        }
     }
     return g;
 }
@@ -438,20 +590,22 @@ function buildWorld() {
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x0a0c14, metalness: 0.3, roughness: 0.8 });
     const back = new THREE.Mesh(new THREE.PlaneGeometry(540, 90), wallMat); back.position.set(150, 45, -70); scene.add(back);
     const truss = new THREE.MeshStandardMaterial({ color: 0x1b2030, metalness: 0.7, roughness: 0.45 });
-    const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 1.2, 150), truss, 26);
-    const diag = new THREE.InstancedMesh(new THREE.BoxGeometry(0.6, 14, 0.6), truss, 52);
+    const END = STAND_X(N - 1) + 70;   // the far wall, after the last stand
+    const BAYS = Math.max(26, Math.ceil((END + 110) / 21) + 1);
+    const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 1.2, 150), truss, BAYS);
+    const diag = new THREE.InstancedMesh(new THREE.BoxGeometry(0.6, 14, 0.6), truss, BAYS * 2);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
-    for (let k = 0; k < 26; k++) {
+    for (let k = 0; k < BAYS; k++) {
         const x = -110 + k * 21;
         beams.setMatrixAt(k, m4.compose(new THREE.Vector3(x, 72, 0), q, one));
         for (const s of [0, 1]) diag.setMatrixAt(k * 2 + s, m4.compose(new THREE.Vector3(x, 65, s ? 30 : -30), q.setFromEuler(new THREE.Euler(s ? 0.5 : -0.5, 0, 0)), one));
         q.identity();
     }
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(560, 1.4, 1.4), truss); ridge.position.set(150, 74, 0);
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(Math.max(560, END + 140), 1.4, 1.4), truss); ridge.position.set(Math.max(150, (END - 140) / 2), 74, 0);
     scene.add(beams, diag, ridge);
     // ceiling lamps (dim, the stands' spotlights do the work)
     const lampPts = [];
-    for (let k = 0; k < 13; k++) lampPts.push(-100 + k * 42, 70, 0);
+    for (let k = 0; k < Math.max(13, Math.ceil((END + 100) / 42)); k++) lampPts.push(-100 + k * 42, 70, 0);
     const lampGeo = new THREE.BufferGeometry(); lampGeo.setAttribute('position', new THREE.Float32BufferAttribute(lampPts, 3));
     scene.add(new THREE.Points(lampGeo, new THREE.PointsMaterial({ size: 6, map: glow, color: 0xffe2b8, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })));
     setLoad(25);
@@ -472,7 +626,7 @@ function buildWorld() {
     apronFloor.rotation.x = -Math.PI / 2; apronFloor.position.set(-10, 0.01, -105); scene.add(apronFloor);
     const doorGlow = new THREE.PointLight(0x9a7dff, 900, 120, 1.3); doorGlow.position.set(-10, 30, -60); scene.add(doorGlow);
     const outside = new THREE.PointLight(0xffb27a, 700, 90, 1.4); outside.position.set(-14, 20, -84); scene.add(outside);
-    back.position.set(225, 45, -70); back.scale.x = 390 / 540;   // the wall right of the door opening
+    back.position.set((30 + Math.max(420, END)) / 2, 45, -70); back.scale.x = (Math.max(420, END) - 30) / 540;   // the wall right of the door opening
     const backL = new THREE.Mesh(new THREE.PlaneGeometry(70, 90), wallMat); backL.position.set(-85, 45, -70); scene.add(backL);
     const lintel = new THREE.Mesh(new THREE.PlaneGeometry(80, 30), wallMat); lintel.position.set(-10, 75, -70); scene.add(lintel);
     const stars = [];
@@ -487,11 +641,11 @@ function buildWorld() {
     const parked = makeJet('#7d34ff', { length: 28 }); parked.scale.setScalar(0.55); parked.position.set(-16, 3, -90); parked.rotation.y = Math.PI / 2; scene.add(parked);
     setLoad(40);
 
-    // the eight stands: plinth, coloured rim, spotlight with a visible cone, the exhibit
+    // the stands (eight, or twelve with the admin wing): plinth, coloured rim, spotlight with a visible cone, the exhibit
     const stands = [];
     const plinthMat = new THREE.MeshStandardMaterial({ color: 0x10131d, metalness: 0.6, roughness: 0.35 });
-    for (let i = 0; i < 8; i++) {
-        const colour = COLOURS[i + 1];
+    for (let i = 0; i < N; i++) {
+        const colour = exhibitColour(i);
         const x = STAND_X(i);
         const plinth = new THREE.Mesh(new THREE.CylinderGeometry(11, 12, 2.2, 48), plinthMat); plinth.position.set(x, 1.1, 0);
         const rimMat = new THREE.MeshBasicMaterial({ color: colour });
@@ -511,14 +665,14 @@ function buildWorld() {
         // 'high' only: 16 lights on every surface is what slows older tablets down. Lower levels use followSpot.
         spot.visible = rimLight.visible = quality === 'high';
         // Flat exhibits (ticket, board, sold listing) sway and spring back so they stay readable; the rest turn.
-        stands.push({ x, pivot, exhibit, spot, cone, rimMat, pool, rimLight, spin: 0, vel: 0, flat: [0, 2, 3].includes(i) });
-        setLoad(40 + (i + 1) * 6);
+        stands.push({ x, pivot, exhibit, spot, cone, rimMat, pool, rimLight, spin: 0, vel: 0, flat: Boolean(EXHIBITS[i].video) || i === 3 });
+        setLoad(40 + Math.round(((i + 1) * 48) / N));
     }
     setLoad(92);
     // Lower levels: one spotlight and one coloured rim light that follow the camera from stand to stand.
     const followSpot = new THREE.SpotLight(0xfff3e2, 4200, 120, 0.42, 0.55, 1.4);
     followSpot.position.set(STAND_X(0), 64, 10); followSpot.target.position.set(STAND_X(0), 4, 0);
-    const followRim = new THREE.PointLight(COLOURS[1], 260, 46, 1.5);
+    const followRim = new THREE.PointLight(exhibitColour(0), 260, 46, 1.5);
     followSpot.visible = followRim.visible = quality !== 'high';
     scene.add(followSpot, followSpot.target, followRim);
     return { renderer, scene, camera, stands, doors: [doorL, doorR], apronMat, parked, followSpot, followRim };
@@ -526,10 +680,13 @@ function buildWorld() {
 
 let world = null;
 
-// Camera views: 0 = the opening (facing the doors), 1–8 = each stand, 9 = the finale (all stands, wide).
+// Camera views: 0 = the opening (facing the doors), 1–N = each stand, N + 1 = the finale (all stands, wide).
 function viewFor(v, out = {}) {
     if (v === 0) return { pos: new THREE.Vector3(-10, 16, 58), look: new THREE.Vector3(-10, 22, -70) };
-    if (v === 9) return { pos: new THREE.Vector3(STAND_X(3.2), 85, 250), look: new THREE.Vector3(STAND_X(4.6), 6, -10) };
+    if (v === N + 1) {
+        const k = (N - 1) / 7, far = N / 8;
+        return { pos: new THREE.Vector3(STAND_X(3.2 * k), 85 * far, 250 * far), look: new THREE.Vector3(STAND_X(4.6 * k), 6, -10) };
+    }
     const x = STAND_X(v - 1);
     return { pos: new THREE.Vector3(x - 6, 15, 48), look: new THREE.Vector3(x, 9, 0) };
 }
@@ -548,7 +705,7 @@ function readScroll() {
     const docH = document.documentElement.scrollHeight - window.innerHeight;
     $('nav-progress-bar').style.width = `${docH > 0 ? Math.min(100, (window.scrollY / docH) * 100) : 0}%`;
     const idx = Math.round(target), v = VIEW_OF[idx];
-    $('nav-step').textContent = v >= 1 && v <= 8 ? `${String(v).padStart(2, '0')} / 08` : v === 9 ? t('PLEDGE') : '00 / 08';
+    $('nav-step').textContent = v >= 1 && v <= N ? `${pad(v)} / ${pad(N)}` : v === N + 1 ? t('PLEDGE') : `00 / ${pad(N)}`;
     const id = PAGES[idx].id;
     document.querySelectorAll('.nav-links a').forEach((a) => a.classList.toggle('active', a.getAttribute('href') === `#${id}`));
     exhaustOn(v);
@@ -557,13 +714,13 @@ window.addEventListener('scroll', readScroll, { passive: true });
 window.addEventListener('resize', () => { readScroll(); resize(); });
 
 // Jet-exhaust wipe in the new page's colour when the colour changes.
-let lastColourView = 0;
+let lastColour = COLOURS[0];
 function exhaustOn(v) {
-    const cv = Math.min(v, 8);
-    if (cv === lastColourView || REDUCED) { lastColourView = cv; return; }
-    lastColourView = cv;
+    const col = colourOfView(v);
+    if (col === lastColour || REDUCED) { lastColour = col; return; }
+    lastColour = col;
     const ex = $('exhaust');
-    ex.style.setProperty('--accent', COLOURS[cv]);
+    ex.style.setProperty('--accent', col);
     ex.classList.remove('go'); void ex.offsetWidth; ex.classList.add('go');
 }
 
@@ -607,12 +764,12 @@ let flare = 0;
 let drag = null, closeUp = -1;
 function currentStand() {
     const v = VIEW_OF[Math.round(target)];
-    return v >= 1 && v <= 8 ? v - 1 : -1;
+    return v >= 1 && v <= N ? v - 1 : -1;
 }
 function onDown(e) {
     const s = closeUp >= 0 ? closeUp : currentStand();
     if (s < 0 || !world) return;
-    drag = { s, x: e.clientX, id: e.pointerId };
+    drag = { s, x: e.clientX, id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now() };
     world.renderer.domElement.classList.add('dragging');
     world.renderer.domElement.setPointerCapture?.(e.pointerId);
 }
@@ -622,11 +779,23 @@ function onMove(e) {
     const st = world.stands[drag.s];
     st.spin += dx * 0.012; st.vel = dx * 0.012;
 }
-function onUp() { drag = null; world?.renderer.domElement.classList.remove('dragging'); }
+function onUp(e) {
+    // A click (not a drag) on a video board plays or pauses it.
+    if (drag && e && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6 && performance.now() - drag.t0 < 500) {
+        const board = world?.stands[drag.s]?.exhibit.userData.board;
+        if (board) {
+            const r = world.renderer.domElement.getBoundingClientRect();
+            const ray = new THREE.Raycaster();
+            ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), world.camera);
+            if (ray.intersectObjects([board.screen, board.play], true).length) board.pl.toggle();
+        }
+    }
+    drag = null; world?.renderer.domElement.classList.remove('dragging');
+}
 
 function fillDetail(i) {
     const x = EXHIBITS[i];
-    $('detail-kind').textContent = `${String(i + 1).padStart(2, '0')} / 08 · ${x.kind}`;
+    $('detail-kind').textContent = `${pad(i + 1)} / ${pad(N)} · ${x.kind}`;
     $('detail-title').textContent = x.title;
     $('detail-body').innerHTML = x.detail.map(([h, p]) => `<h3>${esc(h)}</h3><p>${p}</p>`).join('');
 }
@@ -692,6 +861,7 @@ function frame(now) {
     const time = now / 1000;
     if (REDUCED) shown = Math.round(target); else shown += (target - shown) * (firstFrame ? 1 : 0.07);
     applyAccent(shown);
+    tiltPlayers(time);
     if (!world) return;
     const { renderer, scene, camera, stands, doors } = world;
 
@@ -711,8 +881,8 @@ function frame(now) {
     if (world.followSpot.visible) {   // lower levels: the one spotlight follows the camera to the stand in view
         const fx = camLook.x;
         world.followSpot.position.set(fx, 64, 10); world.followSpot.target.position.set(fx, 4, 0);
-        const k = Math.max(0, Math.min(7, Math.round((fx - STAND_X(0)) / (STAND_X(1) - STAND_X(0)))));
-        world.followRim.position.set(fx - 9, 10, 14); world.followRim.color.set(COLOURS[k + 1]);
+        const k = Math.max(0, Math.min(N - 1, Math.round((fx - STAND_X(0)) / (STAND_X(1) - STAND_X(0)))));
+        world.followRim.position.set(fx - 9, 10, 14); world.followRim.color.set(exhibitColour(k));
     }
     firstFrame = false;
 
@@ -723,14 +893,23 @@ function frame(now) {
 
     // exhibits: slow showroom turn, drag with inertia, a gentle float; the finale and bursts light everything up
     flare = Math.max(0, flare - 0.012);
-    const finale = VIEW_OF[Math.round(shown)] === 9 ? 1 : 0;
+    const finale = VIEW_OF[Math.round(shown)] === N + 1 ? 1 : 0;
     stands.forEach((st, k) => {
         const held = drag && drag.s === k;
         if (!REDUCED && !held) {
             st.vel *= 0.94; st.spin += st.vel;
             if (st.flat) st.spin *= 0.985; else st.spin += 0.0035;
         }
-        st.pivot.rotation.y = st.spin + (st.flat && !REDUCED ? Math.sin(time * 0.5 + k) * 0.32 : 0);
+        const board = st.exhibit.userData.board;
+        const sway = board?.pl.playing ? 0.1 : 0.32;   // a playing board turns only a little, so it stays easy to watch
+        st.pivot.rotation.y = st.spin + (st.flat && !REDUCED ? Math.sin(time * 0.5 + k) * sway : 0);
+        if (board) {
+            const v = board.pl.video;
+            const live = v.readyState >= 2 && (board.pl.playing || v.currentTime > 0.2);
+            const map = live ? board.vtex : board.poster;
+            if (board.screenMat.map !== map) { board.screenMat.map = map; board.screenMat.needsUpdate = true; }
+            board.play.visible = !board.pl.playing;
+        }
         st.pivot.position.y = REDUCED ? 0 : Math.sin(time * 0.9 + k) * 0.5;
         const boost = 1 + flare * 1.6 + finale * 0.5;
         st.spot.intensity = (k === 7 ? 5200 : 3600) * boost;
@@ -740,6 +919,7 @@ function frame(now) {
         if (ex.glass && !REDUCED) ex.glass.position.set(Math.sin(time * 0.8) * 3.8, Math.cos(time * 1.1) * 2.2 + 0.4, 2.4);
         if (ex.spin && !REDUCED) ex.spin.rotation.y = time * 3;
         if (ex.bulb) ex.bulb.intensity = REDUCED ? 60 : 50 + Math.sin(time * 6) * 20;
+        if (ex.needle && !REDUCED) ex.needle.forEach((nd) => { nd.rotation.z = Math.sin(time * 0.7) * 0.5 + Math.sin(time * 2.3) * 0.08; });
     });
     renderer.render(scene, camera);
 }
@@ -790,20 +970,21 @@ let loaded = false;
 })();
 
 // ------------------------------------------------------------------ the pledges
-const pledgesTicked = () => $('pledge-check').checked && $('pledge-serve').checked;
-const updateEnter = () => { if (gated) $('enter').disabled = !pledgesTicked(); };
+const pledgesTicked = () => $('pledge-check').checked && $('pledge-serve').checked && (!ADMIN || $('pledge-admin').checked);
+function updateEnter() { if (gated) $('enter').disabled = !pledgesTicked() || missingVideos().length > 0; }
 $('pledge-check').addEventListener('change', updateEnter);
 $('pledge-serve').addEventListener('change', updateEnter);
+$('pledge-admin').addEventListener('change', updateEnter);
 $('nav-exit').addEventListener('click', (e) => { e.preventDefault(); leave(); });
 $('enter').addEventListener('click', async () => {
     const button = $('enter'), out = $('enter-msg');
     out.classList.remove('bad');
     if (gated) {
-        if (!pledgesTicked()) return;
+        if (!pledgesTicked() || missingVideos().length) return;
         button.disabled = true;
         say(out, 'Opening your desk…');
         try {
-            await api('/api/welcome', { pledges: { check: true, serve: true } });
+            await api('/api/welcome', { pledges: { check: true, serve: true, admin: ADMIN ? true : undefined } });
         } catch (err) {
             say(out, err.message); out.classList.add('bad'); button.disabled = false;
             return;
@@ -821,6 +1002,174 @@ function leave() {
     setTimeout(() => $('fade').classList.add('on'), Math.max(0, wait - 900));
     setTimeout(() => window.location.replace('/'), wait);
 }
+
+// ------------------------------------------------------------------ training video players
+// No speed changes and no skipping ahead (going back is fine), one video at a time, paused when scrolled away or when
+// the tab is hidden. Each start and end goes to the API, which decides what counts as watched (lib/training.js).
+const fmt = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+const local = {
+    get: (k) => { try { return Number(localStorage.getItem(k)) || 0; } catch { return 0; } },
+    set: (k, v) => { try { localStorage.setItem(k, String(v)); } catch { /* private mode */ } }
+};
+const players = new Map();   // video id → player
+const tvSeen = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (!e.isIntersecting && !document.fullscreenElement) players.get(e.target.dataset.vid)?.video.pause();
+}), { threshold: 0.3 });
+document.addEventListener('visibilitychange', () => { if (document.hidden) players.forEach((pl) => pl.video.pause()); });
+
+function makePlayer(v, slot) {
+    const fig = document.createElement('figure');
+    fig.className = 'tv';
+    fig.dataset.vid = v.id;
+    fig.innerHTML = `<div class="tv-frame">
+            <video preload="none" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback nofullscreen"
+                poster="media/training/${v.id}.jpg" src="media/training/${v.id}.mp4"></video>
+            <button type="button" class="tv-big"><span aria-hidden="true">▶</span></button>
+            <div class="tv-ui">
+                <button type="button" class="tv-btn tv-pp"></button>
+                <div class="tv-bar"><i class="tv-seen"></i><i class="tv-now"></i></div>
+                <span class="tv-time"></span>
+                <button type="button" class="tv-btn tv-mute"></button>
+                <button type="button" class="tv-btn tv-fs">⛶</button>
+            </div>
+        </div>
+        <figcaption><span class="tv-title"></span><span class="tv-state"></span></figcaption>`;
+    slot.appendChild(fig);
+    const q = (c) => fig.querySelector(c);
+    const video = q('video'), frame = q('.tv-frame');
+    const key = 'echo-tv-' + v.id;
+    const pl = { v, fig, frame, video, playing: false, max: local.get(key), started: false, stand: v.exhibit, error: '' };
+    const done = () => DONE.has(v.id);
+
+    // Nothing that changes speed or jumps ahead: no native controls, no context menu (it offers "show all controls").
+    fig.addEventListener('contextmenu', (e) => e.preventDefault());
+    video.addEventListener('ratechange', () => {
+        if (video.playbackRate !== 1) video.playbackRate = 1;
+        if (video.defaultPlaybackRate !== 1) video.defaultPlaybackRate = 1;
+    });
+    video.addEventListener('seeking', () => { if (!done() && video.currentTime > pl.max + 1) video.currentTime = pl.max; });
+    let last = 0;
+    video.addEventListener('timeupdate', () => {
+        const now = video.currentTime;
+        if (!video.seeking && now > pl.max && now - last < 1.5) { pl.max = now; local.set(key, Math.floor(now)); }
+        last = now;
+        paintTime();
+    });
+    // Back where they left off (this device), never further.
+    video.addEventListener('loadedmetadata', () => {
+        if (!done() && pl.max > 2 && pl.max < video.duration - 2 && video.currentTime < 1) video.currentTime = Math.max(0, pl.max - 1);
+        paintTime();
+    });
+    video.addEventListener('play', () => {
+        players.forEach((o) => { if (o !== pl) o.video.pause(); });
+        pl.playing = true; pl.error = ''; paint();
+        if (!pl.started && !done()) { pl.started = true; report('start'); }
+    });
+    video.addEventListener('pause', () => { pl.playing = false; paint(); });
+    video.addEventListener('ended', () => {
+        pl.playing = false;
+        if (!video.seeking && (video.duration || v.seconds) - last < 1.5) pl.max = video.duration || v.seconds;
+        if (!done() && pl.max >= (video.duration || v.seconds) - 2.5) report('done');
+        if (document.fullscreenElement === frame) document.exitFullscreen?.().catch(() => {});
+        paint();
+    });
+
+    async function report(event) {
+        if (!sb || !ME) return;
+        try {
+            const r = await api('/api/welcome', { video: { id: v.id, event } });
+            if (r.done) { DONE.add(v.id); local.set(key, 0); }
+        } catch (err) {
+            pl.error = err.message;
+            if (event === 'done') { pl.max = 0; local.set(key, 0); pl.started = false; }
+        }
+        paint(); paintChecklist(); updateEnter();
+    }
+
+    const toggle = () => { if (video.paused) video.play().catch(() => {}); else video.pause(); };
+    pl.toggle = toggle;
+    q('.tv-big').addEventListener('click', toggle);
+    q('.tv-pp').addEventListener('click', toggle);
+    video.addEventListener('click', toggle);
+    q('.tv-mute').addEventListener('click', () => { video.muted = !video.muted; paint(); });
+    q('.tv-fs').addEventListener('click', () => {
+        if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+        else frame.requestFullscreen?.().catch(() => {});
+    });
+    // The bar: going back is fine; forward only as far as already watched.
+    q('.tv-bar').addEventListener('click', (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const want = ((e.clientX - r.left) / r.width) * (video.duration || v.seconds);
+        video.currentTime = Math.max(0, Math.min(want, done() ? Infinity : pl.max));
+    });
+
+    function paintTime() {
+        const d = video.duration || v.seconds;
+        q('.tv-time').textContent = `${fmt(video.currentTime)} / ${fmt(d)}`;
+        q('.tv-now').style.width = `${Math.min(100, (video.currentTime / d) * 100)}%`;
+        q('.tv-seen').style.width = `${(done() ? 1 : Math.min(1, pl.max / d)) * 100}%`;
+    }
+    function paint() {
+        fig.classList.toggle('playing', pl.playing);
+        fig.classList.toggle('done', done());
+        fig.classList.toggle('bad', Boolean(pl.error) && !done());
+        q('.tv-big').setAttribute('aria-label', t('Play'));
+        q('.tv-pp').textContent = pl.playing ? '❚❚' : '▶';
+        q('.tv-pp').setAttribute('aria-label', pl.playing ? t('Pause') : t('Play'));
+        q('.tv-mute').textContent = video.muted ? '🔇' : '🔊';
+        q('.tv-mute').setAttribute('aria-label', video.muted ? t('Sound on') : t('Mute'));
+        q('.tv-fs').setAttribute('aria-label', t('Full screen'));
+        q('.tv-title').textContent = `${t('Video')} · ${videoTitle(v.id)} · ${fmt(v.seconds)}`;
+        q('.tv-state').textContent = pl.error && !done() ? tx(pl.error)
+            : done() ? `✓ ${t('Watched')}` : REQUIRED.includes(v.id) ? t('Watch to the end to continue') : t('No skipping ahead');
+        paintTime();
+    }
+    pl.paint = paint;
+    paint();
+    tvSeen.observe(fig);
+    return pl;
+}
+EXHIBITS.forEach((x, i) => {
+    if (!x.video) return;
+    players.set(x.video, makePlayer(VIDEOS.find((v) => v.id === x.video), document.querySelector(`#p${i + 1} .tv-slot`)));
+});
+
+// The players turn softly with their exhibit (less while playing, so the video stays easy to watch).
+function tiltPlayers(time) {
+    players.forEach((pl) => {
+        if (REDUCED || world) { pl.frame.style.transform = ''; return; }   // with the 3D scene the board turns instead
+        const st = world?.stands[pl.stand];
+        const rot = st ? st.pivot.rotation.y : Math.sin(time * 0.35 + pl.stand) * 0.9;
+        const bob = st ? st.pivot.position.y : Math.sin(time * 0.9 + pl.stand) * 0.5;
+        const amp = pl.playing ? 3 : 9;
+        pl.frame.style.transform = `perspective(1100px) rotateY(${(Math.sin(rot) * amp).toFixed(2)}deg) rotateX(${(bob * 2.2).toFixed(2)}deg)`;
+    });
+}
+
+// Which videos are still to watch, on the pledge page.
+function paintChecklist() {
+    const box = $('tv-checklist');
+    if (!REQUIRED.length) { box.hidden = true; return; }
+    box.hidden = false;
+    const left = missingVideos();
+    box.innerHTML = `<p class="tv-check-head">${esc(t('Training videos watched: {n} of {m}', { n: REQUIRED.length - left.length, m: REQUIRED.length }))}</p>`
+        + (left.length
+            ? `<p>${esc(t('Watch each one to the end before your pledges:'))}</p><ul>${left.map((id) => {
+                const v = VIDEOS.find((x) => x.id === id);
+                return `<li><a href="#p${v.exhibit + 1}">▶ ${esc(videoTitle(id))}</a></li>`;
+            }).join('')}</ul>`
+            : `<p>✓ ${esc(t('All watched. Thank you!'))}</p>`);
+}
+
+if (ADMIN) {
+    say($('hero-eyebrow'), 'Echo Market · Admin training');
+    say($('hero-lead'), "You help run the market. Your training is the sellers' welcome plus the admin wing: twelve exhibits, eight short videos and three pledges.");
+    say($('index-title'), 'Twelve things every admin knows');
+    say($('finale-lead'), "You're cleared to sell and to run the market. Three promises, then the desk is yours.");
+}
+if (REPLAY) setReplay();
+paintChecklist();
+updateEnter();
 
 // Language last: paintLanguage uses the state above.
 onLangChange(paintLanguage);
