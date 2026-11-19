@@ -12,6 +12,7 @@ import {
     t, tj, tx, useLang, LanguageMenu, greetingLine, setLang, savedLang
 } from './ui.js';
 import { GUIDE } from './guide.js';
+import { VacationScene } from './vacation-scene.js';
 // Languages: the seller screens follow the language menu; admin screens (Sellers, Moderation, Community) and the Alliances statistics
 // stay in English, like the Echo Alliances site's admin pages.
 
@@ -1875,13 +1876,10 @@ function GetawayModal({ news, onClose, onProfile }) {
 }
 
 // =========================================================================
-//  Vacation mode: the whole desk is replaced by this. No buttons, numbers, orders or messages: a greeting
-//  under a starry night sky over an island, on light blue. "Come back early" is far down and quiet on purpose.
+//  Vacation mode: the whole desk is replaced by this. No buttons, numbers, orders or messages: a greeting over a
+//  dark island at night, a long dive into the sea below it, and "Come back early" hidden in a little cave on the
+//  seabed, quiet on purpose. Scenery: js/vacation-scene.js.
 // =========================================================================
-const VACATION_STARS = Array.from({ length: 110 }, (_, i) => {
-    const r = (n) => { const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453; return x - Math.floor(x); };
-    return { x: r(1) * 1440, y: r(2) * 520, s: 0.6 + r(3) * 1.6, d: (r(4) * 4).toFixed(2), tw: r(5) > 0.6 };
-});
 function VacationScreen({ account, seller, onBack }) {
     const until = new Date(seller.vacation_until);
     const g = greetingFor(new Date());
@@ -1894,7 +1892,7 @@ function VacationScreen({ account, seller, onBack }) {
     }, [seller.vacation_until]);
     useEffect(() => {
         const prev = document.body.style.background;
-        document.body.style.background = '#cfe8ff';
+        document.body.style.background = '#01040b';
         return () => { document.body.style.background = prev; };
     }, []);
     const comeBack = async () => {
@@ -1905,46 +1903,20 @@ function VacationScreen({ account, seller, onBack }) {
         try { await api('/api/admin/sellers', { action: 'vacation-end' }); await onBack?.(); }
         catch (err) { toast(err.message, 'error'); }
     };
-    return html`<div className="fixed inset-0 z-[60] overflow-y-auto overflow-x-hidden" style=${{ background: '#cfe8ff' }}>
-        <section className="relative w-full h-[100svh] min-h-[560px] overflow-hidden">
-            <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMax slice" className="absolute inset-0 w-full h-full" aria-hidden="true">
-                <defs>
-                    <linearGradient id="vac-sky" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0" stopColor="#071538" /><stop offset="0.45" stopColor="#12307a" /><stop offset="0.72" stopColor="#2f62c9" /><stop offset="1" stopColor="#7fb2f0" />
-                    </linearGradient>
-                    <linearGradient id="vac-sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#1d4ed8" /><stop offset="1" stopColor="#0b1e5b" /></linearGradient>
-                    <radialGradient id="vac-moon"><stop offset="0.38" stopColor="#fffbe6" stopOpacity="0.5" /><stop offset="1" stopColor="#fef3c7" stopOpacity="0" /></radialGradient>
-                </defs>
-                <rect width="1440" height="900" fill="url(#vac-sky)" />
-                ${VACATION_STARS.map((st, i) => html`<circle key=${i} cx=${st.x} cy=${st.y} r=${st.s} fill="#ffffff" className=${st.tw ? 'vac-twinkle' : ''} style=${{ animationDelay: st.d + 's', opacity: st.tw ? undefined : 0.75 }} />`)}
-                <circle cx="880" cy="62" r="90" fill="url(#vac-moon)" />
-                <circle cx="880" cy="62" r="30" fill="#fffbea" />
-                <rect y="640" width="1440" height="260" fill="url(#vac-sea)" />
-                ${[0, 1, 2, 3, 4, 5].map((i) => html`<rect key=${i} x=${880 - (60 - i * 8)} y=${660 + i * 26} width=${(60 - i * 8) * 2} height="3" rx="1.5" fill="#fef9c3" opacity=${0.55 - i * 0.07} />`)}
-                <path d="M120 760 C 260 690, 520 680, 700 700 C 860 716, 960 740, 1010 770 L 1010 900 L 120 900 Z" fill="#f2c98a" />
-                <path d="M60 800 C 260 750, 600 740, 820 760 C 960 772, 1080 800, 1140 830 L 1140 900 L 60 900 Z" fill="#e5b06a" />
-                <g fill="none" strokeLinecap="round">
-                    <path d="M420 742 C 430 650, 450 560, 500 486" stroke="#4a2c12" strokeWidth="13" />
-                    <path d="M500 486 C 450 466, 400 480, 372 516 M500 486 C 540 446, 600 448, 640 476 M500 486 C 492 440, 462 412, 420 410 M500 486 C 556 494, 586 528, 590 566 M500 486 C 462 506, 440 548, 444 586" stroke="#0f3b22" strokeWidth="20" />
-                    <path d="M690 724 C 690 650, 700 590, 726 540" stroke="#4a2c12" strokeWidth="10" />
-                    <path d="M726 540 C 690 526, 656 538, 640 566 M726 540 C 756 512, 800 514, 826 536 M726 540 C 722 506, 698 486, 668 486 M726 540 C 766 548, 784 574, 786 602" stroke="#0f3b22" strokeWidth="16" />
-                    <path d="M452 640 Q 572 690 698 640" stroke="#f8e7c4" strokeWidth="5" />
-                </g>
-                <path d="M800 742 L 850 690 L 900 742 Z" fill="#7c4a1e" /><rect x="812" y="742" width="76" height="34" fill="#a16207" /><rect x="840" y="752" width="20" height="24" fill="#3b2410" />
-            </svg>
-            <div className="relative z-10 max-w-3xl mx-auto px-6 pt-[12vh] text-center text-white">
-                <p className="text-xs md:text-sm font-bold tracking-[0.3em] uppercase" style=${{ color: '#dbeafe' }}>${t('On vacation')} 🌴</p>
-                <h1 className="text-4xl md:text-6xl font-black tracking-tight mt-3 drop-shadow-lg">${greetingLine(g, name)}</h1>
-                <p className="text-lg md:text-2xl font-semibold mt-4 drop-shadow" style=${{ color: '#eff6ff' }}>${t('Enjoy your break. You have earned it.')}</p>
-                <p className="text-sm md:text-base mt-2" style=${{ color: '#dbeafe' }}>${t('The market will be right here when you are back on {date}.', { date: dateText })}</p>
-            </div>
-        </section>
-        <section className="max-w-xl mx-auto px-6 text-center" style=${{ color: '#1e3a8a' }}>
-            <p className="pt-16 text-lg font-bold">${name ? t('Rest well, {name}.', { name }) : t('Rest well.')} 🌙</p>
-            <p className="text-sm mt-2 opacity-70">${t('No orders, no pings, no messages. Just you and the sea.')}</p>
-            <div className="h-[90vh]"></div>
-            <button onClick=${comeBack} className="text-[11px] pb-10 opacity-40 hover:opacity-70">${t('Come back to work early')}</button>
-        </section>
+    return html`<div className="fixed inset-0 z-[60] overflow-y-auto overflow-x-hidden" style=${{ background: '#01040b' }}>
+        <${VacationScene}
+            header=${html`<div className="max-w-3xl mx-auto px-6 pt-[13vh] text-center">
+                <p className="text-xs md:text-sm font-bold tracking-[0.3em] uppercase" style=${{ color: '#9fb6e6' }}>${t('On vacation')} 🌴</p>
+                <h1 className="text-4xl md:text-6xl font-black tracking-tight mt-3" style=${{ color: '#eef3ff', textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>${greetingLine(g, name)}</h1>
+                <p className="text-lg md:text-2xl font-semibold mt-4" style=${{ color: '#d7e2fb' }}>${t('Enjoy your break. You have earned it.')}</p>
+                <p className="text-sm md:text-base mt-2" style=${{ color: '#9fb6e6' }}>${t('The market will be right here when you are back on {date}.', { date: dateText })}</p>
+            </div>`}
+            dive=${html`<div className="max-w-xl mx-auto px-6 text-center pt-[18vh]">
+                <p className="text-lg font-bold" style=${{ color: '#bcd0f5' }}>${name ? t('Rest well, {name}.', { name }) : t('Rest well.')} 🌙</p>
+                <p className="text-sm mt-2" style=${{ color: '#7f95c2' }}>${t('No orders, no pings, no messages. Just you and the sea.')}</p>
+            </div>`}
+            cave=${html`<button onClick=${comeBack} className="max-w-[36%] text-[10px] leading-tight text-center text-slate-400 opacity-40 hover:opacity-80 focus-visible:opacity-90 transition-opacity">${t('Come back to work early')}</button>`}
+        />
         <${Toasts} />
         <${DialogHost} />
     </div>`;

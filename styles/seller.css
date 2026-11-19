@@ -79,7 +79,35 @@ body { @apply bg-page text-slate-100 font-sans antialiased; -webkit-tap-highligh
 .no-scrollbar { scrollbar-width: none; }
 input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-/* Vacation screen: a few stars twinkle (not for people who prefer less motion). */
+/* Vacation screen (js/vacation-scene.js): twinkling stars, a shimmering lake, sea creatures swimming past,
+   rising plankton and bubbles, swaying corals. All still for people who prefer less motion. */
 @keyframes vac-twinkle { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.25; } }
 .vac-twinkle { animation: vac-twinkle 3.2s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .vac-twinkle { animation: none; opacity: 0.8; } }
+@keyframes vac-shimmer { 0%, 100% { opacity: 0.05; transform: translateX(0); } 50% { opacity: 0.3; transform: translateX(18px); } }
+.vac-shimmer { animation: vac-shimmer 7s ease-in-out infinite; transform-box: fill-box; }
+@keyframes vac-swim-r { from { transform: translateX(-35vw); } to { transform: translateX(110vw); } }
+@keyframes vac-swim-l { from { transform: translateX(110vw); } to { transform: translateX(-35vw); } }
+.vac-swim-r, .vac-swim-l { animation-timing-function: linear; animation-iteration-count: infinite; will-change: transform; }
+.vac-swim-r { animation-name: vac-swim-r; }
+.vac-swim-l { animation-name: vac-swim-l; }
+@keyframes vac-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+.vac-bob { animation: vac-bob 6s ease-in-out infinite; }
+@keyframes vac-jelly { 0%, 100% { transform: translateY(0) scaleY(1); } 40% { transform: translateY(-46px) scaleY(0.9); } 70% { transform: translateY(-30px) scaleY(1.04); } }
+.vac-jelly { animation: vac-jelly 12s ease-in-out infinite; transform-origin: 50% 20%; will-change: transform; }
+@keyframes vac-rise { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 0.85; } 85% { opacity: 0.5; } 100% { transform: translateY(-160px); opacity: 0; } }
+.vac-rise { background: #bae6fd; box-shadow: 0 0 6px 1px rgba(125, 211, 252, 0.7); animation: vac-rise 16s linear infinite; }
+@keyframes vac-bubble { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 15% { opacity: 0.7; } 100% { transform: translateY(-46vh) scale(1.1); opacity: 0; } }
+.vac-bubble { animation: vac-bubble 7s ease-in infinite; }
+@keyframes vac-sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+.vac-sway { animation: vac-sway 7s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes vac-lure { 0%, 100% { opacity: 0.12; } 50% { opacity: 0.32; } }
+.vac-lure { animation: vac-lure 3s ease-in-out infinite; }
+.vac-glow { filter: drop-shadow(0 0 4px var(--glow)) drop-shadow(0 0 10px var(--glow)); }
+.vac-glow-soft { filter: drop-shadow(0 0 6px var(--glow)); }
+.vac-caustics { background: repeating-linear-gradient(100deg, rgba(120, 160, 230, 0.05) 0 2px, transparent 2px 40px), linear-gradient(rgba(60, 100, 190, 0.22), transparent); }
+@media (prefers-reduced-motion: reduce) {
+    .vac-twinkle { animation: none; opacity: 0.8; }
+    .vac-shimmer, .vac-swim-r, .vac-swim-l, .vac-bob, .vac-jelly, .vac-rise, .vac-bubble, .vac-sway, .vac-lure { animation: none; }
+    .vac-swim-r { transform: translateX(20vw); }
+    .vac-swim-l { transform: translateX(60vw); }
+}
