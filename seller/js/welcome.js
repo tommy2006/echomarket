@@ -63,9 +63,9 @@ const REPLAY = Boolean(ME && (!('welcome_done_at' in ME) || (!NEED_SELLER && !NE
 // ------------------------------------------------------------------ training videos
 // [id, exhibit index, length in seconds, admin]; the files are media/training/<id>.mp4 / .jpg / .vtt.
 const VIDEOS = [
-    ['s1-getting-started', 0, 100.5], ['s3-taking-and-delivering', 2, 94.3], ['s4-teamwork-and-flags', 4, 107.4],
-    ['s5-missing-planes', 5, 108.1], ['s2-finding-orders', 7, 88.8],
-    ['a1-admin-orders-and-sellers', 8, 54.2, true], ['a2-moderation', 9, 47.3, true], ['a3-community', 10, 40.7, true]
+    ['s1-getting-started', 0, 83.4], ['s3-taking-and-delivering', 2, 70.3], ['s4-teamwork-and-flags', 4, 68.3],
+    ['s5-missing-planes', 5, 80.3], ['s2-finding-orders', 7, 67.4],
+    ['a1-admin-orders-and-sellers', 8, 62.6, true], ['a2-moderation', 9, 49.3, true], ['a3-community', 10, 41.0, true]
 ].filter((v) => ADMIN || !v[3]).map(([id, exhibit, seconds, admin]) => ({ id, exhibit, seconds, admin: Boolean(admin) }));
 const videoTitle = (id) => ({
     's1-getting-started': t('Getting started'), 's2-finding-orders': t('Finding orders'), 's3-taking-and-delivering': t('Taking & delivering'),

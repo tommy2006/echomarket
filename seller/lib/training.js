@@ -10,14 +10,14 @@ import { admin, isAdminSeller, HttpError } from './server.js';
 
 // id → length in seconds, and whether it is an admin video. Keep in step with VIDEOS in js/welcome.js.
 export const TRAINING_VIDEOS = {
-    's1-getting-started': { seconds: 100.5, admin: false },
-    's2-finding-orders': { seconds: 88.8, admin: false },
-    's3-taking-and-delivering': { seconds: 94.3, admin: false },
-    's4-teamwork-and-flags': { seconds: 107.4, admin: false },
-    's5-missing-planes': { seconds: 108.1, admin: false },
-    'a1-admin-orders-and-sellers': { seconds: 54.2, admin: true },
-    'a2-moderation': { seconds: 47.3, admin: true },
-    'a3-community': { seconds: 40.7, admin: true }
+    's1-getting-started': { seconds: 83.4, admin: false },
+    's2-finding-orders': { seconds: 67.4, admin: false },
+    's3-taking-and-delivering': { seconds: 70.3, admin: false },
+    's4-teamwork-and-flags': { seconds: 68.3, admin: false },
+    's5-missing-planes': { seconds: 80.3, admin: false },
+    'a1-admin-orders-and-sellers': { seconds: 62.6, admin: true },
+    'a2-moderation': { seconds: 49.3, admin: true },
+    'a3-community': { seconds: 41.0, admin: true }
 };
 const SLACK = 4;   // seconds: clocks and the last frames
 const RESTART_HOURS = 12;   // a start older than this (never finished) starts over

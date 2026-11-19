@@ -583,7 +583,7 @@ function App() {
 
     return html`<div className="min-h-screen pb-24 lg:pb-12">
         <header className="sticky top-0 z-40 bg-page/85 backdrop-blur border-b border-slate-800/80">
-            <div className="max-w-6xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
+            <div className="max-w-6xl 2xl:max-w-7xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center gap-3">
                 <button onClick=${goHome} className="flex items-center gap-3 shrink-0 text-left" aria-label=${t('Seller desk')}>
                     <img src="echo_logo.png" alt="" className="w-8 h-8 rounded-lg" />
                     <span className="leading-tight hidden min-[360px]:block">
@@ -2567,7 +2567,7 @@ function TopNav({ items, tab, orderTab, theftBadge, onGo }) {
         ${items.map((it) => html`<button key=${it.tab} onClick=${() => onGo(it.tab)} aria-current=${navActive(it, tab, orderTab) ? 'page' : undefined}
             title=${it.label} aria-label=${it.label}
             className=${`relative px-3 py-2 rounded-full text-sm font-bold flex items-center gap-2 whitespace-nowrap transition-colors ${navActive(it, tab, orderTab) ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>
-            <${Icon} name=${it.icon} className="w-4 h-4 shrink-0" /><span className=${items.length > 3 ? 'hidden xl:inline' : ''}>${it.label}</span>
+            <${Icon} name=${it.icon} className="w-4 h-4 shrink-0" /><span className=${items.length > 4 ? 'hidden 2xl:inline' : items.length > 3 ? 'hidden xl:inline' : ''}>${it.label}</span>
             ${it.tab === 'thefts' && theftBadge > 0 && html`<span className="text-[10px] min-w-4 px-1 rounded-full bg-rose-500 text-white">${theftBadge}</span>`}
         </button>`)}
     </nav>`;
