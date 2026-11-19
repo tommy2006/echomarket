@@ -344,3 +344,13 @@ html:not([data-quality="lite"]) .tv-pp { min-width: 44px; height: 34px; font-siz
 html .tv-frame:fullscreen { aspect-ratio: auto; background: #000; }
 html .tv-frame:fullscreen video { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; opacity: 1 !important; z-index: 0; pointer-events: auto; }
 html .tv-frame:fullscreen .tv-ui { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; background: linear-gradient(transparent, rgba(0, 0, 0, 0.78)); }
+
+/* Full screen inside the page (iPhones, where a page element can't go full screen): the same player, moved to <body>
+   while it fills the screen. */
+html.tv-maxed, html.tv-maxed body { overflow: hidden; }
+.tv-frame.tv-max-frame { position: fixed !important; inset: 0; z-index: 200; border: 0; border-radius: 0; transform: none !important; background: #000; aspect-ratio: auto; }
+.tv-max-frame video { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; opacity: 1 !important; pointer-events: auto; z-index: 0; object-fit: contain; }
+.tv-max-frame .tv-big { display: none; }
+.tv-max-frame .tv-ui { position: absolute !important; left: 0; right: 0; bottom: 0; z-index: 1; opacity: 1 !important; display: flex; align-items: center; gap: 8px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    padding: 18px max(12px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+.tv-max-frame .tv-time { display: inline; }

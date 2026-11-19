@@ -12,11 +12,11 @@ import { admin, isAdminSeller, HttpError } from './server.js';
 export const TRAINING_VIDEOS = {
     's1-getting-started': { seconds: 83.4, admin: false },
     's2-finding-orders': { seconds: 67.4, admin: false },
-    's3-taking-and-delivering': { seconds: 70.3, admin: false },
-    's4-teamwork-and-flags': { seconds: 68.3, admin: false },
-    's5-missing-planes': { seconds: 80.3, admin: false },
+    's3-taking-and-delivering': { seconds: 70.4, admin: false },
+    's4-teamwork-and-flags': { seconds: 68.2, admin: false },
+    's5-missing-planes': { seconds: 80.4, admin: false },
     'a1-admin-orders-and-sellers': { seconds: 62.6, admin: true },
-    'a2-moderation': { seconds: 49.3, admin: true },
+    'a2-moderation': { seconds: 49.4, admin: true },
     'a3-community': { seconds: 41.0, admin: true }
 };
 const SLACK = 4;   // seconds: clocks and the last frames

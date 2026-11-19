@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "Setiap listing yang terjual di dalam game menunjukkan <b>maskapai pembeli</b>.",
  "Exact model, exact quantity, your airline": "Model tepat, jumlah tepat, maskapaimu",
  "Exact model, exact quantity: nothing more, nothing less.": "Model tepat, jumlah tepat: tidak lebih, tidak kurang.",
+ "Exit full screen": "Keluar dari layar penuh",
  "Finding orders": "Menemukan pesanan",
  "Flag suspicious or blacklisted orders for the other sellers.": "Tandai pesanan yang mencurigakan atau masuk daftar hitam untuk penjual lain.",
  "Flags": "Tanda",

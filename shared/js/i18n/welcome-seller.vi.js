@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "Mỗi tin đăng đã bán trong game hiển thị <b>hãng bay của người mua</b>.",
  "Exact model, exact quantity, your airline": "Đúng mẫu, đúng số lượng, hãng bay của bạn",
  "Exact model, exact quantity: nothing more, nothing less.": "Đúng mẫu, đúng số lượng: không hơn, không kém.",
+ "Exit full screen": "Thoát toàn màn hình",
  "Finding orders": "Tìm đơn hàng",
  "Flag suspicious or blacklisted orders for the other sellers.": "Gắn cờ đơn đáng ngờ hoặc nằm trong danh sách đen cho người bán khác.",
  "Flags": "Cờ",

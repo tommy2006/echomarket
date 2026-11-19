@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "游戏内每个已售挂单都会显示<b>买家的航空公司</b>。",
  "Exact model, exact quantity, your airline": "机型准确、数量准确、你的航空公司",
  "Exact model, exact quantity: nothing more, nothing less.": "机型准确、数量准确：不多也不少。",
+ "Exit full screen": "退出全屏",
  "Finding orders": "查找订单",
  "Flag suspicious or blacklisted orders for the other sellers.": "为其他卖家标记可疑或已列入黑名单的订单。",
  "Flags": "标记",

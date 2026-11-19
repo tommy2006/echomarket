@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "Ipinapakita ng bawat nabentang listing sa game ang <b>airline ng mamimili</b>.",
  "Exact model, exact quantity, your airline": "Eksaktong modelo, eksaktong dami, ang airline mo",
  "Exact model, exact quantity: nothing more, nothing less.": "Eksaktong modelo, eksaktong dami: walang labis, walang kulang.",
+ "Exit full screen": "Lumabas sa full screen",
  "Finding orders": "Paghahanap ng order",
  "Flag suspicious or blacklisted orders for the other sellers.": "I-flag ang mga kahina-hinala o naka-blacklist na order para sa ibang nagbebenta.",
  "Flags": "Mga flag",

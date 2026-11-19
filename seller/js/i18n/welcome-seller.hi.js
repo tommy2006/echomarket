@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "गेम में बिकी हर लिस्टिंग <b>खरीदार की एयरलाइन</b> दिखाती है।",
  "Exact model, exact quantity, your airline": "सही मॉडल, सही मात्रा, आपकी एयरलाइन",
  "Exact model, exact quantity: nothing more, nothing less.": "सही मॉडल, सही मात्रा: न ज़्यादा, न कम।",
+ "Exit full screen": "फ़ुल स्क्रीन से बाहर निकलें",
  "Finding orders": "ऑर्डर ढूँढना",
  "Flag suspicious or blacklisted orders for the other sellers.": "संदिग्ध या ब्लैकलिस्ट ऑर्डर को दूसरे विक्रेताओं के लिए फ़्लैग करें।",
  "Flags": "फ़्लैग",

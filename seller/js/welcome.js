@@ -63,9 +63,9 @@ const REPLAY = Boolean(ME && (!('welcome_done_at' in ME) || (!NEED_SELLER && !NE
 // ------------------------------------------------------------------ training videos
 // [id, exhibit index, length in seconds, admin]; the files are media/training/<id>.mp4 / .jpg / .vtt.
 const VIDEOS = [
-    ['s1-getting-started', 0, 83.4], ['s3-taking-and-delivering', 2, 70.3], ['s4-teamwork-and-flags', 4, 68.3],
-    ['s5-missing-planes', 5, 80.3], ['s2-finding-orders', 7, 67.4],
-    ['a1-admin-orders-and-sellers', 8, 62.6, true], ['a2-moderation', 9, 49.3, true], ['a3-community', 10, 41.0, true]
+    ['s1-getting-started', 0, 83.4], ['s3-taking-and-delivering', 2, 70.4], ['s4-teamwork-and-flags', 4, 68.2],
+    ['s5-missing-planes', 5, 80.4], ['s2-finding-orders', 7, 67.4],
+    ['a1-admin-orders-and-sellers', 8, 62.6, true], ['a2-moderation', 9, 49.4, true], ['a3-community', 10, 41.0, true]
 ].filter((v) => ADMIN || !v[3]).map(([id, exhibit, seconds, admin]) => ({ id, exhibit, seconds, admin: Boolean(admin) }));
 const videoTitle = (id) => ({
     's1-getting-started': t('Getting started'), 's2-finding-orders': t('Finding orders'), 's3-taking-and-delivering': t('Taking & delivering'),
@@ -435,6 +435,8 @@ function buildBoard(i, colour) {
     poster.colorSpace = THREE.SRGBColorSpace;
     const vtex = new THREE.VideoTexture(pl.video);
     vtex.colorSpace = THREE.SRGBColorSpace;
+    // Sharper at an angle and when the board is smaller than the video (it is 1920 × 1080).
+    vtex.anisotropy = poster.anisotropy = maxAnisotropy;
     const screenMat = new THREE.MeshBasicMaterial({ map: poster, toneMapped: false });
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(24, 13.5), screenMat);
     screen.position.z = 0.62; g.add(screen);
@@ -559,7 +561,8 @@ function buildExhibit(i, colour) {
 }
 
 // ------------------------------------------------------------------ the hangar
-const STAND_X = (i) => 40 + i * 44;   // exhibit i (0–7) stands along x
+const STAND_X = (i) => 40 + i * 44;
+let maxAnisotropy = 1;   // set when the renderer exists   // exhibit i (0–7) stands along x
 const loaderPct = $('loader-pct');
 let loadTarget = 0;
 const setLoad = (p) => { loadTarget = Math.max(loadTarget, p); };
@@ -569,6 +572,7 @@ function buildWorld() {
     canvas.id = 'scene'; canvas.setAttribute('aria-hidden', 'true');
     document.body.prepend(canvas);
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
+    maxAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     renderer.setPixelRatio(pixelRatioFor(quality));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
@@ -872,6 +876,13 @@ function frame(now) {
     if (closeUp >= 0) {
         const x = STAND_X(closeUp);
         goalPos.set(x - 3, 12, 30); goalLook.set(x, 9, 0);
+    } else if (camera.aspect > 1) {
+        // A video playing on the stand in view: come closer, so the board fills more of the screen.
+        const k = currentStand();
+        if (k >= 0 && stands[k].exhibit.userData.board?.pl.playing) {
+            const x = STAND_X(k);
+            goalPos.set(x + 1, 13.6, 35); goalLook.set(x + 3, 12.8, 0);
+        }
     }
     if (leaving) goalPos.y += 6;
     if (firstFrame || REDUCED) { camPos.copy(goalPos); camLook.copy(goalLook); }
@@ -1013,9 +1024,12 @@ const local = {
 };
 const players = new Map();   // video id → player
 const tvSeen = new IntersectionObserver((entries) => entries.forEach((e) => {
-    if (!e.isIntersecting && !document.fullscreenElement) players.get(e.target.dataset.vid)?.video.pause();
+    const pl = players.get(e.target.dataset.vid);
+    if (!e.isIntersecting && !document.fullscreenElement && !pl?.maxed) pl?.video.pause();
 }), { threshold: 0.3 });
 document.addEventListener('visibilitychange', () => { if (document.hidden) players.forEach((pl) => pl.video.pause()); });
+document.addEventListener('fullscreenchange', () => players.forEach((pl) => pl.paint?.()));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') players.forEach((pl) => { if (pl.maxed) pl.setMax(false); }); });
 
 function makePlayer(v, slot) {
     const fig = document.createElement('figure');
@@ -1035,8 +1049,9 @@ function makePlayer(v, slot) {
         </div>
         <figcaption><span class="tv-title"></span><span class="tv-state"></span></figcaption>`;
     slot.appendChild(fig);
-    const q = (c) => fig.querySelector(c);
-    const video = q('video'), frame = q('.tv-frame');
+    const frame = fig.querySelector('.tv-frame');
+    const q = (c) => fig.querySelector(c) || frame.querySelector(c);   // the frame may sit in <body> (full screen)
+    const video = q('video');
     const key = 'echo-tv-' + v.id;
     const pl = { v, fig, frame, video, playing: false, max: local.get(key), started: false, stand: v.exhibit, error: '' };
     const done = () => DONE.has(v.id);
@@ -1071,6 +1086,7 @@ function makePlayer(v, slot) {
         if (!video.seeking && (video.duration || v.seconds) - last < 1.5) pl.max = video.duration || v.seconds;
         if (!done() && pl.max >= (video.duration || v.seconds) - 2.5) report('done');
         if (document.fullscreenElement === frame) document.exitFullscreen?.().catch(() => {});
+        if (pl.maxed) setMax(false);
         paint();
     });
 
@@ -1092,9 +1108,25 @@ function makePlayer(v, slot) {
     q('.tv-pp').addEventListener('click', toggle);
     video.addEventListener('click', toggle);
     q('.tv-mute').addEventListener('click', () => { video.muted = !video.muted; paint(); });
+    // Full screen. iPhones can't put a page element in full screen (only a bare video, with Apple's own controls),
+    // so there the player fills the screen inside the page instead, with the same controls and rules.
+    // (Moved to <body> meanwhile: the card's blur would otherwise keep a fixed element inside the card.)
+    const spot = document.createComment('tv');
+    const setMax = (on) => {
+        if (on && !pl.maxed) { frame.replaceWith(spot); document.body.appendChild(frame); }
+        if (!on && pl.maxed) spot.replaceWith(frame);
+        frame.classList.toggle('tv-max-frame', on);
+        fig.classList.toggle('tv-max', on);
+        document.documentElement.classList.toggle('tv-maxed', on);
+        pl.maxed = on;
+        paint();
+    };
+    pl.setMax = setMax;
     q('.tv-fs').addEventListener('click', () => {
-        if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-        else frame.requestFullscreen?.().catch(() => {});
+        if (document.fullscreenElement) { document.exitFullscreen?.().catch(() => {}); return; }
+        if (pl.maxed) { setMax(false); return; }
+        if (document.fullscreenEnabled && frame.requestFullscreen) frame.requestFullscreen().catch(() => setMax(true));
+        else setMax(true);
     });
     // The bar: going back is fine; forward only as far as already watched.
     q('.tv-bar').addEventListener('click', (e) => {
@@ -1118,7 +1150,9 @@ function makePlayer(v, slot) {
         q('.tv-pp').setAttribute('aria-label', pl.playing ? t('Pause') : t('Play'));
         q('.tv-mute').textContent = video.muted ? '🔇' : '🔊';
         q('.tv-mute').setAttribute('aria-label', video.muted ? t('Sound on') : t('Mute'));
-        q('.tv-fs').setAttribute('aria-label', t('Full screen'));
+        const full = pl.maxed || document.fullscreenElement === frame;
+        q('.tv-fs').textContent = full ? '✕' : '⛶';
+        q('.tv-fs').setAttribute('aria-label', full ? t('Exit full screen') : t('Full screen'));
         q('.tv-title').textContent = `${t('Video')} · ${videoTitle(v.id)} · ${fmt(v.seconds)}`;
         q('.tv-state').textContent = pl.error && !done() ? tx(pl.error)
             : done() ? `✓ ${t('Watched')}` : REQUIRED.includes(v.id) ? t('Watch to the end to continue') : t('No skipping ahead');

@@ -79,6 +79,7 @@ export default {
  "Every sold listing in-game shows the <b>buyer's airline</b>.": "게임 안에서 팔린 모든 매물에는 <b>구매자의 항공사</b>가 표시돼요.",
  "Exact model, exact quantity, your airline": "정확한 기종, 정확한 수량, 내 항공사",
  "Exact model, exact quantity: nothing more, nothing less.": "정확한 기종, 정확한 수량: 더도 덜도 말고.",
+ "Exit full screen": "전체 화면 종료",
  "Finding orders": "주문 찾기",
  "Flag suspicious or blacklisted orders for the other sellers.": "의심스럽거나 블랙리스트에 오른 주문에 플래그를 달아 다른 판매자에게 알리세요.",
  "Flags": "플래그",
