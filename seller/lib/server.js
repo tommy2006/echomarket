@@ -403,11 +403,19 @@ function buildEmbed(order, title, flag, declines = []) {
 
 async function webhookCall(url, method, payload) {
     try {
-        const res = await fetch(url, {
-            method,
-            headers: payload ? { 'Content-Type': 'application/json' } : undefined,
-            body: payload ? JSON.stringify(payload) : undefined
-        });
+        let res;
+        // Rate limited (e.g. a seller taking many orders at once): wait as Discord asks (up to 5 s) and retry twice.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            res = await fetch(url, {
+                method,
+                headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+                body: payload ? JSON.stringify(payload) : undefined
+            });
+            if (res.status !== 429 || attempt === 2) break;
+            const data = await res.json().catch(() => ({}));
+            const wait = Number(data.retry_after ?? res.headers.get('retry-after')) || 1;
+            await new Promise((r) => setTimeout(r, Math.min(5, wait) * 1000 + 100));
+        }
         if (!res.ok) return null;
         return method === 'DELETE' ? {} : await res.json().catch(() => ({}));
     } catch (err) {

@@ -20,6 +20,8 @@ import { VacationScene } from './vacation-scene.js';
 const isHelping = (order, userId) => orderHelpers(order).some((h) => h.seller_id === userId);
 const MAX_HELPERS = 3;
 // Other sellers may take over once the order has been taken this long without being fully delivered.
+const BULK_MAX = 50;        // orders per Take all / Decline all run (the server allows 120 changes per 10 minutes)
+const BULK_GAP_MS = 400;    // between orders in a bulk run, so the Discord posts keep up
 const canTakeOver = (order, userId, now = Date.now()) => ['CLAIMED', 'PARTIAL'].includes(order.status)
     && order.seller_id !== userId && !isHelping(order, userId) && orderHelpers(order).length < MAX_HELPERS && takeoverIn(order, now) === 0;
 // Completed orders: the sellers who listed aircraft on it may remind the buyer to buy them (seller API: remind).
@@ -220,7 +222,10 @@ function App() {
     const [pageSize, setPageSize] = useState(5);   // every list starts at 5 (also after switching tabs)
     const [now, setNow] = useState(() => Date.now());   // ticks every minute so wait times stay current
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
-    useEffect(() => { setPageSize(5); }, [tab]);
+    const [picked, setPicked] = useState(() => new Set());   // open queue: orders ticked for Take / Decline selected
+    const [bulk, setBulk] = useState(null);   // bulk run in progress: { kind: 'claim'|'decline', done, total }
+    const [bulkClaim, setBulkClaim] = useState(null);   // orders waiting for "sell as" in the bulk Take dialog
+    useEffect(() => { setPageSize(5); setPicked(new Set()); }, [tab]);
     const [statusFilter, setStatusFilter] = useState('ALL');
     const [query, setQuery] = useState('');
     const [view, setView] = useState(() => {
@@ -427,6 +432,46 @@ function App() {
     // Sellers who could still take the order if I pass on it now.
     const othersLeft = (order) => teamSize - passedOn(order).filter((d) => d.seller_id !== userId).length - 1;
     const replaceOrder = (o) => setOrders((l) => l.map((x) => (x.id === o.id ? o : x)));
+    const applyResult = (order, payload, res) => {
+        if (res.order) replaceOrder(res.order);
+        if (payload.action === 'decline' && res.declinedForEveryone === false) {
+            setDeclines((l) => [...l.filter((d) => !(d.order_id === order.id && d.seller_id === userId)),
+                { order_id: order.id, seller_id: userId, seller_name: account?.display_name, note: payload.reason || null }]);
+        }
+        if (payload.action === 'claim') setDeclines((l) => l.filter((d) => !(d.order_id === order.id && d.seller_id === userId)));
+    };
+    // Take or decline many open orders, one after another (the server checks each one as usual). Stops early when
+    // the seller hits the rate limit. Afterwards: one summary, plus the orders that could not be done and why.
+    const runBulk = async (kind, list, payloadOf) => {
+        const done = [], failed = [];
+        let stopped = 0;
+        setBulk({ kind, done: 0, total: list.length });
+        for (const [i, o] of list.entries()) {
+            const payload = payloadOf(o);
+            try {
+                const res = await api(`/api/orders/${o.id}`, payload);
+                applyResult(o, payload, res);
+                done.push({ o, res });
+            } catch (err) {
+                failed.push({ o, msg: err.message });
+                if (/too many/i.test(err.message)) { stopped = list.length - i - 1; break; }
+            }
+            setBulk({ kind, done: i + 1, total: list.length });
+            if (i < list.length - 1) await new Promise((r) => setTimeout(r, BULK_GAP_MS));
+        }
+        setBulk(null);
+        setPicked(new Set());
+        if (failed.length) loadAll();
+        return { done, failed, stopped };
+    };
+    const bulkReport = async ({ done, failed, stopped }, success) => {
+        if (done.length) toast(success(done), 'success');
+        if (failed.length || stopped) {
+            const lines = failed.map(({ o, msg }) => `${orderRef(o)}: ${tx(msg)}`);
+            if (stopped) lines.push(t('{count} not tried: wait a few minutes, then try again.', { count: plural(stopped, 'order') }));
+            await ask({ title: t('{count} could not be done', { count: plural(failed.length + stopped, 'order') }), message: lines.join('\n'), confirmLabel: t('OK') });
+        }
+    };
     const act = async (order, payload, success) => {
         try {
             const res = await api(`/api/orders/${order.id}`, payload);
@@ -509,6 +554,37 @@ function App() {
                 if (reason) act(order, { action: 'decline', reason }, t('{ref} declined.', { ref: orderRef(order) }));
             }
         },
+        // Take many at once: pick the airline once in BulkClaimModal.
+        claimMany: (list) => {
+            if (!airlines.length) return toast(t("Create an airline profile on the market's Airlines page first — buyers see which airline is selling to them."), 'error');
+            setBulkClaim({ orders: list.slice(0, BULK_MAX), more: Math.max(0, list.length - BULK_MAX) });
+        },
+        // Decline many at once. Orders where other sellers are left are passed on (an optional note); orders where
+        // this seller is the last one left close for good, so a reason for their buyers is required.
+        declineMany: async (all) => {
+            const list = all.slice(0, BULK_MAX);
+            const closes = list.filter((o) => othersLeft(o) <= 0);
+            const passes = list.length - closes.length;
+            const more = all.length > list.length ? '\n\n' + t('Only the first {n} are done in one go. Run it again for the rest.', { n: BULK_MAX }) : '';
+            const msg = closes.length
+                ? t('Every other seller has already passed on {count}, so declining closes them for good. Their buyers will see your reason. This cannot be undone.', { count: plural(closes.length, 'order') })
+                    + (passes ? '\n\n' + t('The other {count} only leave your open queue and stay open for the other sellers.', { count: plural(passes, 'order') }) : '')
+                : t('They disappear from your open queue but stay open for the other sellers. Buyers are not told. An order is only declined if every seller passes.');
+            const reason = await ask({
+                title: t('Decline {count}?', { count: plural(list.length, 'order') }), danger: closes.length > 0,
+                confirmLabel: t('Decline {count}', { count: plural(list.length, 'order') }),
+                message: msg + more,
+                input: closes.length ? { required: true, placeholder: t('Reason shown to the buyers of the orders that close') }
+                    : { required: false, placeholder: t('Optional note for the other sellers (e.g. price too low for me)') }
+            });
+            if (reason === false) return;
+            const r = await runBulk('decline', list, () => ({ action: 'decline', reason: reason || '' }));
+            await bulkReport(r, (done) => {
+                const closed = done.filter((d) => d.res.declinedForEveryone).length;
+                return closed ? t('Declined {count}: {closed} closed for good, the rest passed on.', { count: plural(done.length, 'order'), closed })
+                    : t('You passed on {count}.', { count: plural(done.length, 'order') });
+            });
+        },
         forceDecline: async (order) => {
             const reason = await ask({
                 title: t('Decline {ref} for everyone?', { ref: orderRef(order) }), danger: true, confirmLabel: t('Decline for everyone'),
@@ -573,6 +649,10 @@ function App() {
     const allianceOptions = [...new Set(orders.flatMap((o) => orderAlliances(o)))].filter(Boolean).sort();
     // Every order list: the first 5, the rest behind "Show more" / 10 / 25 / 50 / All.
     const paged = pageSize !== 'all' ? list.slice(0, pageSize) : list;
+    // Open queue: tick orders, then Take / Decline the ticked ones, or all the orders the list shows.
+    const canBulk = tab === 'open' && seller.can_sell !== false && !loading && list.length > 0;
+    const pickedList = canBulk ? list.filter((o) => picked.has(o.id)) : [];
+    const togglePick = (id) => setPicked((cur) => { const n = new Set(cur); n.has(id) ? n.delete(id) : n.add(id); return n; });
     const detail = orders.find((o) => o.id === detailId);
 
     // Desk sections: Orders plus the tools, in the top bar (desktop) or the bottom bar (phones and tablets).
@@ -674,7 +754,12 @@ function App() {
                 title=${inTab.length && filterCount ? 'No orders match your filters' : tab === 'open' ? 'Queue is empty' : tab === 'mine' ? 'You have no active orders' : 'No orders found'}
                 text=${inTab.length && filterCount ? t('{count} hidden by your filters. Change or clear them to see more.', { count: plural(inTab.length, 'order') })
                     : tab === 'open' ? 'New orders appear here instantly (and on Discord). Orders you passed on are under All orders.' : tab === 'mine' ? 'Take one from the open queue.' : 'Try a different search or status.'} />`
-            : html`<div className="space-y-2">${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
+            : html`<div className="space-y-2">
+                ${canBulk && html`<${BulkBar} shown=${paged} total=${list.length} picked=${pickedList} bulk=${bulk}
+                    onPickAll=${(on) => setPicked(on ? new Set(paged.map((o) => o.id)) : new Set())}
+                    onClear=${() => setPicked(new Set())} onTake=${actions.claimMany} onDecline=${actions.declineMany} all=${list} />`}
+                ${paged.map((o) => html`<${OrderRow} key=${o.id} order=${o} flag=${flags[o.id]} userId=${userId} airlines=${airlines}
+                selectable=${canBulk} selected=${picked.has(o.id)} onSelect=${() => togglePick(o.id)}
                 passed=${passedOn(o)} teamSize=${teamSize} now=${now} onBuyer=${setBuyerOf} unread=${unreadOf(o.id)} caution=${alerts[o.id]} missing=${reportsOf(o.id).filter((r) => r.status === 'OPEN').length}
                 seller=${seller} actions=${actions} onOpen=${() => openDetail(o.id)} />`)}
                 ${list.length > 5 && html`<${PageSizeBar} total=${list.length} shown=${paged.length} pageSize=${pageSize} setPageSize=${setPageSize} />`}
@@ -699,6 +784,16 @@ function App() {
                 setSellAsId(airlineId);
                 const ok = await act(modal.order, { action: 'claim', airlineId }, t('You took {ref}. The buyer has been notified.', { ref: orderRef(modal.order) }));
                 if (ok) { setModal(null); setTab('mine'); }
+            }} />`}
+        ${bulkClaim && html`<${BulkClaimModal} orders=${bulkClaim.orders} airlines=${airlines} sellAs=${sellAs} bulk=${bulk}
+            caution=${bulkClaim.orders.filter((o) => alerts[o.id]).length} more=${bulkClaim.more}
+            onClose=${() => !bulk && setBulkClaim(null)}
+            onConfirm=${async (airlineId) => {
+                setSellAsId(airlineId);
+                const r = await runBulk('claim', bulkClaim.orders, () => ({ action: 'claim', airlineId }));
+                setBulkClaim(null);
+                await bulkReport(r, (done) => t('You took {count}. The buyers have been notified.', { count: plural(done.length, 'order') }));
+                if (r.done.length) setTab('mine');
             }} />`}
         ${modal?.kind === 'join' && html`<${ClaimModal} order=${modal.order} airlines=${airlines} sellAs=${sellAs} join=${true} caution=${alerts[modal.order.id]}
             onClose=${() => setModal(null)}
@@ -2705,12 +2800,15 @@ function OrderActions({ order, userId, seller, actions, compact }) {
     </div>`;
 }
 
-function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0, missing = 0, caution = false }) {
+function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, passed, teamSize, now, onBuyer, unread = 0, missing = 0, caution = false, selectable = false, selected = false, onSelect }) {
     const mine = order.seller_id === userId;
     const helping = !mine && isHelping(order, userId);
     const joined = orderHelpers(order);
-    return html`<article onClick=${onOpen} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 cursor-pointer hover:border-slate-600 ${flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
-        <div className="flex flex-col md:flex-row md:items-center gap-3">
+    return html`<article onClick=${onOpen} className=${`card !rounded-2xl md:!rounded-3xl p-3 md:p-4 cursor-pointer hover:border-slate-600 ${selected ? '!border-sky-400/70 !bg-sky-400/[0.06]' : flag?.status === 'BLACKLISTED' ? 'border-rose-500/40' : ''}`}>
+        <div className="flex gap-3">
+        ${selectable && html`<label onClick=${(e) => e.stopPropagation()} className="shrink-0 -m-1.5 p-1.5 cursor-pointer self-start md:self-center" title=${t('Select')}>
+            <input type="checkbox" checked=${selected} onChange=${onSelect} className="pick-box" aria-label=${t('Select {ref}', { ref: orderRef(order) })} /></label>`}
+        <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex-1 min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                     <${OrderCode} order=${order} />
@@ -2741,7 +2839,31 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                 <${OrderActions} order=${order} userId=${userId} seller=${seller} actions=${actions} compact=${true} />
             </div>
         </div>
+        </div>
     </article>`;
+}
+
+// Above the open queue: select the orders shown, then Take / Decline the selected ones, or every order the list shows
+// (with the current search and filters). One airline for all the orders taken (BulkClaimModal).
+function BulkBar({ shown, total, all, picked, bulk, onPickAll, onClear, onTake, onDecline }) {
+    const allShown = shown.length > 0 && shown.every((o) => picked.some((p) => p.id === o.id));
+    const n = picked.length;
+    if (bulk) return html`<div className="card !rounded-2xl p-3 flex items-center gap-3" role="status">
+        <${Spinner} /><span className="text-sm font-bold text-white">${bulk.kind === 'claim' ? t('Taking {done} of {total}…', bulk) : t('Declining {done} of {total}…', bulk)}</span>
+        <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-sky-400 transition-all" style=${{ width: `${(bulk.done / bulk.total) * 100}%` }}></div></div>
+    </div>`;
+    return html`<div className=${`card !rounded-2xl p-2.5 md:p-3 flex flex-wrap items-center gap-2 ${n ? '!border-sky-400/50' : ''}`} data-tour="bulk">
+        <label className="flex items-center gap-2 px-1.5 py-1 cursor-pointer text-sm font-bold text-slate-200">
+            <input type="checkbox" className="pick-box" checked=${allShown} onChange=${(e) => onPickAll(e.target.checked)} aria-label=${t('Select all shown')} />
+            ${n ? t('{n} selected', { n }) : t('Select all shown')}
+        </label>
+        ${n > 0 && html`<${Button} size="sm" icon="hand" onClick=${() => onTake(picked)}>${t('Take selected')}<//>
+            <${Button} size="sm" variant="secondary" icon="ban" onClick=${() => onDecline(picked)}>${t('Decline selected')}<//>
+            <${Button} size="sm" variant="ghost" icon="x" onClick=${onClear}>${t('Clear')}<//>`}
+        <div className="flex-1"></div>
+        ${!n && html`<${Button} size="sm" variant="secondary" icon="check-check" onClick=${() => onTake(all)}>${t('Take all ({n})', { n: total })}<//>
+            <${Button} size="sm" variant="ghost" icon="ban" onClick=${() => onDecline(all)}>${t('Decline all ({n})', { n: total })}<//>`}
+    </div>`;
 }
 
 function OrderDetail({ order, flag, userId, seller, airlines, actions, onClose, passed, teamSize, now, onBuyer, messages = [], onSeen, onMessage, reports = [], onReport, culpritsByReport = {}, onCulprits, caution = false, cautionReason = '' }) {
@@ -3159,6 +3281,39 @@ function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false, nou
             </div>
         </div>
     </div>`;
+}
+
+// Take many open orders at once, all as one airline.
+function BulkClaimModal({ orders, airlines, sellAs, bulk, caution = 0, more = 0, onClose, onConfirm }) {
+    const sameCount = (a) => orders.filter((o) => orderAlliances(o).includes(a.alliance)).length;
+    const sorted = [...airlines].sort((a, b) => sameCount(b) - sameCount(a));
+    const [airlineId, setAirlineId] = useState(() => (sellAs && sameCount(sellAs) >= sameCount(sorted[0]) ? sellAs : sorted[0])?.id);
+    const chosen = airlines.find((a) => a.id === airlineId);
+    const aircraft = orders.reduce((n, o) => n + o.total_qty - o.filled, 0);
+    const value = orders.reduce((n, o) => n + Number(o.total_usd || 0), 0);
+    const other = chosen ? orders.length - sameCount(chosen) : 0;
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Take {count}', { count: plural(orders.length, 'order') })} size="sm"
+        subtitle=${`${plural(aircraft, 'aircraft')} · ${fmtUSDShort(value)}`}
+        footer=${html`<${Button} variant="ghost" disabled=${Boolean(bulk)} onClick=${onClose}>${t('Cancel')}<//>
+            <${Button} icon="hand" busy=${Boolean(bulk)} disabled=${!chosen} onClick=${() => onConfirm(airlineId)}>${bulk ? t('Taking {done} of {total}…', bulk) : t('Take {count}', { count: plural(orders.length, 'order') })}<//>`}>
+        ${caution > 0 && html`<p className="text-sm text-pink-100 mb-4 p-3 rounded-2xl border border-pink-400/50 bg-pink-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-pink-300 shrink-0" />${t('{count} from buyers on the alert list. Be cautious and check with the admins if necessary.', { count: plural(caution, 'order') })}</p>`}
+        <ul className="mb-4 max-h-40 overflow-y-auto space-y-1 text-xs text-slate-400 p-2 rounded-xl bg-slate-950 border border-slate-800">
+            ${orders.map((o) => html`<li key=${o.id} className="flex justify-between gap-2"><span className="truncate"><b className="text-slate-200">${orderRef(o)}</b> · ${o.buyer_name} · ${plural(o.total_qty - o.filled, 'aircraft')}</span><span className="shrink-0">${fmtUSDShort(o.total_usd)}</span></li>`)}
+        </ul>
+        ${more > 0 && html`<p className="text-xs text-amber-300 mb-3">${t('Only the first {n} are done in one go. Run it again for the rest.', { n: orders.length })}</p>`}
+        <p className="field-label">${t('Sell all of them as airline')}</p>
+        <div className="space-y-1.5">
+            ${sorted.map((a) => html`<button key=${a.id} disabled=${Boolean(bulk)} onClick=${() => setAirlineId(a.id)}
+                className=${`w-full flex items-center justify-between p-3 rounded-xl border text-left ${airlineId === a.id ? 'border-sky-400 bg-sky-400/10' : 'border-slate-800 hover:border-slate-600'}`}>
+                <span><span className="font-bold text-white">${a.name}</span> <span className="text-xs text-slate-400">${a.alliance}</span>
+                    ${sameCount(a) > 0 && html`<span className="ml-2 text-[10px] font-black text-emerald-300">${t('SAME ALLIANCE: {n} OF {total}', { n: sameCount(a), total: orders.length })}</span>`}</span>
+                ${airlineId === a.id && html`<${Icon} name="check" className="w-4 h-4 text-sky-300" />`}
+            </button>`)}
+        </div>
+        ${other > 0 && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px shrink-0" />
+            ${t("{count} are from buyers not in {alliance}. You can still take them.", { count: plural(other, 'order'), alliance: chosen.alliance })}</p>`}
+        <p className="text-xs text-slate-400 mt-4">${t('Each buyer is notified right away. Only take what you can deliver.')}</p>
+    <//>`;
 }
 
 function ClaimModal({ order, airlines, sellAs, onClose, onConfirm, join = false, caution = false }) {
