@@ -809,6 +809,7 @@ export default {
  "Value": "Nilai",
  "Verified Sellers, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.": "Verified Seller, Ambassador, dan Lead Ambassador otomatis masuk lewat role mereka di server Discord Echo. Untuk menjadi Verified Seller, daftar melalui formulir pendaftaran Verified Seller. Baru saja mendapat role-nya? Periksa lagi.",
  "Wait": "Tunggu",
+ "Wait times · all of Echo": "Waktu tunggu · seluruh Echo",
  "Waiting": "Menunggu",
  "Waiting for a seller": "Menunggu penjual",
  "Waiting for a seller to take it": "Menunggu penjual mengambilnya",

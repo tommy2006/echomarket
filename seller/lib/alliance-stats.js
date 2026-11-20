@@ -9,8 +9,13 @@
 //   buyers                                           different buyers
 //   priceLevel                                       average price level, weighted by aircraft
 //   waitHours                                        median time until a seller first took the order
+//   wait                                             wait-time details (waitStats below): mean, median, 90th
+//                                                    percentile, how many waited < 6 h, 6–12 h, 12–24 h, 24–48 h,
+//                                                    48 h+; orders still waiting (never taken) by how long so far;
+//                                                    orders closed before any seller took them
 //   series                                           orders per day (≤ 30 days) or per week
 //   topAircraft                                      most-ordered aircraft types
+// waits: the same wait-time details for every alliance together (the whole Echo organisation).
 // trade: aircraft delivered from each seller alliance to each buyer alliance (who supplies whom).
 // aircraft: the most popular aircraft types across all alliances (aircraft ordered, orders, delivered, value,
 //           average price level, alliances that ordered them).
@@ -28,6 +33,35 @@ async function all(query) {
 }
 
 export const NO_ALLIANCE = 'No alliance';
+// Wait-time groups, in hours: [from, to). The last one has no end.
+export const WAIT_BUCKETS = [[0, 6], [6, 12], [12, 24], [24, 48], [48, Infinity]];
+const round1 = (h) => (h == null ? null : Math.round(h * 10) / 10);
+const percentile = (sorted, p) => {
+    if (!sorted.length) return null;
+    const i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+};
+// taken: hours until the first seller took each order. open: hours waited so far by orders nobody has taken yet.
+// within[h]: share of orders taken within h hours, out of the orders whose answer is known (taken, or still
+// waiting for longer than h).
+function waitStats(taken, open, noSeller) {
+    const sorted = [...taken].sort((a, b) => a - b);
+    const bucketOf = (h) => WAIT_BUCKETS.findIndex(([from, to]) => h >= from && h < to);
+    const buckets = WAIT_BUCKETS.map(() => 0), openBuckets = WAIT_BUCKETS.map(() => 0);
+    for (const h of taken) buckets[bucketOf(h)]++;
+    for (const h of open) openBuckets[bucketOf(h)]++;
+    const within = Object.fromEntries([6, 12, 24].map((h) => {
+        const known = taken.length + open.filter((x) => x >= h).length;
+        return [h, known ? Math.round(taken.filter((x) => x <= h).length / known * 100) : null];
+    }));
+    return {
+        taken: taken.length, open: open.length, noSeller,
+        mean: sorted.length ? round1(sorted.reduce((a, b) => a + b, 0) / sorted.length) : null,
+        median: round1(percentile(sorted, 0.5)), p90: round1(percentile(sorted, 0.9)),
+        longest: round1(sorted[sorted.length - 1] ?? null), longestOpen: round1(open.length ? Math.max(...open) : null),
+        buckets, openBuckets, within
+    };
+}
 const DAY = 864e5;
 const median = (list) => {
     if (!list.length) return null;
@@ -64,7 +98,7 @@ export async function allianceStats(days) {
     const row = (name) => {
         if (!stats.has(name)) stats.set(name, {
             name, orders: 0, completed: 0, active: 0, declined: 0, cancelled: 0, aircraft: 0, delivered: 0, value: 0,
-            buyerSet: new Set(), levelSum: 0, levelQty: 0, waits: [], series: new Array(buckets).fill(0), models: new Map()
+            buyerSet: new Set(), levelSum: 0, levelQty: 0, waits: [], openWaits: [], noSeller: 0, series: new Array(buckets).fill(0), models: new Map()
         });
         return stats.get(name);
     };
@@ -98,7 +132,9 @@ export async function allianceStats(days) {
             ty.allianceSet.add(a.name);
         }
         const claimed = firstClaim.get(o.id);
-        if (claimed) a.waits.push((new Date(claimed) - new Date(o.created_at)) / 36e5);
+        if (claimed) a.waits.push(Math.max(0, (new Date(claimed) - new Date(o.created_at)) / 36e5));
+        else if (o.status === 'PENDING') a.openWaits.push(Math.max(0, (Date.now() - new Date(o.created_at)) / 36e5));
+        else if (['DECLINED', 'CANCELLED'].includes(o.status)) a.noSeller++;
         for (const sh of deliveryShares(o)) {
             if (!(sh.total > 0)) continue;
             const key = `${a.name}|${sh.alliance || NO_ALLIANCE}`;
@@ -106,8 +142,9 @@ export async function allianceStats(days) {
         }
     }
 
-    const alliances = [...stats.values()].map(({ buyerSet, levelSum, levelQty, waits, models, ...a }) => ({
+    const alliances = [...stats.values()].map(({ buyerSet, levelSum, levelQty, waits, openWaits, noSeller, models, ...a }) => ({
         ...a,
+        wait: waitStats(waits, openWaits, noSeller),
         buyers: buyerSet.size,
         priceLevel: levelQty ? Math.round(levelSum / levelQty * 10) / 10 : null,
         waitHours: waits.length ? Math.round(median(waits) * 10) / 10 : null,
@@ -124,8 +161,12 @@ export async function allianceStats(days) {
         ...ty, alliances: allianceSet.size, priceLevel: levelQty ? Math.round(levelSum / levelQty * 10) / 10 : null
     })).sort((x, y) => y.aircraft - x.aircraft || y.orders - x.orders || x.model.localeCompare(y.model)).slice(0, 25);
 
+    const everyAlliance = [...stats.values()];
+    const waits = waitStats(everyAlliance.flatMap((a) => a.waits), everyAlliance.flatMap((a) => a.openWaits),
+        everyAlliance.reduce((n, a) => n + a.noSeller, 0));
+
     return {
-        ok: true, days, bucketDays, bucketStarts, alliances, totals, aircraft, statsSince: resetAt ? new Date(resetAt).toISOString() : null,
+        ok: true, days, bucketDays, bucketStarts, alliances, totals, waits, waitBuckets: WAIT_BUCKETS.map(([from, to]) => [from, to === Infinity ? null : to]), aircraft, statsSince: resetAt ? new Date(resetAt).toISOString() : null,
         trade: [...trade].map(([key, aircraft]) => { const [buyer, seller] = key.split('|'); return { buyer, seller, aircraft }; }),
         generatedAt: new Date().toISOString()
     };

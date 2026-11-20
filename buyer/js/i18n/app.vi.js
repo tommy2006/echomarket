@@ -809,6 +809,7 @@ export default {
  "Value": "Giá trị",
  "Verified Sellers, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.": "Verified Seller, Ambassador và Lead Ambassador được vào tự động nhờ vai trò trên máy chủ Discord Echo. Để trở thành Verified Seller, hãy nộp đơn qua mẫu đăng ký Verified Seller. Vừa nhận vai trò? Hãy kiểm tra lại.",
  "Wait": "Chờ",
+ "Wait times · all of Echo": "Thời gian chờ · toàn Echo",
  "Waiting": "Đang chờ",
  "Waiting for a seller": "Đang chờ người bán",
  "Waiting for a seller to take it": "Đang chờ người bán nhận",

@@ -1192,6 +1192,79 @@ function MiniColumns({ series, max, height = 'h-12', tipFor, bind }) {
     </div>`;
 }
 
+// ---- Wait times (Alliances tab): how long orders waited until a seller first took them (data.waits for all of
+// Echo, alliance.wait per alliance; lib/alliance-stats.js). Groups < 6 h, 6–12 h, 12–24 h, 1–2 days, 2 days+:
+// one amber ramp, brighter = longer wait, so the long waits stand out. Orders nobody has taken yet are drawn as
+// outlined blocks on top, in the group of how long they have waited so far.
+const WAIT_COLORS = ['#7a4a12', '#a0620f', '#c67d12', '#e89c22', '#fcc65a'];
+const WAIT_LABELS = ['< 6 h', '6–12 h', '12–24 h', '1–2 days', '2 days +'];
+const WAIT_LONG = ['under 6 hours', '6 to 12 hours', '12 to 24 hours', '1 to 2 days', '2 days or more'];
+const waitTip = (w, i) => html`<${TipRows} title=${`Waited ${WAIT_LONG[i]}`} rows=${[
+    ['Taken by a seller', `${w.buckets[i]} (${pct(w.buckets[i], w.taken)}%)`],
+    ...(w.openBuckets[i] ? [['Still waiting', w.openBuckets[i]]] : [])]} />`;
+
+function WaitTiles({ w }) {
+    const tiles = [
+        ['Median', fmtHours(w.median), 'half the orders were taken faster'],
+        ['Mean', fmtHours(w.mean), 'average; pulled up by long waits'],
+        ['90% within', fmtHours(w.p90), '9 in 10 orders were taken within this'],
+        ['Taken within 12 h', w.within[12] == null ? '—' : `${w.within[12]}%`, `${w.within[6] ?? '—'}% within 6 h · ${w.within[24] ?? '—'}% within 24 h`],
+        ['Still waiting', w.open, w.open ? `longest: ${fmtHours(w.longestOpen)} so far` : 'every order was taken']
+    ];
+    return html`<div className="grid grid-cols-2 sm:grid-cols-5 gap-2">${tiles.map(([k, v, hint]) => html`<div key=${k} className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 min-w-0">
+        <p className="text-[10px] font-bold text-slate-500">${k}</p>
+        <p className="text-lg md:text-xl font-black text-white tabular-nums">${v}</p>
+        <p className="text-[10px] text-slate-500 leading-snug">${hint}</p></div>`)}</div>`;
+}
+
+// Columns: orders per wait group (taken, plus still waiting on top).
+function WaitHistogram({ w, bind, height = 'h-40' }) {
+    const max = Math.max(1, ...w.buckets.map((n, i) => n + w.openBuckets[i]));
+    return html`<div>
+        <div className=${`${height} flex items-end gap-2 border-b border-slate-700`}>
+            ${w.buckets.map((n, i) => {
+                const o = w.openBuckets[i], total = n + o;
+                return html`<div key=${i} ...${bind(waitTip(w, i))} className="flex-1 h-full flex flex-col justify-end items-center outline-none rounded-t-md hover:bg-slate-800/50 focus-visible:bg-slate-800/50">
+                    <span className="text-[11px] font-bold text-slate-200 tabular-nums mb-1">${total || ''}</span>
+                    ${o > 0 && html`<span className="w-full max-w-[4.5rem] rounded-t-md border-2 border-dashed" style=${{ height: `${(o / max * 85).toFixed(1)}%`, borderColor: WAIT_COLORS[i], borderBottomWidth: n ? 0 : 2 }}></span>`}
+                    <span className=${`w-full max-w-[4.5rem] ${o ? '' : 'rounded-t-md'}`} style=${{ height: n ? `max(${(n / max * 85).toFixed(1)}%, 2px)` : 0, backgroundColor: WAIT_COLORS[i] }}></span>
+                </div>`;
+            })}
+        </div>
+        <div className="flex gap-2 mt-1">${WAIT_LABELS.map((l) => html`<span key=${l} className="flex-1 text-center text-[10px] text-slate-400">${l}</span>`)}</div>
+        <p className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500 mt-2">
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm" style=${{ background: WAIT_COLORS[2] }}></span>taken by a seller (${w.taken})</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border-2 border-dashed" style=${{ borderColor: WAIT_COLORS[2] }}></span>still waiting, so far (${w.open})</span>
+            ${w.noSeller > 0 && html`<span>${w.noSeller} closed before any seller took them</span>`}
+        </p>
+    </div>`;
+}
+
+// One row per alliance: the median, and the share of its taken orders in each wait group. Slowest first.
+function WaitCompare({ list, bind, onPick }) {
+    const rows = list.filter((a) => a.wait.taken || a.wait.open)
+        .sort((x, y) => (x.wait.median == null) - (y.wait.median == null) || (y.wait.median ?? 0) - (x.wait.median ?? 0) || x.name.localeCompare(y.name));
+    if (!rows.length) return html`<p className="text-sm text-slate-400">No orders were taken yet.</p>`;
+    return html`<ol className="space-y-1">${rows.map((a) => {
+        const w = a.wait;
+        return html`<li key=${a.name}>
+            <button onClick=${() => onPick(a)} ...${bind(html`<${TipRows} title=${a.name} rows=${[['Median wait', fmtHours(w.median)], ['Mean wait', fmtHours(w.mean)],
+                ['90% within', fmtHours(w.p90)], ['Taken within 12 h', w.within[12] == null ? '—' : `${w.within[12]}%`],
+                ...WAIT_LABELS.map((l, i) => [l, w.buckets[i]]), ['Still waiting', w.open]]} />`, { tap: false })}
+                className="w-full grid grid-cols-[minmax(0,6.5rem)_3.25rem_1fr] sm:grid-cols-[minmax(0,10rem)_3.75rem_1fr] items-center gap-2 py-1 rounded-lg hover:bg-slate-800/40 text-left">
+                <span className="text-sm text-slate-200 truncate">${a.name}</span>
+                <span className="text-sm font-bold text-white tabular-nums text-right">${fmtHours(w.median)}</span>
+                <span className="flex items-center gap-2 min-w-0">
+                    <span className="flex-1 flex h-3.5 gap-0.5 min-w-0">${w.taken ? w.buckets.map((n, i) => n > 0 && html`<span key=${i} className="h-full first:rounded-l last:rounded-r" style=${{ flexGrow: n, flexBasis: 0, backgroundColor: WAIT_COLORS[i] }}></span>`)
+                        : html`<span className="text-[11px] text-slate-600">none taken yet</span>`}</span>
+                    ${w.open > 0 && html`<span className="shrink-0 text-[10px] font-bold text-amber-300 tabular-nums">+${w.open} waiting</span>`}
+                </span>
+            </button>
+        </li>`;
+    })}</ol>
+    <p className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500 mt-3">${WAIT_LABELS.map((l, i) => html`<span key=${l} className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style=${{ background: WAIT_COLORS[i] }}></span>${l}</span>`)}</p>`;
+}
+
 function AllianceStats() {
     const [days, setDays] = useState(30);
     const [data, setData] = useState(null);
@@ -1279,6 +1352,17 @@ function AllianceStats() {
                 <p className="text-[11px] text-slate-500">from ${plural(totals.buyers, 'buyer')}</p>
             </div>
         </div>
+
+        ${data.waits && html`<${VizCard} title="Wait times · all of Echo"
+            about=${`How long orders placed ${periodText(days)} waited until a seller first took them. Click an alliance for its own details.`}>
+            <div className="space-y-4">
+                <${WaitTiles} w=${data.waits} />
+                <div className="grid lg:grid-cols-2 gap-5">
+                    <div><p className="label text-slate-500 mb-2">How many waited how long</p><${WaitHistogram} w=${data.waits} bind=${bind} /></div>
+                    <div><p className="label text-slate-500 mb-2">By alliance · median, then the mix of waits</p><${WaitCompare} list=${list} bind=${bind} onPick=${setPicked} /></div>
+                </div>
+            </div>
+        <//>`}
 
         <${VizCard} title=${`Ranking · ${m.label}`} about=${m.about}>
             <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-3 px-3 md:mx-0 md:px-0 mb-3" role="group" aria-label="Rank by">
@@ -1400,7 +1484,7 @@ function AllianceDetailModal({ alliance: a, data, days, onClose }) {
     const [bind, tipNode] = useChartTip();
     const suppliers = data.trade.filter((c) => c.buyer === a.name).sort((x, y) => y.aircraft - x.aircraft);
     const tiles = [['Orders', a.orders], ['Aircraft', a.aircraft], ['Value', fmtUSDShort(a.value)], ['Buyers', a.buyers],
-        ['Price level', a.priceLevel == null ? '—' : `${a.priceLevel}%`], ['Median wait', fmtHours(a.waitHours)]];
+        ['Price level', a.priceLevel == null ? '—' : `${a.priceLevel}%`], ['Completed', `${pct(a.completed, a.orders)}%`]];
     const bars = (rows) => {
         const max = Math.max(1, ...rows.map((r) => r[1]));
         return html`<ul className="space-y-1.5">${rows.map(([label, n]) => html`<li key=${label} className="grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-2 text-xs">
@@ -1413,6 +1497,15 @@ function AllianceDetailModal({ alliance: a, data, days, onClose }) {
         <div className="space-y-5">
             <div className="grid grid-cols-3 gap-2 text-center">${tiles.map(([k, v]) => html`<div key=${k} className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
                 <p className="text-lg md:text-xl font-black text-white tabular-nums">${v}</p><p className="text-[10px] font-bold text-slate-500">${k}</p></div>`)}</div>
+            ${a.wait && html`<div className="space-y-3">
+                <p className="label text-slate-500">Wait until a seller took the order</p>
+                <${WaitTiles} w=${a.wait} />
+                <${WaitHistogram} w=${a.wait} bind=${bind} height="h-32" />
+                ${data.waits?.median != null && a.wait.median != null && html`<p className="text-[11px] text-slate-400">${a.wait.median > data.waits.median
+                    ? `Slower than Echo overall: median ${fmtHours(a.wait.median)} here vs ${fmtHours(data.waits.median)} across every alliance.`
+                    : a.wait.median < data.waits.median ? `Faster than Echo overall: median ${fmtHours(a.wait.median)} here vs ${fmtHours(data.waits.median)} across every alliance.`
+                    : `Same median as Echo overall (${fmtHours(a.wait.median)}).`}</p>`}
+            </div>`}
             <div>
                 <p className="label text-slate-500 mb-2">Orders per ${data.bucketDays === 1 ? 'day' : 'week'}</p>
                 <${MiniColumns} series=${a.series} max=${Math.max(1, ...a.series)} height="h-24" bind=${bind}

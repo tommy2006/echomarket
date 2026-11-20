@@ -809,6 +809,7 @@ export default {
  "Value": "Halaga",
  "Verified Sellers, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.": "Awtomatikong nakakapasok ang mga Verified Seller, Ambassador at Lead Ambassador dahil sa role nila sa Echo Discord server. Para maging Verified Seller, mag-apply sa Verified Seller application form. Kakakuha mo lang ng role? Suriin ulit.",
  "Wait": "Paghihintay",
+ "Wait times · all of Echo": "Tagal ng paghihintay · buong Echo",
  "Waiting": "Naghihintay",
  "Waiting for a seller": "Naghihintay ng nagbebenta",
  "Waiting for a seller to take it": "Naghihintay na kunin ng nagbebenta",

@@ -809,6 +809,7 @@ export default {
  "Value": "মূল্য",
  "Verified Sellers, Ambassadors and the Lead Ambassador get in automatically through their role on the Echo Discord server. To become a Verified Seller, apply through the Verified Seller application form. Got the role just now? Check again.": "Verified Seller, Ambassador ও Lead Ambassador-রা Echo Discord সার্ভারে তাদের রোলের মাধ্যমে স্বয়ংক্রিয়ভাবে প্রবেশ পান। Verified Seller হতে, Verified Seller আবেদন ফর্মের মাধ্যমে আবেদন করুন। এইমাত্র রোল পেয়েছেন? আবার যাচাই করুন।",
  "Wait": "অপেক্ষা",
+ "Wait times · all of Echo": "অপেক্ষার সময় · পুরো Echo",
  "Waiting": "অপেক্ষায়",
  "Waiting for a seller": "বিক্রেতার অপেক্ষায়",
  "Waiting for a seller to take it": "কোনো বিক্রেতা নেওয়ার অপেক্ষায়",
