@@ -3,6 +3,7 @@
 //   days      7, 30, 90 or 0 (= all time)
 //   sellerId  optional: one seller's details, plus every order they took in the period
 //   view      'alliances': alliance statistics instead (lib/alliance-stats.js), for every seller
+//             'coverage': admins only: which sellers have airlines in / sell to which division (lib/coverage.js)
 //             'cup': the Sellers' Cup (lib/cup.js) with live scores, for every seller (also moves it forward)
 //   action    admins only: 'cup-start' { name, roundDays, seedingDays, bracketSize, pairing, channelId },
 //             'cup-cancel' { reason }, 'cup-disqualify' { sellerId },
@@ -20,6 +21,7 @@
 //                 (a correction downwards counts as negative)
 //   saleValue     those aircraft × the order's average price per aircraft (exact for single-type orders)
 import { allianceStats } from '../../lib/alliance-stats.js';
+import { divisionCoverage } from '../../lib/coverage.js';
 import { sellerProfile } from '../../lib/profile.js';
 import { grantVacation, startVacation, endVacation, seenVacationNews, canGrantVacation, vacationView } from '../../lib/vacation.js';
 import { advanceCup, cupView, startCup, cancelCup, disqualify, eligibleSellers, PAIRINGS } from '../../lib/cup.js';
@@ -83,6 +85,7 @@ export default handler(['POST'], async (req, res) => {
     if (input.action === 'vacation-seen') return res.json(await seenVacationNews(account));
     if (!me.is_admin) throw new HttpError(403, 'Only admins can see seller performance or manage the Cup.');
     requireAdminTraining(me);
+    if (input.view === 'coverage') return res.json(await divisionCoverage(days));
     if (input.action === 'vacation-grant') return res.json(await grantVacation(account, me, input));
     if (input.action === 'cup-start') return res.json({ ok: true, cup: await startCup(account, input) });
     if (input.action === 'cup-cancel') return res.json({ ok: true, cup: await cancelCup(account, input.reason) });

@@ -875,7 +875,7 @@ const periodText = (days) => (days ? `in the last ${days} days` : 'all time');
 function PeriodPicker({ days, setDays }) {
     return html`<div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start">
         ${STAT_PERIODS.map(([d, label]) => html`<button key=${d} onClick=${() => setDays(d)} aria-pressed=${days === d}
-            className=${`px-3 py-1.5 rounded-full text-xs font-bold ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label}</button>`)}
+            className=${`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap ${days === d ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}>${label}</button>`)}
     </div>`;
 }
 
@@ -1645,14 +1645,145 @@ function CupAdmin({ userId }) {
 }
 
 // Admins' Sellers tab: the leaderboard, or the Cup.
+// Sellers → Divisions (admins): which sellers have airlines in which division (✈ in the cell), and how many
+// aircraft each seller delivered to each division (the cell's colour, one hue from faint to bright). The rows
+// above the sellers sum up each division: sellers available there, orders waiting, aircraft ordered, wait.
+// Divisions with no available seller, or only one or two, are flagged at the top so admins know where to recruit.
+const DIV_HEAT = HEAT;   // the Alliances tab's blue ramp: darker = fewer aircraft, brighter = more
+const divHeatText = (i) => (i >= 4 ? '#020617' : '#ffffff');
+const OWN_RING = 'inset 0 0 0 2px rgba(255,255,255,0.8)';   // cell outline: the seller has an airline there
+const DIV_THIN = 2;   // this many available sellers or fewer: short-handed
+
+function DivisionCoverage() {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState(null);
+    const [error, setError] = useState(null);
+    const [sortBy, setSortBy] = useState(null);   // null = total sold, or a division name
+    const [showOff, setShowOff] = useState(false);   // also switched-off sellers
+    useEffect(() => {
+        let gone = false;
+        setData(null); setError(null);
+        api('/api/admin/sellers', { view: 'coverage', days }).then((r) => { if (!gone) setData(r); }).catch((e) => { if (!gone) setError(e.message); });
+        return () => { gone = true; };
+    }, [days]);
+
+    const head = html`<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+            <h2 className="text-lg font-extrabold text-white">Division coverage</h2>
+            <p className="text-xs text-slate-500">Only admins can see this. ✈ = the seller has an airline in that division. Colour = aircraft they delivered to buyers there (${periodText(days)}).</p>
+        </div>
+        <div className="shrink-0"><${PeriodPicker} days=${days} setDays=${setDays} /></div>
+    </div>`;
+    if (error) return html`<section className="space-y-3">${head}<div className="card p-5 text-sm text-rose-300">${error}</div></section>`;
+    if (!data) return html`<section className="space-y-3">${head}<${EchoLoader} className="py-16" /></section>`;
+
+    const divs = data.divisions;
+    const sellers = data.sellers.filter((s) => showOff || s.active);
+    const hasAirline = (s, d) => (s.airlines[d] || []).length > 0;
+    // Who could take an order there today: active, not on vacation, with an airline in the division.
+    const available = (d) => data.sellers.filter((s) => s.active && !s.away && hasAirline(s, d));
+    const awayThere = (d) => data.sellers.filter((s) => s.active && s.away && hasAirline(s, d)).length;
+    const soldIn = (d) => sellers.reduce((n, s) => n + (s.sold[d] || 0), 0);
+    const max = Math.max(0, ...sellers.flatMap((s) => divs.map((d) => s.sold[d] || 0)));
+    const bin = (v) => (v > 0 && max > 0 ? Math.min(DIV_HEAT.length - 1, Math.ceil((v / max) * DIV_HEAT.length) - 1) : -1);
+    // Legend: the values each colour stands for (colour i: max·i/5 < v ≤ max·(i+1)/5).
+    const bounds = DIV_HEAT.map((_, i) => ({ i, lo: Math.floor((max * i) / DIV_HEAT.length) + 1, hi: Math.floor((max * (i + 1)) / DIV_HEAT.length) }))
+        .filter((x) => x.hi >= x.lo);
+    const sorted = [...sellers].sort((a, b) => sortBy
+        ? (b.sold[sortBy] || 0) - (a.sold[sortBy] || 0) || hasAirline(b, sortBy) - hasAirline(a, sortBy) || a.name.localeCompare(b.name)
+        : b.soldTotal - a.soldTotal || a.name.localeCompare(b.name));
+    const status = (d) => {
+        const n = available(d).length;
+        return n === 0 ? { tone: 'text-rose-300 bg-rose-500/10 border-rose-500/30', icon: 'octagon-alert', label: 'No sellers' }
+            : n <= DIV_THIN ? { tone: 'text-amber-300 bg-amber-500/10 border-amber-500/30', icon: 'triangle-alert', label: 'Thin' } : null;
+    };
+    // Short-handed divisions, the busiest first.
+    const short = divs.filter((d) => status(d)).map((d) => ({ d, n: available(d).length, ...data.demand[d] }))
+        .sort((a, b) => a.n - b.n || b.waiting - a.waiting || b.aircraft - a.aircraft);
+
+    const sumRow = (label, value, hint) => html`<tr className="text-[11px] text-slate-400">
+        <th scope="row" className="sticky left-0 z-10 bg-slate-950 text-left font-semibold px-3 py-1.5 whitespace-nowrap" title=${hint}>${label}</th>
+        ${divs.map((d) => html`<td key=${d} className="px-1 py-1.5 text-center tabular-nums">${value(d)}</td>`)}
+        <td className="px-2"></td></tr>`;
+
+    return html`<section className="space-y-3">
+        ${head}
+        ${short.length > 0 && html`<div className="card !rounded-2xl p-3 md:p-4 space-y-2 border-amber-500/30">
+            <p className="font-extrabold text-white flex items-center gap-2"><${Icon} name="triangle-alert" className="w-4 h-4 text-amber-300" />
+                Short of sellers in ${plural(short.length, 'division')}</p>
+            <ul className="flex flex-wrap gap-2">${short.map((x) => html`<li key=${x.d}>
+                <button onClick=${() => setSortBy(x.d)} className=${`text-left px-3 py-2 rounded-xl border text-xs ${status(x.d).tone}`}>
+                    <b className="text-white">${x.d}</b> · ${x.n === 0 ? 'no available seller' : plural(x.n, 'available seller')}
+                    <span className="block text-slate-400">${x.waiting} waiting now · ${plural(x.aircraft, 'aircraft')} ordered ${periodText(days)}</span>
+                </button></li>`)}</ul>
+            <p className="text-[11px] text-slate-500">Available = switched on, not on vacation, with an airline in that division. Click one to see who sells there most.</p>
+        </div>`}
+
+        <div className="card !rounded-2xl md:!rounded-3xl overflow-x-auto">
+            <table className="w-full border-separate" style=${{ borderSpacing: '2px' }}>
+                <thead><tr>
+                    <th scope="col" className="sticky left-0 z-10 bg-slate-950 text-left px-3 py-2">
+                        <button onClick=${() => setSortBy(null)} className=${`text-xs font-bold ${!sortBy ? 'text-white' : 'text-slate-400 hover:text-white'}`}>
+                            Seller ${!sortBy ? '↓' : ''}</button></th>
+                    ${divs.map((d) => { const st = status(d); return html`<th key=${d} scope="col" className="px-1 py-2 min-w-[3.25rem]">
+                        <button onClick=${() => setSortBy(d)} title=${`Sort by aircraft delivered to ${d}`}
+                            className=${`w-full text-[11px] font-black ${sortBy === d ? 'text-white' : 'text-slate-300 hover:text-white'}`}>
+                            ${d}${sortBy === d ? ' ↓' : ''}</button>
+                        ${st && html`<span className=${`mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[9px] font-black ${st.tone}`}>
+                            <${Icon} name=${st.icon} className="w-2.5 h-2.5" />${st.label}</span>`}</th>`; })}
+                    <th scope="col" className="px-2 py-2 text-[11px] font-black text-slate-300 text-right">Total</th>
+                </tr></thead>
+                <tbody>
+                    ${sumRow('Available sellers', (d) => { const n = available(d).length, a = awayThere(d);
+                        return html`<span className=${n === 0 ? 'text-rose-300 font-black' : n <= DIV_THIN ? 'text-amber-300 font-black' : 'text-slate-200 font-bold'}>${n}</span>${a ? html`<span className="text-slate-500" title="on vacation"> +${a}🏝</span>` : ''}`; },
+                        'Switched on, not on vacation, with an airline there (+ on vacation)')}
+                    ${sumRow('Waiting now', (d) => data.demand[d]?.waiting || '–', 'Orders in the open queue now')}
+                    ${sumRow(`Ordered · ${days ? days + 'd' : 'all'}`, (d) => data.demand[d]?.aircraft || '–', 'Aircraft ordered by buyers in this division in the period')}
+                    ${sumRow(`Delivered · ${days ? days + 'd' : 'all'}`, (d) => soldIn(d) || '–', 'Aircraft the sellers below delivered to this division in the period')}
+                    ${sumRow('Median wait', (d) => data.demand[d]?.waitHours == null ? '–' : fmtDuration(data.demand[d].waitHours * 36e5), 'Median time until a seller took an order (period)')}
+                    <tr><td colSpan=${divs.length + 2} className="h-2"></td></tr>
+                    ${sorted.map((s) => html`<tr key=${s.id}>
+                        <th scope="row" className="sticky left-0 z-10 bg-slate-950 text-left px-3 py-1 font-semibold">
+                            <span className="flex items-center gap-2 min-w-0 max-w-[11rem]">
+                                <span className="truncate text-sm text-white">${s.name}</span>
+                                ${s.away && html`<span title="On vacation">🏝</span>`}
+                                ${!s.active && html`<span className="text-[9px] font-black text-slate-500">OFF</span>`}
+                            </span></th>
+                        ${divs.map((d) => {
+                            const v = s.sold[d] || 0, b = bin(v), own = s.airlines[d] || [];
+                            const tip = `${s.name} · ${d}\n${own.length ? `Airlines: ${own.join(', ')}` : 'No airline here'}\n${v ? `${plural(v, 'aircraft')} delivered on ${plural(s.orders[d], 'order')}` : 'Nothing delivered here'} (${periodText(days)})`;
+                            return html`<td key=${d} title=${tip}
+                                className=${`relative h-9 rounded-md text-center text-xs font-black tabular-nums ${b < 0 ? (own.length ? 'bg-slate-800/70' : 'bg-slate-900/60') : ''}`}
+                                style=${{ ...(b >= 0 ? { background: DIV_HEAT[b], color: divHeatText(b) } : {}), ...(own.length ? { boxShadow: OWN_RING } : {}) }}>
+                                ${own.length > 0 && html`<${Icon} name="plane" className=${`absolute top-1 left-1 w-3 h-3 ${b >= 4 ? 'text-slate-900' : 'text-white'}`} />`}
+                                ${v > 0 ? v : own.length ? html`<span className="text-slate-500 font-semibold">0</span>` : ''}
+                            </td>`; })}
+                        <td className="px-2 text-right text-sm font-black text-white tabular-nums">${s.soldTotal || html`<span className="text-slate-600">0</span>`}</td>
+                    </tr>`)}
+                </tbody>
+            </table>
+            ${!sorted.length && html`<p className="p-5 text-sm text-slate-400">No sellers on the list yet.</p>`}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1.5"><span className="relative w-6 h-6 rounded bg-slate-800/70" style=${{ boxShadow: OWN_RING }}><${Icon} name="plane" className="absolute top-1 left-1 w-3 h-3 text-white" /></span> has an airline there</span>
+            <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-slate-900/60"></span> no airline</span>
+            ${max > 0 && html`<span className="flex items-center gap-1">Aircraft delivered
+                ${bounds.map(({ i, lo, hi }) => html`<span key=${i} className="px-1.5 py-0.5 rounded font-black tabular-nums" style=${{ background: DIV_HEAT[i], color: divHeatText(i) }}>${lo === hi ? lo : `${lo}–${hi}`}</span>`)}</span>`}
+            <label className="flex items-center gap-1.5 cursor-pointer ml-auto"><input type="checkbox" className="pick-box !w-4 !h-4" checked=${showOff} onChange=${(e) => setShowOff(e.target.checked)} /> Show switched-off sellers</label>
+        </div>
+        <p className="text-[11px] text-slate-500">A seller's delivered aircraft count for the buyer's airline in the seller's own division when the buyer has one there, otherwise for the division the order was placed in. Orders placed ${periodText(days)}${data.statsSince ? `, since the launch reset (${fmtDate(data.statsSince)})` : ''}.</p>
+    </section>`;
+}
+
 function SellersTab({ userId, onOpenOrder }) {
     const [part, setPart] = useState('leaderboard');
     return html`<section className="space-y-3">
         <div className="flex p-1 rounded-full bg-slate-900 border border-slate-800 self-start w-max">
-            ${[['leaderboard', 'Leaderboard', 'trophy'], ['cup', "Sellers' Cup", 'swords']].map(([k, label, icon]) => html`<button key=${k} onClick=${() => setPart(k)} aria-pressed=${part === k}
+            ${[['leaderboard', 'Leaderboard', 'trophy'], ['divisions', 'Divisions', 'layout-grid'], ['cup', "Sellers' Cup", 'swords']].map(([k, label, icon]) => html`<button key=${k} onClick=${() => setPart(k)} aria-pressed=${part === k}
                 className=${`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${part === k ? 'bg-white text-slate-950' : 'text-slate-400 hover:text-white'}`}><${Icon} name=${icon} className="w-3.5 h-3.5" />${label}</button>`)}
         </div>
-        ${part === 'cup' ? html`<${CupAdmin} userId=${userId} />` : html`<${SellerStats} userId=${userId} onOpenOrder=${onOpenOrder} />`}
+        ${part === 'cup' ? html`<${CupAdmin} userId=${userId} />` : part === 'divisions' ? html`<${DivisionCoverage} />` : html`<${SellerStats} userId=${userId} onOpenOrder=${onOpenOrder} />`}
     </section>`;
 }
 
