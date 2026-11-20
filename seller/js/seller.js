@@ -1724,14 +1724,15 @@ function DivisionCoverage() {
         </div>`}
 
         <div className="card !rounded-2xl md:!rounded-3xl overflow-x-auto">
-            <table className="w-full border-separate" style=${{ borderSpacing: '2px' }}>
+            <table className="w-full border-separate" style=${{ borderSpacing: '2px', tableLayout: 'fixed', minWidth: `${11 + divs.length * 4.25 + 4}rem` }}>
+                <colgroup><col style=${{ width: '11rem' }} />${divs.map((d) => html`<col key=${d} />`)}<col style=${{ width: '4rem' }} /></colgroup>
                 <thead><tr>
                     <th scope="col" className="sticky left-0 z-10 bg-slate-950 text-left px-3 py-2">
                         <button onClick=${() => setSortBy(null)} className=${`text-xs font-bold ${!sortBy ? 'text-white' : 'text-slate-400 hover:text-white'}`}>
                             Seller ${!sortBy ? '↓' : ''}</button></th>
                     ${divs.map((d) => { const st = status(d); return html`<th key=${d} scope="col" className="px-1 py-2 min-w-[3.25rem]">
                         <button onClick=${() => setSortBy(d)} title=${`Sort by aircraft delivered to ${d}`}
-                            className=${`w-full text-[11px] font-black ${sortBy === d ? 'text-white' : 'text-slate-300 hover:text-white'}`}>
+                            className=${`w-full truncate text-[11px] font-black ${sortBy === d ? 'text-white' : 'text-slate-300 hover:text-white'}`}>
                             ${d}${sortBy === d ? ' ↓' : ''}</button>
                         ${st && html`<span className=${`mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[9px] font-black ${st.tone}`}>
                             <${Icon} name=${st.icon} className="w-2.5 h-2.5" />${st.label}</span>`}</th>`; })}
@@ -1811,7 +1812,7 @@ function SellerGreeting({ account, now, open, mine, unreadOrders = 0, onShowUnre
     </section>`;
 }
 
-// Profile picture → small menu. The top of it (picture, name, rank) opens the seller's profile. Signing out sits
+// Profile picture → small menu. The top shows who is signed in ("My profile" below opens the profile). Signing out sits
 // beside the rank and still asks first, so it can't happen by accident.
 function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour, onProfile }) {
     const [open, setOpen] = useState(false);
@@ -1828,15 +1829,13 @@ function AccountMenu({ account, seller, airlines, sellAs, onSellAs, onTour, onPr
         ${open && html`<div className="fixed inset-0 z-40" onClick=${() => setOpen(false)}></div>
         <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-pop">
             <div className="border-b border-slate-800 mb-1 pb-1">
-                <button onClick=${() => { setOpen(false); onProfile?.(); }} title=${t('Open my seller profile')}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-800/70 group">
+                <div className="w-full flex items-center gap-3 px-3 py-2.5">
                     <${Avatar} account=${account} size="w-10 h-10" />
                     <span className="min-w-0 flex-1">
                         <span className="block font-bold text-sm text-white truncate">${account?.display_name || account?.discord_username || t('Signed in')}</span>
                         <span className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5"><${DiscordLogo} className="w-3.5 h-3.5" /> ${account?.discord_username || 'Discord'}</span>
                     </span>
-                    <${Icon} name="chevron-right" className="w-4 h-4 text-slate-500 group-hover:text-white shrink-0" />
-                </button>
+                </div>
                 <div className="flex items-center justify-between gap-2 px-3 pb-2">
                     <${RankBadge} rank=${rankOf(seller)} admin=${seller?.is_admin} />
                     <button onClick=${signOut} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold text-rose-300 hover:bg-rose-500/10 border border-rose-500/20">
@@ -2960,7 +2959,7 @@ function OrderRow({ order, flag, userId, airlines, seller, actions, onOpen, pass
                     <${WaitChip} order=${order} now=${now} />
                     ${unread > 0 && html`<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-sky-400 text-slate-950">
                         <${Icon} name="message-circle" className="w-3 h-3" />${unread === 1 ? t('1 NEW MESSAGE') : t('{n} NEW MESSAGES', { n: unread })}</span>`}
-                    <span className="text-[11px] text-slate-500" title=${fmtDate(order.created_at)}>${t('ordered {time}', { time: timeAgo(order.created_at) })}</span>
+                    ${order.status === 'PENDING' && order.filled > 0 && html`<span className="text-[11px] font-semibold text-amber-300" title=${fmtDate(order.created_at)}>${t('initially ordered {time}', { time: timeAgo(order.created_at) })}</span>`}
                 </div>
                 <p className="font-extrabold text-white truncate"><${BuyerLink} order=${order} onBuyer=${onBuyer} /> <span className="text-slate-500 font-semibold text-sm">· ${orderAlliances(order).join(', ')} · ${order.buyer_name}</span></p>
                 <p className="text-xs text-slate-400 truncate">${itemsSummary(order, true)}</p>

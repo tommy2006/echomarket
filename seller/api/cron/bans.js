@@ -2,13 +2,16 @@
 // from everyone whose market ban ended in the last 3 days (people who come back to the market get it
 // removed right away anyway). Also DMs Market Admins about sellers who haven't delivered for 5 days
 // (lib/activity.js), moves the Sellers' Cup forward (lib/cup.js), in case nobody opened the desk, and brings the
-// Vacation / Order Pings roles and vacation-hidden order channels in step for every seller (lib/discord-sync.js). Vercel sends "Authorization: Bearer <CRON_SECRET>"; without CRON_SECRET
+// Vacation / Order Pings roles and vacation-hidden order channels in step for every seller (lib/discord-sync.js), and
+// DMs sellers about orders waiting 12+ hours in their divisions (lib/wait-reminders.js). Runs twice a day (two
+// entries in vercel.json; everything here is safe to run twice: each step only acts on what changed). Vercel sends "Authorization: Bearer <CRON_SECRET>"; without CRON_SECRET
 // set in this project, nothing runs.
 import { admin, handler, endLapsedBanRole, logModeration, HttpError } from '../../lib/server.js';
 import { timingSafeEqual } from 'crypto';
 import { advanceCup } from '../../lib/cup.js';
 import { activityAlerts } from '../../lib/activity.js';
 import { syncAllSellers } from '../../lib/discord-sync.js';
+import { waitReminders } from '../../lib/wait-reminders.js';
 
 export default handler(['GET'], async (req, res) => {
     const secret = process.env.CRON_SECRET || '';
@@ -31,7 +34,11 @@ export default handler(['GET'], async (req, res) => {
     try { cup = (await advanceCup())?.status || null; } catch (err) { console.error('cup advance failed:', err.message); }
     let activity = null;
     try { activity = await activityAlerts(); } catch (err) { console.error('activity alerts failed:', err.message); }
+    let reminders = null;
+    try { reminders = await waitReminders({ now }); } catch (err) { console.error('wait reminders failed:', err.message); }
+    // The role sync gets what is left of the function's 60 seconds (unfinished sellers are done on the next run).
     let discord = null;
-    try { discord = await syncAllSellers(); } catch (err) { console.error('discord sync failed:', err.message); }
-    res.json({ ok: true, checked: (ended || []).length, removed, cup, activity, discord });
+    const budgetMs = Math.max(10e3, 50e3 - (Date.now() - now));
+    try { discord = await syncAllSellers({ budgetMs }); } catch (err) { console.error('discord sync failed:', err.message); }
+    res.json({ ok: true, checked: (ended || []).length, removed, cup, activity, reminders, discord });
 });
