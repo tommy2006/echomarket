@@ -788,9 +788,8 @@ function App() {
         ${bulkClaim && html`<${BulkClaimModal} orders=${bulkClaim.orders} airlines=${airlines} sellAs=${sellAs} bulk=${bulk}
             caution=${bulkClaim.orders.filter((o) => alerts[o.id]).length} more=${bulkClaim.more}
             onClose=${() => !bulk && setBulkClaim(null)}
-            onConfirm=${async (airlineId) => {
-                setSellAsId(airlineId);
-                const r = await runBulk('claim', bulkClaim.orders, () => ({ action: 'claim', airlineId }));
+            onConfirm=${async (assign) => {
+                const r = await runBulk('claim', bulkClaim.orders, (o) => ({ action: 'claim', airlineId: assign[o.id] }));
                 setBulkClaim(null);
                 await bulkReport(r, (done) => t('You took {count}. The buyers have been notified.', { count: plural(done.length, 'order') }));
                 if (r.done.length) setTab('mine');
@@ -3511,35 +3510,73 @@ function PageSizeBar({ total, shown, pageSize, setPageSize, compact = false, nou
     </div>`;
 }
 
-// Take many open orders at once, all as one airline.
+// Take many open orders at once. Each order is sold as the seller's airline in that order's alliance (the buyer's
+// first airline's alliance first, then their other airlines'); with several airlines in that alliance, the one in
+// "Selling as" wins. Orders in alliances where the seller has no airline use a fallback airline the seller picks, and
+// taking them needs an extra confirmation. Every order's airline can still be changed in its row.
+const matchAirline = (order, airlines, sellAs) => {
+    const divs = orderAlliances(order);
+    const fits = airlines.filter((a) => divs.includes(a.alliance))
+        .sort((x, y) => divs.indexOf(x.alliance) - divs.indexOf(y.alliance) || (y.id === sellAs?.id) - (x.id === sellAs?.id));
+    return fits[0] || null;
+};
 function BulkClaimModal({ orders, airlines, sellAs, bulk, caution = 0, more = 0, onClose, onConfirm }) {
-    const sameCount = (a) => orders.filter((o) => orderAlliances(o).includes(a.alliance)).length;
-    const sorted = [...airlines].sort((a, b) => sameCount(b) - sameCount(a));
-    const [airlineId, setAirlineId] = useState(() => (sellAs && sameCount(sellAs) >= sameCount(sorted[0]) ? sellAs : sorted[0])?.id);
-    const chosen = airlines.find((a) => a.id === airlineId);
+    const auto = useMemo(() => Object.fromEntries(orders.map((o) => [o.id, matchAirline(o, airlines, sellAs)?.id || null])), [orders, airlines, sellAs]);
+    const [fallbackId, setFallbackId] = useState(() => (sellAs || airlines[0])?.id);
+    const [picked, setPicked] = useState({});   // order id -> airline id the seller chose in the row
+    const airlineFor = (o) => picked[o.id] || auto[o.id] || fallbackId;
+    const byId = new Map(airlines.map((a) => [a.id, a]));
+    const fits = (o, id) => orderAlliances(o).includes(byId.get(id)?.alliance);
+    const unmatched = orders.filter((o) => !fits(o, airlineFor(o)));
+    const needFallback = orders.some((o) => !picked[o.id] && !auto[o.id]);
     const aircraft = orders.reduce((n, o) => n + o.total_qty - o.filled, 0);
     const value = orders.reduce((n, o) => n + Number(o.total_usd || 0), 0);
-    const other = chosen ? orders.length - sameCount(chosen) : 0;
-    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Take {count}', { count: plural(orders.length, 'order') })} size="sm"
+    const go = async () => {
+        if (unmatched.length) {
+            const lines = unmatched.slice(0, 12).map((o) => { const a = byId.get(airlineFor(o));
+                return `${orderRef(o)} (${orderAlliances(o).join(', ') || '?'}) → ${a.name} (${a.alliance})`; });
+            if (unmatched.length > 12) lines.push('…');
+            const ok = await ask({
+                title: t('Take {count} without an airline in their alliance?', { count: plural(unmatched.length, 'order') }),
+                message: t('You have no airline in the alliance of these orders, so they will be sold as an airline from another alliance. Make sure you can still deliver to these buyers.') + '\n\n' + lines.join('\n'),
+                confirmLabel: t('Take them anyway')
+            });
+            if (!ok) return;
+        }
+        onConfirm(Object.fromEntries(orders.map((o) => [o.id, airlineFor(o)])));
+    };
+    return html`<${Modal} open=${true} onClose=${onClose} title=${t('Take {count}', { count: plural(orders.length, 'order') })} size="md"
         subtitle=${`${plural(aircraft, 'aircraft')} · ${fmtUSDShort(value)}`}
         footer=${html`<${Button} variant="ghost" disabled=${Boolean(bulk)} onClick=${onClose}>${t('Cancel')}<//>
-            <${Button} icon="hand" busy=${Boolean(bulk)} disabled=${!chosen} onClick=${() => onConfirm(airlineId)}>${bulk ? t('Taking {done} of {total}…', bulk) : t('Take {count}', { count: plural(orders.length, 'order') })}<//>`}>
+            <${Button} icon="hand" busy=${Boolean(bulk)} disabled=${!airlines.length} onClick=${go}>${bulk ? t('Taking {done} of {total}…', bulk) : t('Take {count}', { count: plural(orders.length, 'order') })}<//>`}>
         ${caution > 0 && html`<p className="text-sm text-pink-100 mb-4 p-3 rounded-2xl border border-pink-400/50 bg-pink-400/10 flex gap-2"><${Icon} name="eye" className="w-4 h-4 mt-0.5 text-pink-300 shrink-0" />${t('{count} from buyers on the alert list. Be cautious and check with the admins if necessary.', { count: plural(caution, 'order') })}</p>`}
-        <ul className="mb-4 max-h-40 overflow-y-auto space-y-1 text-xs text-slate-400 p-2 rounded-xl bg-slate-950 border border-slate-800">
-            ${orders.map((o) => html`<li key=${o.id} className="flex justify-between gap-2"><span className="truncate"><b className="text-slate-200">${orderRef(o)}</b> · ${o.buyer_name} · ${plural(o.total_qty - o.filled, 'aircraft')}</span><span className="shrink-0">${fmtUSDShort(o.total_usd)}</span></li>`)}
-        </ul>
         ${more > 0 && html`<p className="text-xs text-amber-300 mb-3">${t('Only the first {n} are done in one go. Run it again for the rest.', { n: orders.length })}</p>`}
-        <p className="field-label">${t('Sell all of them as airline')}</p>
-        <div className="space-y-1.5">
-            ${sorted.map((a) => html`<button key=${a.id} disabled=${Boolean(bulk)} onClick=${() => setAirlineId(a.id)}
-                className=${`w-full flex items-center justify-between p-3 rounded-xl border text-left ${airlineId === a.id ? 'border-sky-400 bg-sky-400/10' : 'border-slate-800 hover:border-slate-600'}`}>
-                <span><span className="font-bold text-white">${a.name}</span> <span className="text-xs text-slate-400">${a.alliance}</span>
-                    ${sameCount(a) > 0 && html`<span className="ml-2 text-[10px] font-black text-emerald-300">${t('SAME ALLIANCE: {n} OF {total}', { n: sameCount(a), total: orders.length })}</span>`}</span>
-                ${airlineId === a.id && html`<${Icon} name="check" className="w-4 h-4 text-sky-300" />`}
-            </button>`)}
-        </div>
-        ${other > 0 && html`<p className="text-xs text-amber-300 mt-4 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px shrink-0" />
-            ${t("{count} are from buyers not in {alliance}. You can still take them.", { count: plural(other, 'order'), alliance: chosen.alliance })}</p>`}
+        <p className="field-label">${t('Each order is sold as your airline in its alliance')}</p>
+        <ul className="max-h-72 overflow-y-auto overflow-x-hidden space-y-1.5">
+            ${orders.map((o) => { const id = airlineFor(o), ok = fits(o, id);
+                return html`<li key=${o.id} className=${`p-2.5 rounded-xl border text-xs ${ok ? 'border-slate-800 bg-slate-950' : 'border-amber-500/40 bg-amber-500/5'}`}>
+                    <div className="flex justify-between gap-2">
+                        <span className="min-w-0 truncate"><b className="text-slate-200">${orderRef(o)}</b> · ${o.buyer_name} · <span className="text-slate-300">${orderAlliances(o).join(' / ')}</span></span>
+                        <span className="shrink-0 text-slate-400">${plural(o.total_qty - o.filled, 'aircraft')} · ${fmtUSDShort(o.total_usd)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5">
+                        <${Icon} name=${ok ? 'plane' : 'triangle-alert'} className=${`w-3.5 h-3.5 shrink-0 ${ok ? 'text-emerald-300' : 'text-amber-300'}`} />
+                        <select value=${id || ''} disabled=${Boolean(bulk)} onChange=${(e) => setPicked((p) => ({ ...p, [o.id]: e.target.value }))}
+                            aria-label=${t('Sell {ref} as', { ref: orderRef(o) })} className="input !py-1 !px-2 min-w-0 flex-1 text-xs">
+                            ${airlines.map((a) => html`<option key=${a.id} value=${a.id}>${a.name} · ${a.alliance}${orderAlliances(o).includes(a.alliance) ? ' ✓' : ''}</option>`)}
+                        </select>
+                    </div>
+                    ${!ok && html`<p className="mt-1 text-[10px] font-black text-amber-300">${t('NO AIRLINE IN {alliance}', { alliance: orderAlliances(o).join(' / ') || '?' })}</p>`}
+                </li>`; })}
+        </ul>
+        ${needFallback && html`<div className="mt-4">
+            <p className="field-label">${t('Where you have no airline in the alliance, sell as')}</p>
+            <select value=${fallbackId} disabled=${Boolean(bulk)} onChange=${(e) => setFallbackId(e.target.value)} className="input text-sm">
+                ${airlines.map((a) => html`<option key=${a.id} value=${a.id}>${a.name} · ${a.alliance}</option>`)}
+            </select>
+        </div>`}
+        ${unmatched.length > 0 && html`<p className="text-xs text-amber-300 mt-3 flex gap-1.5"><${Icon} name="triangle-alert" className="w-3.5 h-3.5 mt-px shrink-0" />
+            ${t('{count} in alliances where you have no airline. You will be asked to confirm before they are taken.', { count: plural(unmatched.length, 'order') })}</p>`}
         <p className="text-xs text-slate-400 mt-4">${t('Each buyer is notified right away. Only take what you can deliver.')}</p>
     <//>`;
 }
