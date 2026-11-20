@@ -1648,18 +1648,20 @@ function CupAdmin({ userId }) {
 // Sellers → Divisions (admins): which sellers have airlines in which division (✈ in the cell), and how many
 // aircraft each seller delivered to each division (the cell's colour, one hue from faint to bright). The rows
 // above the sellers sum up each division: sellers available there, orders waiting, aircraft ordered, wait.
-// Divisions with no available seller, or only one or two, are flagged at the top so admins know where to recruit.
+// Divisions with no active seller, or only one or two, are flagged at the top so admins know where to recruit.
+// Active = counted (switched on, a seller rank, not Unranked), not on vacation and not quiet (no delivery for
+// QUIET_DAYS days: the same rule as the activity alerts, lib/activity.js). Worked out on the server (status).
 const DIV_HEAT = HEAT;   // the Alliances tab's blue ramp: darker = fewer aircraft, brighter = more
 const divHeatText = (i) => (i >= 4 ? '#020617' : '#ffffff');
 const OWN_RING = 'inset 0 0 0 2px rgba(255,255,255,0.8)';   // cell outline: the seller has an airline there
-const DIV_THIN = 2;   // this many available sellers or fewer: short-handed
+const DIV_THIN = 2;   // this many active sellers or fewer: short-handed
 
 function DivisionCoverage() {
     const [days, setDays] = useState(30);
     const [data, setData] = useState(null);
     const [error, setError] = useState(null);
     const [sortBy, setSortBy] = useState(null);   // null = total sold, or a division name
-    const [showOff, setShowOff] = useState(false);   // also switched-off sellers
+    const [showOff, setShowOff] = useState(false);   // also sellers who don't count (switched off, Unranked, tech admins)
     useEffect(() => {
         let gone = false;
         setData(null); setError(null);
@@ -1678,11 +1680,13 @@ function DivisionCoverage() {
     if (!data) return html`<section className="space-y-3">${head}<${EchoLoader} className="py-16" /></section>`;
 
     const divs = data.divisions;
-    const sellers = data.sellers.filter((s) => showOff || s.active);
+    const sellers = data.sellers.filter((s) => showOff || s.status !== 'off');
+    const offCount = data.sellers.filter((s) => s.status === 'off').length;
     const hasAirline = (s, d) => (s.airlines[d] || []).length > 0;
     // Who could take an order there today: active, not on vacation, with an airline in the division.
-    const available = (d) => data.sellers.filter((s) => s.active && !s.away && hasAirline(s, d));
-    const awayThere = (d) => data.sellers.filter((s) => s.active && s.away && hasAirline(s, d)).length;
+    const available = (d) => data.sellers.filter((s) => s.status === 'active' && hasAirline(s, d));
+    const countThere = (d, st) => data.sellers.filter((s) => s.status === st && hasAirline(s, d)).length;
+    const activeText = (n) => (n === 0 ? 'no active seller' : `${n} active seller${n === 1 ? '' : 's'}`);
     const soldIn = (d) => sellers.reduce((n, s) => n + (s.sold[d] || 0), 0);
     const max = Math.max(0, ...sellers.flatMap((s) => divs.map((d) => s.sold[d] || 0)));
     const bin = (v) => (v > 0 && max > 0 ? Math.min(DIV_HEAT.length - 1, Math.ceil((v / max) * DIV_HEAT.length) - 1) : -1);
@@ -1698,7 +1702,7 @@ function DivisionCoverage() {
             : n <= DIV_THIN ? { tone: 'text-amber-300 bg-amber-500/10 border-amber-500/30', icon: 'triangle-alert', label: 'Thin' } : null;
     };
     // Short-handed divisions, the busiest first.
-    const short = divs.filter((d) => status(d)).map((d) => ({ d, n: available(d).length, ...data.demand[d] }))
+    const short = divs.filter((d) => status(d)).map((d) => ({ d, n: available(d).length, quiet: countThere(d, 'quiet'), away: countThere(d, 'away'), ...data.demand[d] }))
         .sort((a, b) => a.n - b.n || b.waiting - a.waiting || b.aircraft - a.aircraft);
 
     const sumRow = (label, value, hint) => html`<tr className="text-[11px] text-slate-400">
@@ -1713,10 +1717,10 @@ function DivisionCoverage() {
                 Short of sellers in ${plural(short.length, 'division')}</p>
             <ul className="flex flex-wrap gap-2">${short.map((x) => html`<li key=${x.d}>
                 <button onClick=${() => setSortBy(x.d)} className=${`text-left px-3 py-2 rounded-xl border text-xs ${status(x.d).tone}`}>
-                    <b className="text-white">${x.d}</b> · ${x.n === 0 ? 'no available seller' : plural(x.n, 'available seller')}
+                    <b className="text-white">${x.d}</b> · ${activeText(x.n)}${x.quiet ? ` · ${x.quiet} quiet` : ''}${x.away ? ` · ${x.away} on vacation` : ''}
                     <span className="block text-slate-400">${x.waiting} waiting now · ${plural(x.aircraft, 'aircraft')} ordered ${periodText(days)}</span>
                 </button></li>`)}</ul>
-            <p className="text-[11px] text-slate-500">Available = switched on, not on vacation, with an airline in that division. Click one to see who sells there most.</p>
+            <p className="text-[11px] text-slate-500">Active = has an airline in that division, delivered in the last ${data.quietDays} days (or joined less than ${data.quietDays} days ago), not on vacation. Unranked sellers (resigned, tech admins) never count. Click one to see who sells there most.</p>
         </div>`}
 
         <div className="card !rounded-2xl md:!rounded-3xl overflow-x-auto">
@@ -1734,9 +1738,9 @@ function DivisionCoverage() {
                     <th scope="col" className="px-2 py-2 text-[11px] font-black text-slate-300 text-right">Total</th>
                 </tr></thead>
                 <tbody>
-                    ${sumRow('Available sellers', (d) => { const n = available(d).length, a = awayThere(d);
-                        return html`<span className=${n === 0 ? 'text-rose-300 font-black' : n <= DIV_THIN ? 'text-amber-300 font-black' : 'text-slate-200 font-bold'}>${n}</span>${a ? html`<span className="text-slate-500" title="on vacation"> +${a}🏝</span>` : ''}`; },
-                        'Switched on, not on vacation, with an airline there (+ on vacation)')}
+                    ${sumRow('Active sellers', (d) => { const n = available(d).length, q = countThere(d, 'quiet'), a = countThere(d, 'away');
+                        return html`<span className=${n === 0 ? 'text-rose-300 font-black' : n <= DIV_THIN ? 'text-amber-300 font-black' : 'text-slate-200 font-bold'}>${n}</span>${q ? html`<span className="text-slate-500" title=${`${q} quiet: no delivery for ${data.quietDays}+ days`}> +${q}💤</span>` : ''}${a ? html`<span className="text-slate-500" title=${`${a} on vacation`}> +${a}🏝</span>` : ''}`; },
+                        `With an airline there, delivered in the last ${data.quietDays} days, not on vacation (+ quiet 💤, + on vacation 🏝)`)}
                     ${sumRow('Waiting now', (d) => data.demand[d]?.waiting || '–', 'Orders in the open queue now')}
                     ${sumRow(`Ordered · ${days ? days + 'd' : 'all'}`, (d) => data.demand[d]?.aircraft || '–', 'Aircraft ordered by buyers in this division in the period')}
                     ${sumRow(`Delivered · ${days ? days + 'd' : 'all'}`, (d) => soldIn(d) || '–', 'Aircraft the sellers below delivered to this division in the period')}
@@ -1746,8 +1750,9 @@ function DivisionCoverage() {
                         <th scope="row" className="sticky left-0 z-10 bg-slate-950 text-left px-3 py-1 font-semibold">
                             <span className="flex items-center gap-2 min-w-0 max-w-[11rem]">
                                 <span className="truncate text-sm text-white">${s.name}</span>
-                                ${s.away && html`<span title="On vacation">🏝</span>`}
-                                ${!s.active && html`<span className="text-[9px] font-black text-slate-500">OFF</span>`}
+                                ${s.status === 'away' && html`<span title="On vacation">🏝</span>`}
+                                ${s.status === 'quiet' && html`<span title=${`Quiet: no delivery for ${s.quietDays} days${s.lastDelivery ? ` (last ${fmtDate(s.lastDelivery)})` : ''}`}>💤</span>`}
+                                ${s.status === 'off' && html`<span className="text-[9px] font-black text-slate-500" title=${s.switchedOff ? 'Switched off' : s.unranked ? 'Unranked (resigned or tech admin)' : 'Not a seller rank (tech-only admin)'}>${s.unranked ? 'UNRANKED' : 'OFF'}</span>`}
                             </span></th>
                         ${divs.map((d) => {
                             const v = s.sold[d] || 0, b = bin(v), own = s.airlines[d] || [];
@@ -1770,7 +1775,7 @@ function DivisionCoverage() {
             <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-slate-900/60"></span> no airline</span>
             ${max > 0 && html`<span className="flex items-center gap-1">Aircraft delivered
                 ${bounds.map(({ i, lo, hi }) => html`<span key=${i} className="px-1.5 py-0.5 rounded font-black tabular-nums" style=${{ background: DIV_HEAT[i], color: divHeatText(i) }}>${lo === hi ? lo : `${lo}–${hi}`}</span>`)}</span>`}
-            <label className="flex items-center gap-1.5 cursor-pointer ml-auto"><input type="checkbox" className="pick-box !w-4 !h-4" checked=${showOff} onChange=${(e) => setShowOff(e.target.checked)} /> Show switched-off sellers</label>
+            <label className="flex items-center gap-1.5 cursor-pointer ml-auto"><input type="checkbox" className="pick-box !w-4 !h-4" checked=${showOff} onChange=${(e) => setShowOff(e.target.checked)} /> Show sellers who don't count (${offCount}: Unranked, tech admins, switched off)</label>
         </div>
         <p className="text-[11px] text-slate-500">A seller's delivered aircraft count for the buyer's airline in the seller's own division when the buyer has one there, otherwise for the division the order was placed in. Orders placed ${periodText(days)}${data.statsSince ? `, since the launch reset (${fmtDate(data.statsSince)})` : ''}.</p>
     </section>`;

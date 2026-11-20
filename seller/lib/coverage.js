@@ -7,13 +7,18 @@
 //                airlines  division → their airline names there
 //                sold      division → aircraft they delivered to buyers in that division (orders placed in the period)
 //                orders    division → orders they delivered on there
-//              away (on vacation), unranked, active
+//              status  'active'  counted and delivering: what "Active sellers" counts per division
+//                      'quiet'   counted, but no delivery for QUIET_DAYS days (the same rule as the activity alerts)
+//                      'away'    counted, on vacation
+//                      'off'     not counted: switched off, Unranked (resigned, tech admins) or a tech-only admin
+//              quietDays, lastDelivery (quiet sellers)
 //   demand     per division: orders placed and aircraft ordered in the period, orders waiting now, aircraft still
 //              to deliver on active orders, median hours until a seller took an order (period)
 //
 // "Sold to a division": each seller's delivered aircraft on an order (deliveryShares) go to the buyer's airline in
 // the seller's own division when the buyer has one there, otherwise to the order's division (orders.alliance).
 import { admin, deliveryShares, orderAirlines, accountName, canSell, onVacation, getSetting } from './server.js';
+import { quietSellers, isCountedSeller, QUIET_DAYS } from './activity.js';
 
 const PAGE = 1000;
 async function all(query) {
@@ -61,11 +66,15 @@ export async function divisionCoverage(days) {
     const addDivision = (d) => { if (d && !known.has(d)) { known.add(d); names.push(d); } };
     const accountOf = new Map((accounts || []).map((a) => [a.id, a]));
 
+    const { quiet } = await quietSellers(sellerRows.filter((s) => s.active !== false), { db, resetAt });
     const rows = new Map(sellerRows.map((s) => {
         const a = accountOf.get(s.user_id);
+        const q = quiet.get(s.user_id);
+        const status = !isCountedSeller(s) ? 'off' : onVacation(s) ? 'away' : q ? 'quiet' : 'active';
         return [s.user_id, {
             id: s.user_id, name: a ? accountName(a) : 'Unknown account', avatarUrl: a?.avatar_url || null,
-            rank: s.rank, active: s.active !== false, unranked: Boolean(s.unranked), away: onVacation(s),
+            rank: s.rank, status, unranked: Boolean(s.unranked), switchedOff: s.active === false,
+            quietDays: q ? Math.floor(q.quietMs / 864e5) : null, lastDelivery: q?.lastDelivery || null,
             airlines: {}, sold: {}, orders: {}, soldTotal: 0
         }];
     }));
@@ -111,7 +120,7 @@ export async function divisionCoverage(days) {
     }
 
     return {
-        ok: true, days, statsSince: resetAt ? new Date(resetAt).toISOString() : null,
+        ok: true, days, quietDays: QUIET_DAYS, statsSince: resetAt ? new Date(resetAt).toISOString() : null,
         divisions: names,
         sellers: [...rows.values()].sort((a, b) => b.soldTotal - a.soldTotal || a.name.localeCompare(b.name)),
         demand: Object.fromEntries(names.map((n) => {

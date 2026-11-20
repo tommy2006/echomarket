@@ -13,36 +13,47 @@ export const HONEY = 0xF5B533;   // the activity alert colour: yellow-honey
 const ms = (t) => (t ? new Date(t).getTime() || 0 : 0);
 const day = (t) => new Date(t).toISOString().slice(0, 10);
 
-export async function activityAlerts({ now = Date.now() } = {}) {
-    const db = admin();
-    const { data: sellers, error } = await db.from('sellers').select('*').eq('active', true);
-    if (error) throw error;
-    if (sellers.length && !('unranked' in sellers[0])) return { skipped: 're-run supabase/schema.sql' };
-    const resetAt = ms(await getSetting('stats_reset_at', 0));
-    const cutoff = now - QUIET_DAYS * 864e5;
-    // Sellers on vacation are never watched; afterwards their vacation days don't count as quiet days.
-    const watched = sellers.filter((s) => !s.unranked && RANKS.includes(s.rank) && !onVacation(s, now)
-        && Math.max(ms(s.added_at), ms(s.welcome_done_at), resetAt) <= cutoff);
-    if (!watched.length) return { watched: 0, quiet: [] };
+// Counted sellers: switched on, a seller rank (not tech-only admins or Community Managers), not Unranked
+// (resigned sellers, tech admins). The activity alerts and the Divisions view (lib/coverage.js) both use this.
+export const isCountedSeller = (s) => Boolean(s && s.active !== false && !s.unranked && RANKS.includes(s.rank));
 
+// Which of these sellers are quiet right now: no delivery for QUIET_DAYS days, vacation days left out.
+// Returns Map user_id → { seller, lastDelivery, stretchStart, quietMs, away }. Sellers on vacation, and sellers who
+// joined (or finished the welcome) less than QUIET_DAYS days ago, are never quiet.
+export async function quietSellers(sellers, { now = Date.now(), db = admin(), resetAt } = {}) {
+    if (resetAt === undefined) resetAt = ms(await getSetting('stats_reset_at', 0));
+    const cutoff = now - QUIET_DAYS * 864e5;
+    const watched = sellers.filter((s) => isCountedSeller(s) && !onVacation(s, now)
+        && Math.max(ms(s.added_at), ms(s.welcome_done_at), resetAt) <= cutoff);
+    const quiet = new Map();
+    if (!watched.length) return { watched, quiet };
     const ids = watched.map((s) => s.user_id);
     const { data: recent, error: evErr } = await db.from('order_events').select('actor_id')
         .in('actor_id', ids).in('kind', ['PROGRESS', 'FULFILLED']).gte('created_at', new Date(cutoff).toISOString());
     if (evErr) throw evErr;
     const busy = new Set((recent || []).map((e) => e.actor_id));
-
-    const quiet = [];
     for (const s of watched.filter((x) => !busy.has(x.user_id))) {
         const { data: last } = await db.from('order_events').select('created_at').eq('actor_id', s.user_id)
             .in('kind', ['PROGRESS', 'FULFILLED']).order('created_at', { ascending: false }).limit(1);
         const lastDelivery = last?.[0]?.created_at || null;
         const stretchStart = Math.max(ms(lastDelivery), ms(s.added_at), ms(s.welcome_done_at), resetAt);
-        if (ms(s.activity_alert_at) > stretchStart) continue;   // this stretch was already reported
         const away = Math.max(0, Math.min(now, ms(s.vacation_until)) - Math.max(stretchStart, ms(s.vacation_from)));
         const quietMs = now - stretchStart - away;
-        if (quietMs < QUIET_DAYS * 864e5) continue;
-        quiet.push({ seller: s, lastDelivery, stretchStart, quietMs, away });
+        if (quietMs >= QUIET_DAYS * 864e5) quiet.set(s.user_id, { seller: s, lastDelivery, stretchStart, quietMs, away });
     }
+    return { watched, quiet };
+}
+
+export async function activityAlerts({ now = Date.now() } = {}) {
+    const db = admin();
+    const { data: sellers, error } = await db.from('sellers').select('*').eq('active', true);
+    if (error) throw error;
+    if (sellers.length && !('unranked' in sellers[0])) return { skipped: 're-run supabase/schema.sql' };
+    const { watched, quiet: quietNow } = await quietSellers(sellers, { now, db });
+    if (!watched.length) return { watched: 0, quiet: [] };
+
+    // Each quiet stretch is reported once.
+    const quiet = [...quietNow.values()].filter((q) => !(ms(q.seller.activity_alert_at) > q.stretchStart));
     if (!quiet.length) return { watched: watched.length, quiet: [] };
 
     const [{ data: accounts }, { data: open }] = await Promise.all([
