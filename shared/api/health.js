@@ -272,6 +272,10 @@ export default async function handler(req, res) {
                 const st = data?.value || {};
                 if (st.at) add('FFA listings', 'last channel check', !st.error, st.error ? `failed: ${st.error}` : `ok, ${st.ok}${st.aiError ? ` (AI failed: ${String(st.aiError).slice(0, 120)}; the basic reader was used)` : ''}`,
                     'See the message above. Listings are checked again a few minutes after someone opens the FFA page.', { private: true });
+                // Why recent posts are NOT on the FFA page (sold out, no aircraft found…). Full view only: post text.
+                if (st.at && Array.isArray(st.hidden)) add('FFA listings', 'recent posts not shown', true,
+                    st.hidden.length ? st.hidden.map((h) => `${h.at?.slice(0, 16).replace('T', ' ')} ${h.by}: ${h.why} · "${h.text}"`).join(' | ') : 'none',
+                    '', { private: true });
             } catch { /* older database */ }
         }
     }

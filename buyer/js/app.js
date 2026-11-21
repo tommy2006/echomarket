@@ -1488,9 +1488,17 @@ function FfaView({ session, ffa, airlines, alliances, onRefresh }) {
     const division = picked || (mine.length && counts.MINE ? 'MINE' : 'ALL');
     const list = listings.filter((l) => fits(l, division));
     const refresh = async () => { setBusy(true); try { await onRefresh(); } finally { setBusy(false); } };
-    const chip = (key, label, color) => html`<button key=${key} onClick=${() => setDivision(key)}
-        className=${`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold ${division === key ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
-        ${color && html`<span className="w-2 h-2 rounded-full" style=${{ backgroundColor: color }}></span>`}${label} <span className="opacity-60">${counts[key] ?? 0}</span></button>`;
+    // The single divisions only show (in a wrapping row under the filters) after "All divisions" is picked, so the
+    // filter row stays short on any screen. Tapping the picked division again goes back to all divisions.
+    const single = division !== 'ALL' && division !== 'MINE';
+    const showDivisions = division !== 'MINE';
+    const chip = (key, label, color) => {
+        const on = division === key, parent = key === 'ALL' && single;
+        return html`<button key=${key} onClick=${() => setDivision(single && on ? 'ALL' : key)} aria-pressed=${on}
+        className=${`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold ${on ? 'bg-slate-100 text-slate-950 border-slate-100' : parent ? 'border-slate-400 text-white' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
+        ${color && html`<span className="w-2 h-2 rounded-full" style=${{ backgroundColor: color }}></span>`}${label} <span className="opacity-60">${counts[key] ?? 0}</span>
+        ${key === 'ALL' && html`<${Icon} name="chevron-down" className=${`w-3.5 h-3.5 -mr-1 transition-transform ${showDivisions ? 'rotate-180' : ''}`} />`}</button>`;
+    };
 
     return html`<section className="space-y-4">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
@@ -1505,13 +1513,15 @@ function FfaView({ session, ffa, airlines, alliances, onRefresh }) {
                 <${Button} variant="secondary" size="sm" icon="refresh-cw" busy=${busy} onClick=${refresh}>${t('Refresh')}<//>
             </div>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0 flex-1">
-                ${chip('ALL', t('All divisions'))}
-                ${mine.length > 0 && chip('MINE', t('My divisions'))}
-                ${alliances.map((d) => chip(d, d, divColor(d)))}
+        <div className="space-y-2">
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <div className="flex gap-1.5 min-w-0 flex-1">
+                    ${chip('ALL', t('All divisions'))}
+                    ${mine.length > 0 && chip('MINE', t('My divisions'))}
+                </div>
+                <input value=${query} onInput=${(e) => setQuery(e.target.value)} placeholder=${t('Search aircraft')} aria-label=${t('Search aircraft')} className="input sm:!w-56" />
             </div>
-            <input value=${query} onInput=${(e) => setQuery(e.target.value)} placeholder=${t('Search aircraft')} aria-label=${t('Search aircraft')} className="input sm:!w-56" />
+            ${showDivisions && html`<div className="flex flex-wrap gap-1.5">${alliances.map((d) => chip(d, d, divColor(d)))}</div>`}
         </div>
         ${ffa.error && html`<p className="text-xs text-amber-300">${t('Could not check for new listings: {msg}', { msg: ffa.error })}</p>`}
         ${!list.length ? html`<${EmptyState} icon="tag" title=${listings.length ? 'Nothing listed here' : 'No FFA listings right now'}

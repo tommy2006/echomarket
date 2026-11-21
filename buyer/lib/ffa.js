@@ -36,15 +36,22 @@ const AI_BATCH = 15;           // posts per AI request (the free tier allows few
 const AI_PER_SYNC = 4;         // AI requests per check at most; the rest wait for the next check
 const DAY = 864e5;
 
-const SOLD_RE = /\b(sold[\s-]*out|all\s+sold|all\s+gone|all\s+taken|fully\s+claimed|no\s+(?:more\s+)?(?:planes?|aircraft|stock)\s+left|nothing\s+left|none\s+left|out\s+of\s+stock|listing\s+(?:closed|ended))\b|^\s*(?:sold|gone)\b|\b(?:sold|gone)\s*[!.✅]*\s*$/i;
+// Sold out = the post SAYS it is over: "sold out", "all gone", "none left", or a line that is only "SOLD" / "gone".
+// "2 sold" or "A320neo x5, 3 gone" is a quantity update (some left), NOT sold out. Struck-through text (~~5~~ 3)
+// is an old value and is ignored.
+const SOLD_RE = /\b(sold[\s-]*out|all\s+sold|all\s+gone|all\s+taken|fully\s+claimed|no\s+(?:more\s+)?(?:planes?|aircraft|stock)\s+left|nothing\s+left|none\s+left|out\s+of\s+stock|listing\s+(?:closed|ended))\b|^\s*(?:all\s+)?(?:sold|gone)\s*[!.✅]*\s*$/im;
+const unstruck = (text) => String(text || '').replace(/~~[\s\S]*?~~/g, ' ');
 const isSoldText = (text) => {
-    const t = String(text || '').trim();
+    const t = unstruck(text).trim();
     if (!t || /\?\s*$/.test(t)) return false;   // "is it sold out?" is a question, not an update
     return SOLD_RE.test(t);
 };
 // The whole post struck through (~~…~~) also means it is over.
 const struckThrough = (text) => /^\s*~~[\s\S]+~~\s*$/.test(String(text || ''));
-const hash = (s) => createHash('sha1').update(String(s)).digest('hex').slice(0, 16);
+// PARSER_VERSION is part of the stored hash: changing it makes every post in the channel be read again once
+// (v2: sold-out wording fixed, struck-through quantities ignored, short ids for the AI).
+const PARSER_VERSION = 'v2';
+const hash = (s) => createHash('sha1').update(PARSER_VERSION + '|' + String(s)).digest('hex').slice(0, 16);
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // ---- Aircraft names → the price list's model names -------------------------------------------------------------
@@ -97,8 +104,9 @@ const nearQty = (line, d) => {
         || line.match(new RegExp(`(?<![\\w.-])(\\d{1,4})\\s*(?:x|×)?\\s*(?:in|for|@)?\\s*\\b${d}\\b`, 'i'));
     return m ? Number(m[1]) : null;
 };
-export function basicParse(text, divisions) {
+export function basicParse(fullText, divisions) {
     const items = [];
+    const text = struckThrough(fullText) ? fullText : unstruck(fullText);   // "~~5x~~ 3x A320neo" → 3
     const named = divisions.filter((d) => divRe(d).test(text));
     let header = null;
     for (const rawLine of String(text).split('\n')) {
@@ -122,18 +130,21 @@ export function basicParse(text, divisions) {
             items.push({ model, qty, division, airline: null });
         }
     }
-    return { isListing: items.length > 0, soldOut: isSoldText(text) || struckThrough(text), items };
+    return { isListing: items.length > 0, soldOut: isSoldText(fullText) || struckThrough(fullText), items };
 }
 
 // ---- AI reader --------------------------------------------------------------------------------------------------
 const SYSTEM = (divisions) => `You read aircraft listings posted in a Discord channel of an Airline Manager game community. Players post aircraft they offer to others (first come, first served).
 For each post, extract every aircraft line: the aircraft model (as written, e.g. "A320neo", "B737-800", "ATR 72-600"), the quantity offered (a number, or null if not stated), the division if stated (exactly one of: ${divisions.join(', ')}; or null), and the airline name if stated (or null).
 A post can offer aircraft in several divisions. Then give one item per model AND division, each with the quantity offered in that division (e.g. "A320neo: Kyra 5, Aegis 3" gives two items: A320neo 5 Kyra, A320neo 3 Aegis). Never put two divisions in one item. Headings like "Kyra:" apply to the lines under them.
-Also say whether the post is an aircraft listing at all (isListing: false for chat, questions, rules, thanks), and whether it says the listing is sold out / all gone / closed (soldOut).
-Answer with JSON only: {"posts":[{"id":"<post id>","isListing":true,"soldOut":false,"items":[{"model":"","qty":0,"division":null,"airline":null}]}]}`;
+Posts are often edited to update the quantity: struck-through text (~~like this~~) is an old value, so use the new value next to it (e.g. "~~5x~~ 3x A320neo" offers 3). "2 sold" or "3 left" means some are still offered: give the quantity still offered if it is clear.
+Also say whether the post is an aircraft listing at all (isListing: false for chat, questions, rules, thanks), and whether it says the WHOLE listing is sold out / all gone / closed (soldOut). A partly sold listing is not sold out.
+Answer with JSON only, one entry per post, using the post's short id exactly as given ("p1", "p2", ...): {"posts":[{"id":"p1","isListing":true,"soldOut":false,"items":[{"model":"","qty":0,"division":null,"airline":null}]}]}`;
 
 async function aiParse(posts, divisions) {
-    const user = posts.map((p) => `--- post id ${p.id}${p.airlines.length ? ` (poster's airlines: ${p.airlines.map((a) => `${a.name} [${a.alliance}]`).join(', ')})` : ''}\n${p.content.slice(0, 1500)}`).join('\n\n');
+    // Short ids ("p1", "p2"…) instead of Discord's 19-digit message ids: a model that writes an id back as a bare
+    // number would round it (too big for JSON numbers), and the answer would no longer match its post.
+    const user = posts.map((p, i) => `--- post p${i + 1}${p.airlines.length ? ` (poster's airlines: ${p.airlines.map((a) => `${a.name} [${a.alliance}]`).join(', ')})` : ''}\n${p.content.slice(0, 1500)}`).join('\n\n');
     const res = await fetch(AI_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_KEY}` },
@@ -146,9 +157,16 @@ async function aiParse(posts, divisions) {
     if (!res.ok) throw new Error(`AI ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
     const json = await res.json();
     const text = json?.choices?.[0]?.message?.content || '';
-    const parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+    const m = text.match(/\{[\s\S]*\}/);   // tolerant of models that wrap the JSON in prose or code fences
+    const parsed = JSON.parse(m ? m[0] : text);
     const out = new Map();
-    for (const p of Array.isArray(parsed?.posts) ? parsed.posts : []) out.set(String(p.id), p);
+    const list = Array.isArray(parsed?.posts) ? parsed.posts : [];
+    for (const [i, p] of list.entries()) {
+        const n = Number(String(p?.id ?? '').replace(/^p/i, ''));
+        // By short id; if the model dropped the ids but answered every post in order, by position.
+        const post = posts[n - 1] || (list.length === posts.length ? posts[i] : null);
+        if (post) out.set(post.id, p);
+    }
     return out;
 }
 
@@ -185,7 +203,8 @@ function finish(result, post, divisions) {
     }
     return {
         isListing: Boolean(result?.isListing ?? merged.length) && merged.length > 0,
-        soldOut: Boolean(result?.soldOut) || isSoldText(post.content) || struckThrough(post.content),
+        // The post's own words decide (isSoldText); the AI's soldOut only counts when nothing is left in its reading.
+        soldOut: isSoldText(post.content) || struckThrough(post.content) || (Boolean(result?.soldOut) && !merged.some((it) => it.qty > 0)),
         items: merged
     };
 }
@@ -283,8 +302,12 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
 
     // Read new/edited posts: AI in batches, the basic reader for the rest.
     const results = new Map();
-    let aiUsed = 0, aiError = null;
-    if (FFA_AI) {
+    let aiUsed = 0, aiError = null, aiPausedUntil = state.aiPausedUntil || null;
+    // Newly posted or edited posts first; posts that only wait for an AI re-read (basic-wait) after them.
+    work.sort((a, b) => (byId.get(a.id)?.parse_source === 'basic-wait') - (byId.get(b.id)?.parse_source === 'basic-wait'));
+    // After a rate-limit answer, leave the AI alone for 10 minutes instead of spending more of the free quota.
+    if (FFA_AI && !(aiPausedUntil && new Date(aiPausedUntil).getTime() > now)) {
+        aiPausedUntil = null;
         for (let i = 0; i < work.length && aiUsed < AI_PER_SYNC; i += AI_BATCH) {
             const batch = work.slice(i, i + AI_BATCH);
             try {
@@ -293,6 +316,7 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
                 for (const p of batch) if (out.has(p.id)) results.set(p.id, { r: finish(out.get(p.id), p, divisions), source: 'ai' });
             } catch (err) {
                 aiError = err.message;
+                if (/AI 429/.test(err.message)) aiPausedUntil = new Date(now + 10 * 60e3).toISOString();
                 console.warn('FFA AI failed:', err.message);
                 break;
             }
@@ -313,6 +337,7 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
         const soldNow = parsed.soldOut ?? (keep ? null : false);
         let sold_at = old?.sold_at || null, sold_reason = old?.sold_reason || null;
         if (soldByReply.has(row.id)) { sold_at ||= soldByReply.get(row.id); sold_reason = 'reply'; }
+        else if (sold_reason === 'reply') { sold_at = null; sold_reason = null; }   // that reply was deleted, or no longer counts
         else if (!keep && soldNow) { sold_at ||= nowIso; sold_reason = 'edited'; }
         else if (!keep && !soldNow && sold_reason === 'edited') { sold_at = null; sold_reason = null; }   // edited back
         return {
@@ -330,7 +355,10 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
     const gone = (stored || []).map((r) => r.id).filter((id) => !seen.has(id));
     for (let i = 0; i < gone.length; i += 100) await db.from('ffa_listings').delete().in('id', gone.slice(i, i + 100));
 
-    await setSetting('ffa_sync', { at: nowIso, ok: nowIso, posts: posts.length, read: work.length, ai: aiUsed, aiError, error: null }, 'ffa');
+    // For /api/health (full view): the newest posts that are NOT on the page, and why, to explain a missing listing.
+    const hidden = upserts.filter((r) => !r.is_listing || r.sold_at).sort((a, b) => b.posted_at.localeCompare(a.posted_at)).slice(0, 8)
+        .map((r) => ({ id: r.id, by: r.author_name, at: r.posted_at, why: r.sold_at ? `sold out (${r.sold_reason})` : r.parse_source === 'basic-wait' ? 'no aircraft found yet (waiting for the AI)' : 'no aircraft found', text: String(r.content).slice(0, 80) }));
+    await setSetting('ffa_sync', { at: nowIso, ok: nowIso, posts: posts.length, read: work.length, ai: aiUsed, aiError, aiPausedUntil, hidden, error: null }, 'ffa');
     return { posts: posts.length, read: work.length, ai: aiUsed, aiError, removed: gone.length };
 }
 // A reply that itself lists aircraft counts as a post of its own.
