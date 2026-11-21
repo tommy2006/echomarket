@@ -170,11 +170,11 @@ function App() {
         .catch((err) => setFfa((f) => ({ ...(f || { available: true, listings: [] }), error: err.message }))), []);
     useEffect(() => {
         if (!userId) { setFfa(null); return; }
-        if (view === 'ffa' || hasPending) loadFfa();
+        if (view === 'ffa' || hasPending || cartOpen) loadFfa();
         if (view !== 'ffa') return;
         const timer = setInterval(loadFfa, 4 * 60e3);
         return () => clearInterval(timer);
-    }, [userId, view === 'ffa', hasPending]);
+    }, [userId, view === 'ffa', hasPending, cartOpen]);
 
     // ---------------- live updates
     useEffect(() => {
@@ -348,7 +348,7 @@ function App() {
             onClose=${() => setSheetModel(null)}
             onAdd=${(line) => { addToCart(line); setSheetModel(null); }} />
 
-        <${CartDrawer} open=${cartOpen} onClose=${() => setCartOpen(false)} cart=${cart} setCart=${setCart}
+        <${CartDrawer} open=${cartOpen} onClose=${() => setCartOpen(false)} cart=${cart} setCart=${setCart} ffa=${ffa}
             pricelist=${pricelist} airlines=${airlines} defaultAirline=${defaultAirline} spent24h=${spent24h}
             session=${session} onCreateAirline=${() => setAirlineForm({})}
             onPlaced=${(order) => {
@@ -1030,7 +1030,7 @@ function AircraftSheet({ aircraft, priceLevel, inCart, onClose, onAdd }) {
 // =========================================================================
 //  Cart / checkout
 // =========================================================================
-function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, defaultAirline, spent24h, session, onCreateAirline, onPlaced }) {
+function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, defaultAirline, spent24h, session, onCreateAirline, onPlaced, ffa = null }) {
     const [airlineIds, setAirlineIds] = useState([]);   // every airline the aircraft may be delivered to
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(false);
@@ -1057,6 +1057,9 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
     const overLimit = listTotal > left;
     const update = (i, patch) => setCart((c) => c.map((x, j) => (j === i ? { ...x, ...patch } : x)));
     const remove = (i) => setCart((c) => c.filter((_, j) => j !== i));
+
+    // FFA posts with these models in the receiving divisions (a hint in the review, see CartFfaHint).
+    const ffaLines = session ? cartFfaLines(cart, [...new Set(airlines.filter((a) => airlineIds.includes(a.id)).map((a) => a.alliance))], ffa) : [];
 
     const problems = [];
     if (!session) problems.push(t('Sign in to send orders.'));
@@ -1139,6 +1142,8 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                     : html`<${Button} variant="secondary" icon="plus" className="w-full" onClick=${onCreateAirline}>${t('Create an airline profile')}<//>`}
                 </div>`}
 
+                ${session && html`<${CartFfaHint} lines=${ffaLines} />`}
+
                 ${cart.length > 0 && html`<label className="block">
                     <span className="field-label">${t('Note for the sellers (optional)')}</span>
                     <textarea value=${note} maxLength="1000" rows="2" onChange=${(e) => setNote(e.target.value)} className="input" placeholder=${t('Anything the seller should know')}></textarea>
@@ -1154,6 +1159,9 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
                     <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>${t('24-hour limit, at list price')}</span><span>${fmtUSDShort(spent24h + listTotal)} / ${fmtUSDShort(DAILY_LIMIT_USD)}</span></div>
                     <${ProgressBar} value=${Math.min(DAILY_LIMIT_USD, spent24h + listTotal)} max=${DAILY_LIMIT_USD} usage=${true} />
                 </div>`}
+                ${ffaLines.length > 0 && html`<button type="button" onClick=${() => document.getElementById('cart-ffa-hint')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    className="w-full text-left text-xs text-sky-200 flex gap-1.5 hover:text-white"><${Icon} name="tag" className="w-3.5 h-3.5 mt-px shrink-0 text-sky-300" />
+                    <span>${t('Some of these planes might be on #ffa-listings. See above.')}</span></button>`}
                 ${problems.length > 0 && cart.length > 0 && html`<p className="text-xs text-amber-300 flex gap-1.5"><${Icon} name="info" className="w-3.5 h-3.5 mt-px" />${problems[0]}</p>`}
                 ${session && cart.length > 0 && isSeaNight() && html`<p className="text-xs text-indigo-200 flex gap-1.5 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-400/20"><${Icon} name="moon" className="w-3.5 h-3.5 mt-px shrink-0" />${t(SEA_NIGHT_TEXT)}</p>`}
                 ${!session ? html`<${Button} variant="discord" size="lg" className="w-full" onClick=${signInWithDiscord}><${DiscordLogo} /> ${t('Sign in to send')}<//>`
@@ -1385,7 +1393,7 @@ function FfaNudge({ matches, channelUrl }) {
 
 function FfaListing({ listing, now }) {
     const items = listing.items || [];
-    const main = items.find((it) => it.division)?.division;
+    const main = listing.division || null;
     const left = new Date(listing.expiresAt).getTime() - now;
     return html`<article className="card p-4 space-y-3 min-w-0" style=${{ boxShadow: `inset 4px 0 0 ${divColor(main)}` }}>
         <div className="flex items-start gap-3">
@@ -1394,6 +1402,7 @@ function FfaListing({ listing, now }) {
             <div className="min-w-0 flex-1">
                 <p className="font-bold text-white truncate">${listing.author_name}</p>
                 <p className="text-xs text-slate-500">${timeAgo(listing.posted_at)}${listing.edited_at ? ` · ${t('edited')}` : ''}</p>
+                <div className="mt-1.5"><${DivisionChip} division=${main} /></div>
             </div>
             ${listing.url && html`<a href=${listing.url} target="_blank" rel="noopener noreferrer"
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-700 text-xs font-bold text-slate-200 hover:border-slate-500">
@@ -1403,7 +1412,6 @@ function FfaListing({ listing, now }) {
             ${items.map((it, i) => html`<li key=${i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-extrabold text-white">${shortModel(it.model)}</span>
                 <span className="text-sm text-slate-300 tabular-nums">${it.qty ? `× ${it.qty}` : t('quantity not stated')}</span>
-                <${DivisionChip} division=${it.division} />
                 ${it.airline && html`<span className="text-xs text-slate-500 truncate">${it.airline}</span>`}
             </li>`)}
         </ul>
@@ -1413,6 +1421,31 @@ function FfaListing({ listing, now }) {
         </details>
         <p className="text-[11px] text-slate-500">${left > 0 ? t('Leaves this list in {time}', { time: fmtDuration(left) }) : ''}${listing.parse_source !== 'ai' ? ` · ${t('Read by the basic reader. Check the post.')}` : ''}</p>
     </article>`;
+}
+
+// In the order review: "there MIGHT be planes on #ffa-listings" for the cart's models in the receiving divisions.
+// Only a hint: FFA posts go fast, and the order can still be sent as it is.
+function cartFfaLines(cart, divisions, ffa) {
+    const models = new Set(cart.map((c) => c.model));
+    return (ffa?.listings || []).filter((l) => l.division && divisions.includes(l.division))
+        .flatMap((l) => (l.items || []).filter((it) => models.has(it.model)).map((it) => ({ l, it })));
+}
+function CartFfaHint({ lines }) {
+    if (!lines.length) return null;
+    return html`<div id="cart-ffa-hint" className="p-3.5 rounded-2xl bg-sky-400/[0.06] border border-sky-400/25 space-y-2 scroll-mt-4">
+        <p className="text-sm text-slate-200 flex gap-2"><${Icon} name="tag" className="w-4 h-4 text-sky-300 mt-0.5 shrink-0" />
+            <span>${t('There might be planes for this order on #ffa-listings, in a division you are ordering for. They may be gone already: have a quick look before you send.')}</span></p>
+        <ul className="space-y-1">
+            ${lines.slice(0, 4).map(({ l, it }, i) => html`<li key=${i} className="flex items-center gap-2 text-xs">
+                <span className="font-bold text-white">${shortModel(it.model)}</span>
+                <span className="text-slate-400 tabular-nums">${it.qty ? `× ${it.qty}` : ''}</span>
+                <${DivisionChip} division=${l.division} />
+                <span className="text-slate-500 truncate min-w-0">${l.author_name} · ${timeAgo(l.posted_at)}</span>
+                ${l.url && html`<a href=${l.url} target="_blank" rel="noopener noreferrer" className="ml-auto shrink-0 font-bold text-sky-300 hover:text-sky-200">${t('Open')}</a>`}
+            </li>`)}
+        </ul>
+        ${lines.length > 4 && html`<a href="#ffa" className="block text-xs font-bold text-slate-400 hover:text-white">${t('+ {n} more on the FFA page', { n: lines.length - 4 })}</a>`}
+    </div>`;
 }
 
 function FfaView({ session, ffa, airlines, alliances, onRefresh }) {
@@ -1464,7 +1497,7 @@ function FfaView({ session, ffa, airlines, alliances, onRefresh }) {
         ${ffa.error && html`<p className="text-xs text-amber-300">${t('Could not check for new listings: {msg}', { msg: ffa.error })}</p>`}
         ${!list.length ? html`<${EmptyState} icon="tag" title=${listings.length ? 'Nothing listed here' : 'No FFA listings right now'}
             text=${listings.length ? 'Try another division or clear the search.' : 'New posts in #ffa-listings show up here a few minutes after they are posted.'} />`
-        : html`<div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">${list.map((l) => html`<${FfaListing} key=${l.id} listing=${l} now=${now} />`)}</div>`}
+        : html`<div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">${list.map((l) => html`<${FfaListing} key=${l.key || l.id} listing=${l} now=${now} />`)}</div>`}
         <p className="text-xs text-slate-500">${ffa.checkedAt ? t('Checked {time}. Planes go fast: always check the post on Discord.', { time: timeAgo(ffa.checkedAt) }) : t('Planes go fast: always check the post on Discord.')}</p>
     </section>`;
 }

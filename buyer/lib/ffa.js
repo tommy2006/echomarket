@@ -80,27 +80,55 @@ export function matchModel(name) {
 }
 
 // ---- Basic reader (no AI): finds "5x A320neo", "A320neo x5", "A320neo - 5", "5 A320neo" ------------------------
+// Divisions: named on the line ("5x A320neo Kyra"), else the last header line ("Kyra:" / "**Aegis**"), else the
+// post's only division. A line naming several divisions ("A320neo: Kyra 5, Aegis 3") gives one line per division,
+// each with the number next to that division's name.
+const divRe = (d) => new RegExp(`\\b${d}\\b`, 'i');
+const qtyOf = (line) => {
+    // A number glued to a model name ("737-800", "A350") is never the quantity.
+    const q = line.match(/(?<![\w.-])(\d{1,4})\s*(?:x|×|pcs|planes?|aircraft|units?)(?![\w-])/i) || line.match(/(?:^|\s)(?:x|×)\s*(\d{1,4})\b/i)
+        || line.match(/\s[-:=]\s*(\d{1,4})\s*(?:$|left|avail)/i) || line.match(/^\s*(\d{1,4})\s+\D/);
+    const n = q ? Number(q[1]) : null;
+    return n && n < 5000 ? n : null;
+};
+// "Kyra 5", "Kyra: 5", "5 in Kyra", "5x Kyra": the number written next to a division's name.
+const nearQty = (line, d) => {
+    const m = line.match(new RegExp(`\\b${d}\\b\\s*[:=x×-]?\\s*(\\d{1,4})(?![\\w-])`, 'i'))
+        || line.match(new RegExp(`(?<![\\w.-])(\\d{1,4})\\s*(?:x|×)?\\s*(?:in|for|@)?\\s*\\b${d}\\b`, 'i'));
+    return m ? Number(m[1]) : null;
+};
 export function basicParse(text, divisions) {
     const items = [];
-    const division = divisions.find((d) => new RegExp(`\\b${d}\\b`, 'i').test(text)) || null;
-    for (const raw of String(text).split(/\n|,|;|\|/)) {
-        const line = raw.replace(/[*_`>~]/g, ' ').trim();
-        if (!line) continue;
-        const model = matchModel(line);
-        if (!model) continue;
-        // A number glued to a model name ("737-800", "A350") is never the quantity.
-        const q = line.match(/(?<![\w.-])(\d{1,4})\s*(?:x|×|pcs|planes?|aircraft|units?)(?![\w-])/i) || line.match(/(?:^|\s)(?:x|×)\s*(\d{1,4})\b/i)
-            || line.match(/\s[-:=]\s*(\d{1,4})\s*(?:$|left|avail)/i) || line.match(/^\s*(\d{1,4})\s+\D/);
-        const qty = q ? Number(q[1]) : null;
-        const dLine = divisions.find((d) => new RegExp(`\\b${d}\\b`, 'i').test(line)) || null;
-        items.push({ model, qty: qty && qty < 5000 ? qty : null, division: dLine || division, airline: null });
+    const named = divisions.filter((d) => divRe(d).test(text));
+    let header = null;
+    for (const rawLine of String(text).split('\n')) {
+        let lastModel = null;   // "A320neo: Kyra 5, Aegis 3": the model carries over to "Aegis 3"
+        for (const raw of rawLine.split(/,|;|\|/)) {
+            const line = raw.replace(/[*_`>~]/g, ' ').trim();
+            if (!line) continue;
+            const here = divisions.filter((d) => divRe(d).test(line));
+            const model = matchModel(line) || (here.length && /\d/.test(line) ? lastModel : null);
+            if (!model) {
+                if (here.length === 1) header = here[0];   // a division heading
+                continue;
+            }
+            lastModel = model;
+            if (here.length > 1) {
+                for (const d of here) items.push({ model, qty: nearQty(line, d) ?? qtyOf(line), division: d, airline: null });
+                continue;
+            }
+            const division = here[0] || header || (named.length === 1 ? named[0] : null);
+            const qty = (here[0] && nearQty(line, here[0])) ?? qtyOf(line);
+            items.push({ model, qty, division, airline: null });
+        }
     }
     return { isListing: items.length > 0, soldOut: isSoldText(text) || struckThrough(text), items };
 }
 
 // ---- AI reader --------------------------------------------------------------------------------------------------
 const SYSTEM = (divisions) => `You read aircraft listings posted in a Discord channel of an Airline Manager game community. Players post aircraft they offer to others (first come, first served).
-For each post, extract every aircraft line: the aircraft model (as written, e.g. "A320neo", "B737-800", "ATR 72-600"), the quantity offered (a number, or null if not stated), the division if stated (one of: ${divisions.join(', ')}; or null), and the airline name if stated (or null).
+For each post, extract every aircraft line: the aircraft model (as written, e.g. "A320neo", "B737-800", "ATR 72-600"), the quantity offered (a number, or null if not stated), the division if stated (exactly one of: ${divisions.join(', ')}; or null), and the airline name if stated (or null).
+A post can offer aircraft in several divisions. Then give one item per model AND division, each with the quantity offered in that division (e.g. "A320neo: Kyra 5, Aegis 3" gives two items: A320neo 5 Kyra, A320neo 3 Aegis). Never put two divisions in one item. Headings like "Kyra:" apply to the lines under them.
 Also say whether the post is an aircraft listing at all (isListing: false for chat, questions, rules, thanks), and whether it says the listing is sold out / all gone / closed (soldOut).
 Answer with JSON only: {"posts":[{"id":"<post id>","isListing":true,"soldOut":false,"items":[{"model":"","qty":0,"division":null,"airline":null}]}]}`;
 
@@ -142,8 +170,11 @@ function finish(result, post, divisions) {
         if (!model) continue;
         const qty = Number.isFinite(Number(it.qty)) && Number(it.qty) > 0 ? Math.min(Math.round(Number(it.qty)), 5000) : null;
         const airline = findAirline(it.airline) || postAirline;
-        const division = known.get(String(it.division || '').toLowerCase()) || airline?.alliance || (ownDivisions.length === 1 ? ownDivisions[0] : null);
-        items.push({ model, qty, division, airline: airline?.name || (it.airline ? String(it.airline).slice(0, 60) : null), matched: Boolean(airline) });
+        // One division per line: "Kyra, Aegis" (or a list) from the model becomes one line per division.
+        const stated = (Array.isArray(it.division) ? it.division : String(it.division || '').split(/[,/&+]|and/i))
+            .map((d) => known.get(String(d).trim().toLowerCase())).filter(Boolean);
+        const divs = stated.length ? [...new Set(stated)] : [airline?.alliance || (ownDivisions.length === 1 ? ownDivisions[0] : null)];
+        for (const division of divs) items.push({ model, qty, division, airline: airline?.name || (it.airline ? String(it.airline).slice(0, 60) : null), matched: Boolean(airline) });
     }
     // Same model + division listed twice: add the quantities.
     const merged = [];
@@ -314,11 +345,22 @@ export async function activeListings({ now = Date.now() } = {}) {
         .eq('is_listing', true).is('sold_at', null).gte('posted_at', since).order('posted_at', { ascending: false }).limit(300);
     if (error) throw error;
     const guild = GUILD_IDS[0];
-    return (data || []).map((l) => ({
-        ...l,
-        url: guild ? `https://discord.com/channels/${guild}/${FFA_CHANNEL_ID}/${l.id}` : null,
-        expiresAt: new Date(new Date(l.posted_at).getTime() + LISTING_DAYS * DAY).toISOString()
-    }));
+    // One web posting per division: a message offering aircraft in Kyra and Aegis becomes two postings, each with
+    // only that division's lines and quantities (key = "<message id>:<division>"). Lines without a division
+    // stay together in one posting.
+    return (data || []).flatMap((l) => {
+        const groups = new Map();
+        for (const it of l.items || []) {
+            const k = it.division || '';
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(it);
+        }
+        return [...groups].map(([division, items]) => ({
+            ...l, key: `${l.id}:${division}`, division: division || null, divisions: division ? [division] : [], items,
+            url: guild ? `https://discord.com/channels/${guild}/${FFA_CHANNEL_ID}/${l.id}` : null,
+            expiresAt: new Date(new Date(l.posted_at).getTime() + LISTING_DAYS * DAY).toISOString()
+        }));
+    });
 }
 
 export const channelUrl = () => (GUILD_IDS[0] && FFA_CHANNEL_ID ? `https://discord.com/channels/${GUILD_IDS[0]}/${FFA_CHANNEL_ID}` : null);

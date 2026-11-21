@@ -597,7 +597,7 @@ The bot stays in the server and keeps its role; this only allows slash commands.
 
 ## Part 13 — FFA listings page (optional, ≈15 min, one step needs a Discord admin)
 
-The buyer site's **FFA** page shows the aircraft players post in **#ffa-listings**, coloured by division. The Echo Market bot reads the channel through Discord's API (a few minutes after someone opens the page), and a free AI model reads each post: airline, aircraft, quantity, division. Listings disappear after 5 days, when the post is deleted, when it is edited to say sold out (or struck through), or when the poster replies to it saying sold out. Buyers with an order waiting for a seller get a small hint when the same aircraft is listed in their division.
+The buyer site's **FFA** page shows the aircraft players post in **#ffa-listings**, coloured by division. The Echo Market bot reads the channel through Discord's API (a few minutes after someone opens the page), and a free AI model reads each post: airline, aircraft, quantity, division. Listings disappear after 5 days, when the post is deleted, when it is edited to say sold out (or struck through), or when the poster replies to it saying sold out. A post offering aircraft in several divisions becomes one listing per division, each with that division's quantities. Buyers get a hint when the same aircraft is listed in the division they are ordering for: in the order review before sending, and on orders still waiting for a seller.
 
 **13.1 🧑 Turn on Message Content** (you own the bot app, no Discord admin needed): Developer Portal → your app → **Bot** → *Privileged Gateway Intents* → **Message Content Intent** on → **Save Changes**. Without it, Discord sends the bot every message with empty text.
 
