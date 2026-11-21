@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "이륙 허가 · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "이륙 허가. 탑승을 환영해요!",
  "Delivery": "납품",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · 오픈 스탠드",
  "Four ways to take someone's planes": "남의 항공기를 가져가는 네 가지 방법",
  "Free-for-all listings": "자유 구매(FFA) 매물",

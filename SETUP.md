@@ -592,3 +592,30 @@ The bot stays in the server and keeps its role; this only allows slash commands.
    - **Send Messages** ❌, so nobody can chat there;
    - **Read Message History** ❌ (optional, extra tidy).
    The bot's replies are private ("Only you can see this"), so every buyer sees only their own orders; nothing is posted in the channel itself.
+
+---
+
+## Part 13 — FFA listings page (optional, ≈15 min, one step needs a Discord admin)
+
+The buyer site's **FFA** page shows the aircraft players post in **#ffa-listings**, coloured by division. The Echo Market bot reads the channel through Discord's API (a few minutes after someone opens the page), and a free AI model reads each post: airline, aircraft, quantity, division. Listings disappear after 5 days, when the post is deleted, when it is edited to say sold out (or struck through), or when the poster replies to it saying sold out. Buyers with an order waiting for a seller get a small hint when the same aircraft is listed in their division.
+
+**13.1 🧑 Turn on Message Content** (you own the bot app, no Discord admin needed): Developer Portal → your app → **Bot** → *Privileged Gateway Intents* → **Message Content Intent** on → **Save Changes**. Without it, Discord sends the bot every message with empty text.
+
+**13.2 🛡️ A Discord admin lets the bot read the channel:** #ffa-listings → Edit Channel → Permissions → add the **Echo Market** bot (or its role) → **View Channel** ✅ and **Read Message History** ✅. Nothing else; the bot never posts there.
+
+**13.3 🧑 Copy the channel ID:** right-click #ffa-listings → **Copy Channel ID**.
+
+**13.4 🧑 Free AI key** (optional but recommended; without it a basic reader is used, which only understands simple posts like "5x A320neo Kyra"): go to https://aistudio.google.com/apikey, sign in with a Google account, **Create API key**, copy it. Don't paste it into chat.
+
+**13.5 🧑 BUYER Vercel project → Settings → Environment Variables:**
+
+| Key | Value |
+|---|---|
+| `FFA_CHANNEL_ID` | the channel ID from 13.3 |
+| `FFA_AI_KEY` | 🔒 the key from 13.4 |
+
+Optional: `FFA_AI_MODEL` (default `gemini-flash-lite-latest`) and `FFA_AI_URL` to use another free OpenAI-compatible provider (for example Groq). Then **Redeploy**.
+
+**13.6 🗄️ Re-run `supabase/schema.sql`** in the Supabase SQL Editor (it adds the `ffa_listings` table; safe to re-run).
+
+**13.7 💬 Check:** open the buyer `/api/health`: the **FFA listings** rows should be ✅ (channel ID, bot can read #ffa-listings, Message Content Intent, AI key). Then open the **FFA** tab on the market; after it has loaded once, the health page also shows the last channel check.

@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "Handa nang lumipad · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "Puwede nang lumipad. Maligayang pagsakay!",
  "Delivery": "Delivery",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · BUKAS NA STAND",
  "Four ways to take someone's planes": "Apat na paraan ng pagkuha sa eroplano ng iba",
  "Free-for-all listings": "Mga free-for-all na listing",

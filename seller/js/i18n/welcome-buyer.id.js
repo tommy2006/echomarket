@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "Siap lepas landas · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "Izin lepas landas diberikan. Selamat bergabung!",
  "Delivery": "Pengiriman",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · STAND TERBUKA",
  "Four ways to take someone's planes": "Empat cara mengambil pesawat orang lain",
  "Free-for-all listings": "Listing bebas untuk semua (FFA)",

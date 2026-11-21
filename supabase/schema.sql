@@ -647,6 +647,34 @@ create table if not exists public.bot_pending_orders (
 alter table public.bot_pending_orders enable row level security;   -- no policies: API only
 revoke all on public.bot_pending_orders from anon, authenticated;
 
+-- FFA listings: posts in the Discord channel #ffa-listings, read by the buyer site (buyer/lib/ffa.js) and shown on
+-- its FFA page. One row per Discord message (id = message ID). items: [{ model, qty, division, airline, matched }].
+-- Rows older than 5 days or deleted on Discord are removed automatically. Only the API uses this table.
+create table if not exists public.ffa_listings (
+    id                text primary key,
+    channel_id        text not null,
+    author_discord_id text not null,
+    account_id        uuid references public.accounts(id) on delete set null,
+    author_name       text,
+    author_avatar     text,
+    content           text not null,
+    content_hash      text not null,
+    posted_at         timestamptz not null,
+    edited_at         timestamptz,
+    is_listing        boolean not null default false,
+    items             jsonb not null default '[]'::jsonb,
+    divisions         text[] not null default '{}',
+    parse_source      text,
+    parsed_at         timestamptz,
+    sold_at           timestamptz,
+    sold_reason       text,
+    updated_at        timestamptz not null default now()
+);
+create index if not exists ffa_listings_posted_idx on public.ffa_listings (posted_at desc);
+alter table public.ffa_listings enable row level security;   -- no policies: API only
+revoke all on public.ffa_listings from anon, authenticated;
+grant all on public.ffa_listings to service_role;
+
 -- Seller-only moderation flags. Buyers can never read this table.
 create table if not exists public.order_flags (
     order_id   text primary key references public.orders(id) on delete cascade,

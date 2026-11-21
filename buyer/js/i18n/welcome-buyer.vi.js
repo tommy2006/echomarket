@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "Được phép cất cánh · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "Được phép cất cánh. Chào mừng bạn lên tàu!",
  "Delivery": "Giao hàng",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · BÃI ĐỖ MỞ",
  "Four ways to take someone's planes": "Bốn cách lấy máy bay của người khác",
  "Free-for-all listings": "Tin đăng tự do (FFA)",

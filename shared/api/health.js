@@ -245,6 +245,35 @@ export default async function handler(req, res) {
         add('Discord commands', 'DISCORD_PUBLIC_KEY (bot commands)', /^[0-9a-f]{64}$/i.test(key),
             !key ? 'not set (optional)' : /^[0-9a-f]{64}$/i.test(key) ? 'set' : 'not a valid public key (64 characters, 0-9 and a-f)',
             'Discord Developer Portal → your app → General Information → copy the Public Key. Add it as DISCORD_PUBLIC_KEY in the BUYER Vercel project, redeploy, then set the Interactions Endpoint URL to ' + (BUYER_URL || 'https://<buyer site>') + '/api/discord/interactions.');
+
+        // FFA page (buyer/lib/ffa.js): the bot reads #ffa-listings; a free AI model reads the posts.
+        const ffa = (process.env.FFA_CHANNEL_ID || '').trim();
+        add('FFA listings', 'FFA_CHANNEL_ID', /^\d{15,22}$/.test(ffa), !ffa ? 'not set (optional)' : /^\d{15,22}$/.test(ffa) ? 'set' : 'not a channel ID (digits only)',
+            'Discord → right-click #ffa-listings → Copy Channel ID (turn on Developer Mode first). Add it as FFA_CHANNEL_ID in the BUYER Vercel project, then redeploy.');
+        if (ffa && DM_AVAILABLE) {
+            try {
+                const r = await discordBot(`/channels/${ffa}/messages?limit=10`);
+                const list = Array.isArray(r.json) ? r.json : [];
+                add('FFA listings', 'bot can read #ffa-listings', r.ok, r.ok ? 'yes' : `Discord answered ${r.status}`,
+                    'Ask a Discord admin to let the Echo Market bot (or its role) View Channel and Read Message History in #ffa-listings.');
+                // Without the Message Content intent, Discord sends every message with empty text.
+                const withText = list.some((m) => m.content || (m.embeds || []).length);
+                if (r.ok && list.length) add('FFA listings', 'Message Content Intent', withText, withText ? 'on' : 'off: messages arrive without text',
+                    'Discord Developer Portal → your app → Bot → Privileged Gateway Intents → switch on Message Content Intent → Save Changes.');
+            } catch (err) {
+                add('FFA listings', 'bot can read #ffa-listings', false, err.message, 'Check DISCORD_BOT_TOKEN.', { private: true });
+            }
+        }
+        add('FFA listings', 'FFA_AI_KEY (AI reader)', has('FFA_AI_KEY'), has('FFA_AI_KEY') ? 'set' : 'not set (optional; a basic reader is used)',
+            'Get a free API key at https://aistudio.google.com/apikey and add it as FFA_AI_KEY in the BUYER Vercel project, then redeploy.');
+        if (ffa) {
+            try {
+                const { data } = await admin().from('market_settings').select('value').eq('key', 'ffa_sync').maybeSingle();
+                const st = data?.value || {};
+                if (st.at) add('FFA listings', 'last channel check', !st.error, st.error ? `failed: ${st.error}` : `ok, ${st.ok}${st.aiError ? ` (AI failed: ${String(st.aiError).slice(0, 120)}; the basic reader was used)` : ''}`,
+                    'See the message above. Listings are checked again a few minutes after someone opens the FFA page.', { private: true });
+            } catch { /* older database */ }
+        }
     }
 
     // Daily clean-up of ended market bans (vercel.json "crons"), seller site only.

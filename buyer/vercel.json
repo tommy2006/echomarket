@@ -8,6 +8,10 @@
     },
     "api/discord/interactions.js": {
       "includeFiles": "aircraft_pricelist.json"
+    },
+    "api/ffa.js": {
+      "includeFiles": "aircraft_pricelist.json",
+      "maxDuration": 30
     }
   },
   "redirects": [

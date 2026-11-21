@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "准许起飞 · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "准许起飞。欢迎登机！",
  "Delivery": "交付",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · 开放机位",
  "Four ways to take someone's planes": "拿走别人飞机的四种方式",
  "Free-for-all listings": "自由购买（FFA）挂单",

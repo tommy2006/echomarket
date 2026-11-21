@@ -24,7 +24,6 @@ export default {
  "Cleared for takeoff · Echo Market": "উড্ডয়নের অনুমতি · Echo Market",
  "Cleared for takeoff. Welcome aboard!": "উড্ডয়নের অনুমতি মিলেছে। স্বাগতম!",
  "Delivery": "ডেলিভারি",
- "FFA": "FFA",
  "FFA · OPEN STAND": "FFA · উন্মুক্ত স্ট্যান্ড",
  "Four ways to take someone's planes": "অন্যের বিমান নেওয়ার চারটি উপায়",
  "Free-for-all listings": "সবার জন্য উন্মুক্ত (FFA) লিস্টিং",

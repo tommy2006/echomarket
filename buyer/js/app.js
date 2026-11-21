@@ -4,7 +4,7 @@
 // order) goes through our Vercel API in /api.
 import {
     html, useState, useEffect, useMemo, useRef, useCallback, sb, isConfigured, CONFIG, api, dbError, store,
-    signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
+    signInWithDiscord, fmtUSD, fmtUSDShort, fmtDate, fmtDuration, timeAgo, plural, STATUS, ACTIVE_STATUSES, CLOSED_STATUSES,
     StatusBadge, OrderStepper, ProgressBar, Icon, Toasts, toast, Modal, DialogHost, ask, Button, DiscordLogo,
     Spinner, EchoLoader, Avatar, EmptyState, NotConfigured, notifyBrowser, displayStatus, orderListValue, orderLines, ItemProgress,
     pushSupported, needsHomeScreen, pushSubscription, enablePush, disablePush, orderRef, OrderCode, greetingFor,
@@ -40,7 +40,7 @@ const MARKET_RULES = [
 ];
 
 const navItem = (id, label, icon) => ({ id, icon, get label() { return t(label); } });
-const VIEWS = [navItem('home', 'Home', 'house'), navItem('shop', 'Shop', 'plane'), navItem('orders', 'Orders', 'package'), navItem('airlines', 'Airlines', 'building-2')];
+const VIEWS = [navItem('home', 'Home', 'house'), navItem('shop', 'Shop', 'plane'), navItem('orders', 'Orders', 'package'), navItem('ffa', 'FFA', 'tag'), navItem('airlines', 'Airlines', 'building-2')];
 const viewFromHash = () => {
     const h = window.location.hash.replace('#', '').split('/')[0];
     return VIEWS.some((v) => v.id === h) ? h : 'home';
@@ -82,6 +82,7 @@ function App() {
     const [standing, setStanding] = useState(null);             // /api/me: Echo server member? market-banned?
     const [dataReady, setDataReady] = useState(false);
     const [pricelist, setPricelist] = useState([]);
+    const [ffa, setFfa] = useState(null);                       // /api/ffa: listings from #ffa-listings
 
     const [view, setView] = useState(viewFromHash);
     const [cart, setCart] = useState(() => store.get(LS_CART, []));
@@ -161,6 +162,19 @@ function App() {
         // Members of the Echo server only, and not market-banned (checked with Discord by /api/me).
         api('/api/me').then(setStanding).catch(() => setStanding({ inGuild: true, ban: null, unknown: true }));
     }, [userId, loadAll]);
+
+    // ---------------- FFA listings (#ffa-listings on Discord): loaded for the FFA page, and once for the
+    // "may be listed on FFA" hints when the buyer has orders waiting for a seller.
+    const hasPending = orders.some((o) => o.status === 'PENDING');
+    const loadFfa = useCallback(() => api('/api/ffa').then(setFfa)
+        .catch((err) => setFfa((f) => ({ ...(f || { available: true, listings: [] }), error: err.message }))), []);
+    useEffect(() => {
+        if (!userId) { setFfa(null); return; }
+        if (view === 'ffa' || hasPending) loadFfa();
+        if (view !== 'ffa') return;
+        const timer = setInterval(loadFfa, 4 * 60e3);
+        return () => clearInterval(timer);
+    }, [userId, view === 'ffa', hasPending]);
 
     // ---------------- live updates
     useEffect(() => {
@@ -308,7 +322,7 @@ function App() {
             ${view !== 'home' && html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
                 onCreateAirline=${() => setAirlineForm({})} onOpenCart=${() => setCartOpen(true)} />`}
 
-            ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox} announcements=${announcements}
+            ${view === 'home' && html`<${HomeView} ...${shared} activeOrders=${activeOrders} inbox=${inbox} announcements=${announcements} ffa=${ffa}
                 spent24h=${spent24h} cartCount=${cartCount} onOpenCart=${() => setCartOpen(true)} adminNotices=${adminNotices}
                 onOpenOrder=${(id) => { if (!id) return; setHighlightOrder(id); go('orders'); }}
                 guide=${html`<${NextStep} ...${shared} view=${view} activeOrders=${activeOrders}
@@ -319,7 +333,8 @@ function App() {
             ${view === 'orders' && html`<${OrdersView} ...${shared} highlight=${highlightOrder}
                 orderMessages=${orderMessages} onMessage=${(m) => setOrderMessages((list) => [...list.filter((x) => x.id !== m.id), m])}
                 missingReports=${missingReports} onReported=${(r) => setMissingReports((list) => [...list.filter((x) => x.id !== r.id), r])}
-                onOrderChanged=${(o) => setOrders((list) => list.map((x) => (x.id === o.id ? o : x)))} />`}
+                onOrderChanged=${(o) => setOrders((list) => list.map((x) => (x.id === o.id ? o : x)))} ffa=${ffa} />`}
+            ${view === 'ffa' && html`<${FfaView} ...${shared} ffa=${ffa} onRefresh=${loadFfa} />`}
             ${view === 'airlines' && html`<${AirlinesView} ...${shared}
                 defaultAirline=${defaultAirline} setDefaultAirlineId=${setDefaultAirlineId}
                 onCreate=${() => setAirlineForm({})} onEdit=${(a) => setAirlineForm({ airline: a })}
@@ -662,7 +677,7 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 // =========================================================================
 //  Home
 // =========================================================================
-function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [], announcements = [] }) {
+function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [], announcements = [], ffa = null }) {
     const [now, setNow] = useState(() => new Date());
     useEffect(() => {
         const t = setInterval(() => setNow(new Date()), 30000);
@@ -744,6 +759,13 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
             ${tile('wallet', BUDGET_TIER ? t('24-hour limit · Tier {n}', { n: BUDGET_TIER }) : t('24-hour limit'), `${budgetPct}%`, t('{used} of {limit} used, at list price', { used: fmtUSDShort(spent24h), limit: fmtUSDShort(DAILY_LIMIT_USD) }),
                 html`<div className="mt-2"><${ProgressBar} value=${Math.min(spent24h, DAILY_LIMIT_USD)} max=${DAILY_LIMIT_USD} usage=${true} /></div>`)}
         </div>`}
+
+        ${dataReady && activeOrders.some((o) => ffaMatches(o, ffa?.listings).length) && html`<a href="#ffa"
+            className="flex items-center gap-3 p-3.5 rounded-2xl bg-sky-400/[0.06] border border-sky-400/25 text-sm text-slate-200 hover:border-sky-400/50">
+            <${Icon} name="tag" className="w-4 h-4 text-sky-300 shrink-0" />
+            <span className="flex-1">${t('Some aircraft you are waiting for may be listed on #ffa-listings. They may be gone already, but it is worth a quick look.')}</span>
+            <span className="text-xs font-bold text-sky-300 shrink-0">${t('See FFA →')}</span>
+        </a>`}
 
         ${dataReady && orders.length > 0 && html`<div className="grid lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3 space-y-3 min-w-0">
@@ -1144,7 +1166,7 @@ function CartDrawer({ open, onClose, cart, setCart, pricelist, airlines, default
 // =========================================================================
 //  Orders
 // =========================================================================
-function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged, orderMessages = [], onMessage, missingReports = [], onReported }) {
+function OrdersView({ session, orders, events, airlines, highlight, dataReady, onOrderChanged, orderMessages = [], onMessage, missingReports = [], onReported, ffa = null }) {
     const [tab, setTab] = useState('active');
     const [airlineFilter, setAirlineFilter] = useState('ALL');
     useEffect(() => {
@@ -1190,11 +1212,11 @@ function OrdersView({ session, orders, events, airlines, highlight, dataReady, o
         : html`<div className="space-y-3">${list.map((o) => html`<${OrderCard} key=${o.id} order=${o} highlight=${o.id === highlight}
             events=${events.filter((e) => e.order_id === o.id)} onChanged=${onOrderChanged}
             messages=${orderMessages.filter((m) => m.order_id === o.id)} onMessage=${onMessage}
-            reports=${missingReports.filter((r) => r.order_id === o.id)} onReported=${onReported} />`)}</div>`}
+            reports=${missingReports.filter((r) => r.order_id === o.id)} onReported=${onReported} ffa=${ffa} />`)}</div>`}
     </section>`;
 }
 
-function OrderCard({ order, events, highlight, onChanged, messages = [], onMessage, reports = [], onReported }) {
+function OrderCard({ order, events, highlight, onChanged, messages = [], onMessage, reports = [], onReported, ffa = null }) {
     const [open, setOpen] = useState(highlight);
     const [busy, setBusy] = useState(false);
     const items = orderLines(order);
@@ -1235,6 +1257,8 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
             <span className="flex-1">${t('Sent to the seller team. Waiting for one of them to take it.')}</span>
             <${Button} variant="ghost" size="sm" busy=${busy} onClick=${cancel}>${t('Cancel')}<//>
         </div>`}
+
+        <${FfaNudge} matches=${ffaMatches(order, ffa?.listings)} channelUrl=${ffa?.channelUrl} />
 
         ${order.seller_airline_name && !closed && html`<div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-950 border border-slate-800">
             <div className="w-9 h-9 rounded-xl bg-sky-400/10 text-sky-300 flex items-center justify-center"><${Icon} name="store" /></div>
@@ -1316,6 +1340,135 @@ function OrderCard({ order, events, highlight, onChanged, messages = [], onMessa
 // =========================================================================
 //  Airlines
 // =========================================================================
+// =========================================================================
+// FFA: aircraft players listed in the Discord channel #ffa-listings (first come, first served). The server reads
+// the channel and the posts (api/ffa.js, lib/ffa.js); listings go away after 5 days, or when sold out.
+// Each listing is coloured by division (the ten division colours of the main site); the name is always written
+// next to the colour.
+const DIVISION_COLORS = { Kyra: '#7d34ff', Aegis: '#ff456a', Elysium: '#e76fff', Lior: '#81fbfe', Rhea: '#ff7b3e',
+    Vilis: '#5eff94', Elion: '#7f9ff2', Aura: '#eba09d', Eos: '#fdecd8', Uzuri: '#fae246' };
+const divColor = (d) => DIVISION_COLORS[d] || '#71717A';
+const shortModel = (m) => String(m || '').replace(/^(Airbus|Boeing|Bombardier|Embraer|De Havilland Canada|Comac|Sukhoi)\s+/, '').replace(/\s+Dreamliner$/, '');
+
+function DivisionChip({ division }) {
+    const c = divColor(division);
+    return html`<span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-bold text-slate-100 whitespace-nowrap"
+        style=${{ borderColor: c + '80', backgroundColor: c + '1f' }}>
+        <span className="w-2 h-2 rounded-full" style=${{ backgroundColor: c }}></span>${division || t('Division not stated')}</span>`;
+}
+
+// FFA lines with a model this order still needs, in one of the order's divisions. Orders waiting for a seller only:
+// a quick hint, not a promise (FFA planes go fast).
+function ffaMatches(order, listings) {
+    if (order.status !== 'PENDING' || !listings?.length) return [];
+    const divisions = orderAlliances(order);
+    const need = new Set(orderLines(order).filter((it) => it.qty > it.filled).map((it) => it.model));
+    const out = [];
+    for (const l of listings) for (const it of l.items || []) if (need.has(it.model) && divisions.includes(it.division)) out.push({ listing: l, item: it });
+    return out;
+}
+
+function FfaNudge({ matches, channelUrl }) {
+    if (!matches.length) return null;
+    const models = [...new Set(matches.map((m) => shortModel(m.item.model)))].join(', ');
+    const divisions = [...new Set(matches.map((m) => m.item.division))].join(', ');
+    const link = matches.length === 1 ? matches[0].listing.url || channelUrl : channelUrl;
+    return html`<div className="flex items-start gap-3 p-3 rounded-2xl bg-sky-400/[0.06] border border-sky-400/25 text-sm text-slate-200">
+        <${Icon} name="tag" className="w-4 h-4 text-sky-300 mt-0.5 shrink-0" />
+        <span className="flex-1">${t('Players listed {models} in {division} on #ffa-listings. They may be gone already, but have a quick look.', { models, division: divisions })}</span>
+        <span className="flex flex-col items-end gap-1 shrink-0">
+            ${link && html`<a href=${link} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-sky-300 hover:text-sky-200">${t('Open on Discord')}</a>`}
+            <a href="#ffa" className="text-xs font-bold text-slate-400 hover:text-white">${t('See FFA →')}</a>
+        </span>
+    </div>`;
+}
+
+function FfaListing({ listing, now }) {
+    const items = listing.items || [];
+    const main = items.find((it) => it.division)?.division;
+    const left = new Date(listing.expiresAt).getTime() - now;
+    return html`<article className="card p-4 space-y-3 min-w-0" style=${{ boxShadow: `inset 4px 0 0 ${divColor(main)}` }}>
+        <div className="flex items-start gap-3">
+            ${listing.author_avatar ? html`<img src=${listing.author_avatar} alt="" className="w-8 h-8 rounded-full shrink-0" />`
+                : html`<span className="w-8 h-8 rounded-full bg-slate-800 shrink-0"></span>`}
+            <div className="min-w-0 flex-1">
+                <p className="font-bold text-white truncate">${listing.author_name}</p>
+                <p className="text-xs text-slate-500">${timeAgo(listing.posted_at)}${listing.edited_at ? ` · ${t('edited')}` : ''}</p>
+            </div>
+            ${listing.url && html`<a href=${listing.url} target="_blank" rel="noopener noreferrer"
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-700 text-xs font-bold text-slate-200 hover:border-slate-500">
+                <${DiscordLogo} className="w-3.5 h-3.5" />${t('Open')}</a>`}
+        </div>
+        <ul className="space-y-1.5">
+            ${items.map((it, i) => html`<li key=${i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-extrabold text-white">${shortModel(it.model)}</span>
+                <span className="text-sm text-slate-300 tabular-nums">${it.qty ? `× ${it.qty}` : t('quantity not stated')}</span>
+                <${DivisionChip} division=${it.division} />
+                ${it.airline && html`<span className="text-xs text-slate-500 truncate">${it.airline}</span>`}
+            </li>`)}
+        </ul>
+        <details className="text-xs text-slate-400">
+            <summary className="cursor-pointer select-none hover:text-slate-200">${t('Original post')}</summary>
+            <p className="mt-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 whitespace-pre-wrap break-words text-slate-300">${listing.content}</p>
+        </details>
+        <p className="text-[11px] text-slate-500">${left > 0 ? t('Leaves this list in {time}', { time: fmtDuration(left) }) : ''}${listing.parse_source !== 'ai' ? ` · ${t('Read by the basic reader. Check the post.')}` : ''}</p>
+    </article>`;
+}
+
+function FfaView({ session, ffa, airlines, alliances, onRefresh }) {
+    const mine = useMemo(() => [...new Set(airlines.map((a) => a.alliance))], [airlines]);
+    const [picked, setDivision] = useState(null);   // null: my divisions when they have listings, else all
+    const [query, setQuery] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60e3); return () => clearInterval(timer); }, []);
+
+    if (!session) return html`<${SignInPrompt} what=${t('Sign in with Discord to see the FFA listings.')} />`;
+    if (!ffa) return html`<${EchoLoader} className="py-16" />`;
+    if (!ffa.available) return html`<${EmptyState} icon="tag" title="FFA listings are not switched on yet"
+        text="The admins still need to connect #ffa-listings to the market." />`;
+
+    const listings = (ffa.listings || []).filter((l) => new Date(l.expiresAt).getTime() > now);
+    const q = query.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const fits = (l, d) => (l.items || []).some((it) => (d === 'ALL' || (d === 'MINE' ? mine.includes(it.division) : it.division === d))
+        && (!q || it.model.toLowerCase().replace(/[^a-z0-9]/g, '').includes(q)));
+    const counts = Object.fromEntries(['ALL', 'MINE', ...alliances].map((d) => [d, listings.filter((l) => fits(l, d)).length]));
+    const division = picked || (mine.length && counts.MINE ? 'MINE' : 'ALL');
+    const list = listings.filter((l) => fits(l, division));
+    const refresh = async () => { setBusy(true); try { await onRefresh(); } finally { setBusy(false); } };
+    const chip = (key, label, color) => html`<button key=${key} onClick=${() => setDivision(key)}
+        className=${`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-bold ${division === key ? 'bg-slate-100 text-slate-950 border-slate-100' : 'border-slate-800 text-slate-400 hover:text-white'}`}>
+        ${color && html`<span className="w-2 h-2 rounded-full" style=${{ backgroundColor: color }}></span>`}${label} <span className="opacity-60">${counts[key] ?? 0}</span></button>`;
+
+    return html`<section className="space-y-4">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
+            <div className="min-w-0">
+                <h2 className="text-2xl font-black tracking-tight text-white">${t('FFA listings')}</h2>
+                <p className="text-sm text-slate-400 max-w-2xl">${t('Aircraft players listed in #ffa-listings on Discord, first come, first served. Read automatically from the channel. A listing leaves this page after {days} days, or when it is sold out.', { days: ffa.days || 5 })}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+                ${ffa.channelUrl && html`<a href=${ffa.channelUrl} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#5865F2] text-white text-sm font-bold hover:brightness-110">
+                    <${DiscordLogo} className="w-4 h-4" />#ffa-listings</a>`}
+                <${Button} variant="secondary" size="sm" icon="refresh-cw" busy=${busy} onClick=${refresh}>${t('Refresh')}<//>
+            </div>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar min-w-0 flex-1">
+                ${chip('ALL', t('All divisions'))}
+                ${mine.length > 0 && chip('MINE', t('My divisions'))}
+                ${alliances.map((d) => chip(d, d, divColor(d)))}
+            </div>
+            <input value=${query} onInput=${(e) => setQuery(e.target.value)} placeholder=${t('Search aircraft')} aria-label=${t('Search aircraft')} className="input sm:!w-56" />
+        </div>
+        ${ffa.error && html`<p className="text-xs text-amber-300">${t('Could not check for new listings: {msg}', { msg: ffa.error })}</p>`}
+        ${!list.length ? html`<${EmptyState} icon="tag" title=${listings.length ? 'Nothing listed here' : 'No FFA listings right now'}
+            text=${listings.length ? 'Try another division or clear the search.' : 'New posts in #ffa-listings show up here a few minutes after they are posted.'} />`
+        : html`<div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">${list.map((l) => html`<${FfaListing} key=${l.id} listing=${l} now=${now} />`)}</div>`}
+        <p className="text-xs text-slate-500">${ffa.checkedAt ? t('Checked {time}. Planes go fast: always check the post on Discord.', { time: timeAgo(ffa.checkedAt) }) : t('Planes go fast: always check the post on Discord.')}</p>
+    </section>`;
+}
+
 function AirlinesView({ session, airlines, orders, dataReady, defaultAirline, setDefaultAirlineId, onCreate, onEdit, setAirlines, alliances }) {
     if (!session) return html`<${SignInPrompt} what=${t('Sign in with Discord to create and manage your airline profiles.')} />`;
     if (!dataReady) return html`<${EchoLoader} className="py-16" />`;
