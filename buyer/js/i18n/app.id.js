@@ -304,6 +304,7 @@ export default {
  "Group: by family": "Kelompok: per keluarga",
  "Hand over": "Serahkan",
  "Hand {ref} to {airline}?": "Serahkan {ref} ke {airline}?",
+ "Hide": "Sembunyikan",
  "Hide details": "Sembunyikan detail",
  "Home": "Beranda",
  "How many days do you want to take?": "Berapa hari yang ingin Anda ambil?",

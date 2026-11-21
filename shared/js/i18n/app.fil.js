@@ -304,6 +304,7 @@ export default {
  "Group: by family": "Grupo: ayon sa pamilya",
  "Hand over": "Ipasa",
  "Hand {ref} to {airline}?": "Ipasa ang {ref} sa {airline}?",
+ "Hide": "Itago",
  "Hide details": "Itago ang detalye",
  "Home": "Home",
  "How many days do you want to take?": "Ilang araw ang gusto mong kunin?",

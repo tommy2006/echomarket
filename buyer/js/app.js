@@ -677,6 +677,34 @@ function NextStep({ session, airlines, cart, orders, activeOrders, view, dataRea
 // =========================================================================
 //  Home
 // =========================================================================
+// A notice on Home (announcement or a message from the Market Admins). Tapping the header folds it to just the
+// header and back; folded notices are remembered in this browser (LS_NOTICES_FOLDED), so they stay small.
+const LS_NOTICES_FOLDED = 'echo_notices_folded_v1';
+function Notice({ id, icon, title, body, meta, warning = false }) {
+    const [folded, setFolded] = useState(() => (store.get(LS_NOTICES_FOLDED, []) || []).includes(id));
+    const toggle = () => {
+        const next = !folded;
+        setFolded(next);
+        const list = (store.get(LS_NOTICES_FOLDED, []) || []).filter((x) => x !== id);
+        store.set(LS_NOTICES_FOLDED, (next ? [...list, id] : list).slice(-100));
+    };
+    return html`<div className=${`rounded-3xl border ${warning ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-sky-500/30 bg-sky-500/[0.06]'}`}>
+        <button type="button" onClick=${toggle} aria-expanded=${!folded}
+            className=${`w-full flex items-start gap-3 text-left px-4 ${folded ? 'py-3' : 'pt-4 pb-1'}`}>
+            <${Icon} name=${icon} className=${`w-5 h-5 mt-0.5 shrink-0 ${warning ? 'text-rose-300' : 'text-sky-300'}`} />
+            <span className=${`flex-1 min-w-0 font-extrabold text-white ${folded ? 'truncate' : ''}`}>${title}</span>
+            <span className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-slate-400 mt-0.5">
+                ${folded ? t('Show') : t('Hide')}
+                <${Icon} name="chevron-down" className=${`w-4 h-4 transition-transform ${folded ? '' : 'rotate-180'}`} />
+            </span>
+        </button>
+        ${!folded && html`<div className="pl-12 pr-4 pb-4">
+            <p className="text-sm text-slate-200 whitespace-pre-line break-words">${body}</p>
+            <p className="text-[11px] text-slate-500 mt-1">${meta}</p>
+        </div>`}
+    </div>`;
+}
+
 function HomeView({ session, account, orders, airlines, activeOrders, inbox, spent24h, cart, cartCount, dataReady, guide, onOpenCart, onOpenOrder, adminNotices = [], announcements = [], ffa = null }) {
     const [now, setNow] = useState(() => new Date());
     useEffect(() => {
@@ -731,22 +759,13 @@ function HomeView({ session, account, orders, airlines, activeOrders, inbox, spe
             </div>
         </header>
 
-        ${announcements.map((a) => html`<div key=${'an' + a.id} className="flex gap-3 p-4 rounded-3xl border border-sky-500/30 bg-sky-500/[0.06]">
-            <${Icon} name="megaphone" className="w-5 h-5 mt-0.5 text-sky-300" />
-            <div className="min-w-0">
-                <p className="font-extrabold text-white">${a.title || t('Notice from the Market Admins')}</p>
-                <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${a.body}</p>
-                <p className="text-[11px] text-slate-500 mt-1">${a.created_by_name || t('Market Admins')} · ${timeAgo(a.created_at)}</p>
-            </div>
-        </div>`)}
-        ${adminNotices.map((m) => html`<div key=${m.id} className=${`flex gap-3 p-4 rounded-3xl border ${m.kind === 'warning' ? 'border-rose-500/40 bg-rose-500/[0.07]' : 'border-sky-500/30 bg-sky-500/[0.06]'}`}>
-            <${Icon} name=${m.kind === 'warning' ? 'triangle-alert' : 'megaphone'} className=${`w-5 h-5 mt-0.5 ${m.kind === 'warning' ? 'text-rose-300' : 'text-sky-300'}`} />
-            <div className="min-w-0">
-                <p className="font-extrabold text-white">${m.kind === 'warning' ? t('Warning from the Market Admins') : t('Message from the Market Admins')}</p>
-                <p className="text-sm text-slate-200 mt-1 whitespace-pre-line break-words">${m.body}</p>
-                <p className="text-[11px] text-slate-500 mt-1">${m.sent_by_name || t('Market Admins')} · ${timeAgo(m.created_at)} · ${t('also in your notifications 🔔')}</p>
-            </div>
-        </div>`)}
+        ${announcements.map((a) => html`<${Notice} key=${'an' + a.id} id=${'an' + a.id} icon="megaphone"
+            title=${a.title || t('Notice from the Market Admins')} body=${a.body}
+            meta=${`${a.created_by_name || t('Market Admins')} · ${timeAgo(a.created_at)}`} />`)}
+        ${adminNotices.map((m) => html`<${Notice} key=${m.id} id=${'msg' + m.id} warning=${m.kind === 'warning'}
+            icon=${m.kind === 'warning' ? 'triangle-alert' : 'megaphone'}
+            title=${m.kind === 'warning' ? t('Warning from the Market Admins') : t('Message from the Market Admins')} body=${m.body}
+            meta=${`${m.sent_by_name || t('Market Admins')} · ${timeAgo(m.created_at)} · ${t('also in your notifications 🔔')}`} />`)}
 
         ${guide}
 

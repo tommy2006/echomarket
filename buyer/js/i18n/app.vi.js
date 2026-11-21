@@ -304,6 +304,7 @@ export default {
  "Group: by family": "Nhóm: theo dòng máy bay",
  "Hand over": "Bàn giao",
  "Hand {ref} to {airline}?": "Bàn giao {ref} cho {airline}?",
+ "Hide": "Ẩn",
  "Hide details": "Ẩn chi tiết",
  "Home": "Trang chủ",
  "How many days do you want to take?": "Bạn muốn nghỉ bao nhiêu ngày?",

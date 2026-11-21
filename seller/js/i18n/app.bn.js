@@ -304,6 +304,7 @@ export default {
  "Group: by family": "গ্রুপ: পরিবার অনুযায়ী",
  "Hand over": "হস্তান্তর",
  "Hand {ref} to {airline}?": "{ref} কি {airline}-কে হস্তান্তর করবেন?",
+ "Hide": "লুকান",
  "Hide details": "বিস্তারিত লুকান",
  "Home": "হোম",
  "How many days do you want to take?": "আপনি কত দিন নিতে চান?",
