@@ -172,8 +172,10 @@ function App() {
         if (!userId) { setFfa(null); return; }
         if (view === 'ffa' || hasPending || cartOpen) loadFfa();
         if (view !== 'ffa') return;
-        const timer = setInterval(loadFfa, 4 * 60e3);
-        return () => clearInterval(timer);
+        const timer = setInterval(() => { if (!document.hidden) loadFfa(); }, 60e3);
+        const back = () => { if (!document.hidden) loadFfa(); };
+        document.addEventListener('visibilitychange', back);
+        return () => { clearInterval(timer); document.removeEventListener('visibilitychange', back); };
     }, [userId, view === 'ffa', hasPending, cartOpen]);
 
     // ---------------- live updates

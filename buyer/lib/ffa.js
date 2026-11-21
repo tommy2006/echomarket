@@ -30,7 +30,7 @@ export const FFA_AVAILABLE = Boolean(DM_AVAILABLE && FFA_CHANNEL_ID);
 export const FFA_AI = Boolean(AI_KEY);
 
 export const LISTING_DAYS = 5;
-const SYNC_MINUTES = 3;
+const SYNC_MINUTES = 1;        // edits show up within about a minute of someone having the FFA page open
 const MAX_PAGES = 10;          // 100 messages each: up to 1000 posts in 5 days
 const AI_BATCH = 15;           // posts per AI request (the free tier allows few requests per minute)
 const AI_PER_SYNC = 4;         // AI requests per check at most; the rest wait for the next check
@@ -50,7 +50,7 @@ const isSoldText = (text) => {
 const struckThrough = (text) => /^\s*~~[\s\S]+~~\s*$/.test(String(text || ''));
 // PARSER_VERSION is part of the stored hash: changing it makes every post in the channel be read again once
 // (v2: sold-out wording fixed, struck-through quantities ignored, short ids for the AI).
-const PARSER_VERSION = 'v2';
+const PARSER_VERSION = 'v3';   // v3: role mentions (@FFA Aura) read as names, "Listed by" airlines, "6x each"
 const hash = (s) => createHash('sha1').update(PARSER_VERSION + '|' + String(s)).digest('hex').slice(0, 16);
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -63,6 +63,7 @@ const MODEL_KEYS = AIRCRAFT.map((a) => {
     keys.add(norm(short.replace(/^A(\d)/, '$1')));
     if (/^Boeing/.test(m)) keys.add(norm('B' + short));
     keys.add(norm(short.replace(/-\d00$/, '')));   // "A330-300" → "A330" only when unambiguous (checked below)
+    keys.add(norm(a.code));                         // in-game codes inside a line: "30x BCS3 (6x each)" (unique codes only)
     return { aircraft: a, keys: [...keys].filter((k) => k.length >= 3) };
 });
 const KEY_COUNT = new Map();
@@ -109,6 +110,8 @@ export function basicParse(fullText, divisions) {
     const text = struckThrough(fullText) ? fullText : unstruck(fullText);   // "~~5x~~ 3x A320neo" → 3
     const named = divisions.filter((d) => divRe(d).test(text));
     let header = null;
+    let each = null;   // "30x BCS3 (6x each alliance)": the following division lines get 6 each
+    const listedBy = (line) => line.match(/\blisted\s+by\s+([^)\n]+)/i)?.[1]?.trim() || null;
     for (const rawLine of String(text).split('\n')) {
         let lastModel = null;   // "A320neo: Kyra 5, Aegis 3": the model carries over to "Aegis 3"
         for (const raw of rawLine.split(/,|;|\|/)) {
@@ -116,8 +119,13 @@ export function basicParse(fullText, divisions) {
             if (!line) continue;
             const here = divisions.filter((d) => divRe(d).test(line));
             const model = matchModel(line) || (here.length && /\d/.test(line) ? lastModel : null);
+            if (model && !here.length) {
+                const e = line.match(/(\d{1,4})\s*x?\s*(?:each|per\s+(?:alliance|division))/i);
+                if (e) { each = { model, qty: Number(e[1]) }; lastModel = model; continue; }
+            }
             if (!model) {
-                if (here.length === 1) header = here[0];   // a division heading
+                if (here.length === 1 && each) items.push({ model: each.model, qty: each.qty, division: here[0], airline: listedBy(line) });
+                else if (here.length === 1) header = here[0];   // a division heading
                 continue;
             }
             lastModel = model;
@@ -127,7 +135,7 @@ export function basicParse(fullText, divisions) {
             }
             const division = here[0] || header || (named.length === 1 ? named[0] : null);
             const qty = (here[0] && nearQty(line, here[0])) ?? qtyOf(line);
-            items.push({ model, qty, division, airline: null });
+            items.push({ model, qty, division, airline: listedBy(line) });
         }
     }
     return { isListing: items.length > 0, soldOut: isSoldText(fullText) || struckThrough(fullText), items };
@@ -136,7 +144,7 @@ export function basicParse(fullText, divisions) {
 // ---- AI reader --------------------------------------------------------------------------------------------------
 const SYSTEM = (divisions) => `You read aircraft listings posted in a Discord channel of an Airline Manager game community. Players post aircraft they offer to others (first come, first served).
 For each post, extract every aircraft line: the aircraft model (as written, e.g. "A320neo", "B737-800", "ATR 72-600"), the quantity offered (a number, or null if not stated), the division if stated (exactly one of: ${divisions.join(', ')}; or null), and the airline name if stated (or null).
-A post can offer aircraft in several divisions. Then give one item per model AND division, each with the quantity offered in that division (e.g. "A320neo: Kyra 5, Aegis 3" gives two items: A320neo 5 Kyra, A320neo 3 Aegis). Never put two divisions in one item. Headings like "Kyra:" apply to the lines under them.
+A post can offer aircraft in several divisions. Then give one item per model AND division, each with the quantity offered in that division (e.g. "A320neo: Kyra 5, Aegis 3" gives two items: A320neo 5 Kyra, A320neo 3 Aegis). Never put two divisions in one item. Headings like "Kyra:" apply to the lines under them. Role mentions such as "@FFA Aura" or "@Echo Uzuri" name a division (Aura, Uzuri). "(6x each alliance)" or "6x each" after a model means every division listed below gets that quantity. "Listed by X" names the airline for that line only; give it exactly as written.
 Posts are often edited to update the quantity: struck-through text (~~like this~~) is an old value, so use the new value next to it (e.g. "~~5x~~ 3x A320neo" offers 3). "2 sold" or "3 left" means some are still offered: give the quantity still offered if it is clear.
 Also say whether the post is an aircraft listing at all (isListing: false for chat, questions, rules, thanks), and whether it says the WHOLE listing is sold out / all gone / closed (soldOut). A partly sold listing is not sold out.
 Answer with JSON only, one entry per post, using the post's short id exactly as given ("p1", "p2", ...): {"posts":[{"id":"p1","isListing":true,"soldOut":false,"items":[{"model":"","qty":0,"division":null,"airline":null}]}]}`;
@@ -172,14 +180,27 @@ async function aiParse(posts, divisions) {
 
 // Cleans one post's result: known models only, known divisions only, and the division filled in from the
 // poster's airlines (the airline named in the post, else their only division).
-function finish(result, post, divisions) {
+// market: airline name (lower case) → { name, alliance } for airlines anywhere in the market (one alliance only),
+// so "Listed by Castleair Brazil" finds that airline's division even when someone else posted the listing.
+function finish(result, post, divisions, market = new Map()) {
     const known = new Map(divisions.map((d) => [d.toLowerCase(), d]));
     const own = post.airlines;
     const ownDivisions = [...new Set(own.map((a) => a.alliance))];
+    // "Banggai Airlines/FlyBanggai": each name is tried. Exact names first (poster's own, then the market), then a
+    // close match among the poster's own airlines. A name that matches nothing is NEVER replaced by another airline.
     const findAirline = (name) => {
-        const n = norm(name);
-        if (!n) return null;
-        return own.find((a) => norm(a.name) === n) || own.find((a) => n.length >= 3 && (norm(a.name).includes(n) || n.includes(norm(a.name)))) || null;
+        const parts = [String(name || ''), ...String(name || '').split(/\s*[/|]\s*|\s+or\s+/i)].map((x) => x.trim()).filter((x) => norm(x).length >= 3);
+        for (const part of parts) {
+            const n = norm(part);
+            const hit = own.find((a) => norm(a.name) === n) || market.get(n);
+            if (hit) return hit;
+        }
+        for (const part of parts) {
+            const n = norm(part);
+            const hit = own.find((a) => norm(a.name).includes(n) || n.includes(norm(a.name)));
+            if (hit) return hit;
+        }
+        return null;
     };
     const postAirline = own.find((a) => norm(post.content).includes(norm(a.name)) && norm(a.name).length >= 3) || null;
     const items = [];
@@ -187,12 +208,18 @@ function finish(result, post, divisions) {
         const model = matchModel(it?.model);
         if (!model) continue;
         const qty = Number.isFinite(Number(it.qty)) && Number(it.qty) > 0 ? Math.min(Math.round(Number(it.qty)), 5000) : null;
-        const airline = findAirline(it.airline) || postAirline;
+        const statedAirline = String(it.airline || '').trim();
+        // The post-wide airline only fills in lines that name no airline of their own.
+        const airline = statedAirline ? findAirline(statedAirline) : postAirline;
         // One division per line: "Kyra, Aegis" (or a list) from the model becomes one line per division.
-        const stated = (Array.isArray(it.division) ? it.division : String(it.division || '').split(/[,/&+]|and/i))
-            .map((d) => known.get(String(d).trim().toLowerCase())).filter(Boolean);
-        const divs = stated.length ? [...new Set(stated)] : [airline?.alliance || (ownDivisions.length === 1 ? ownDivisions[0] : null)];
-        for (const division of divs) items.push({ model, qty, division, airline: airline?.name || (it.airline ? String(it.airline).slice(0, 60) : null), matched: Boolean(airline) });
+        const stated = (Array.isArray(it.division) ? it.division : String(it.division || '').split(/[,/&+]|\band\b/i))
+            .map((d) => known.get(String(d).trim().replace(/^@?(?:ffa|echo)\s+/i, '').toLowerCase())).filter(Boolean);
+        // A post that pings exactly one division role (@FFA Elion) is for that division; then the airline's division,
+        // then the poster's only division.
+        const pinged = post.pinged?.length === 1 ? post.pinged[0] : null;
+        const fallback = pinged || airline?.alliance || (!statedAirline && ownDivisions.length === 1 ? ownDivisions[0] : null);
+        const divs = stated.length ? [...new Set(stated)] : [fallback];
+        for (const division of divs) items.push({ model, qty, division, airline: airline?.name || (statedAirline ? statedAirline.slice(0, 60) : null), matched: Boolean(airline) });
     }
     // Same model + division listed twice: add the quantities.
     const merged = [];
@@ -230,8 +257,21 @@ async function readChannel(since) {
 }
 
 // Text of a message, including embeds (some players post through bots or with embeds).
-const messageText = (m) => [m.content, ...(m.embeds || []).flatMap((e) => [e.title, e.description, ...(e.fields || []).map((f) => `${f.name}: ${f.value}`)])]
-    .filter(Boolean).join('\n').trim();
+// Discord sends mentions as codes: <@&role id>, <@user id>, <:emoji:id>. Role mentions name the divisions here
+// ("@FFA Aura", "@Echo Uzuri"), so they are turned into "@<role name>" before anything reads the text.
+const mentionText = (text, m, roles) => String(text || '')
+    .replace(/<@&(\d+)>/g, (x, id) => (roles.get(id) ? `@${roles.get(id)}` : x))
+    .replace(/<@!?(\d+)>/g, (x, id) => { const u = (m.mentions || []).find((v) => v.id === id); return u ? `@${u.global_name || u.username}` : '@someone'; })
+    .replace(/<a?:(\w+):\d+>/g, ':$1:');
+const messageText = (m, roles = new Map()) => [m.content, ...(m.embeds || []).flatMap((e) => [e.title, e.description, ...(e.fields || []).map((f) => `${f.name}: ${f.value}`)])]
+    .filter(Boolean).map((x) => mentionText(x, m, roles)).join('\n').trim();
+async function guildRoles(messages) {
+    const roles = new Map();
+    if (!GUILD_IDS[0] || !messages.some((m) => /<@&\d+>/.test(m.content || '') || (m.mention_roles || []).length)) return roles;
+    const r = await discordBot(`/guilds/${GUILD_IDS[0]}/roles`);
+    if (r.ok && Array.isArray(r.json)) for (const role of r.json) roles.set(role.id, role.name);
+    return roles;
+}
 
 export async function syncFfa({ force = false, now = Date.now() } = {}) {
     if (!FFA_AVAILABLE) return { skipped: 'not set up' };
@@ -256,13 +296,14 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
     const byId = new Map((stored || []).map((r) => [r.id, r]));
 
     const posts = messages.filter((m) => !m.author?.bot && (m.type === 0 || m.type === 19));
+    const roles = await guildRoles(posts);
     const seen = new Set(posts.map((m) => m.id));
     // Sold-out replies from the poster.
     const soldByReply = new Map();
     for (const m of posts) {
         const target = m.message_reference?.message_id;
         const parent = target && posts.find((p) => p.id === target);
-        if (parent && parent.author?.id === m.author?.id && isSoldText(messageText(m))) soldByReply.set(target, m.timestamp);
+        if (parent && parent.author?.id === m.author?.id && isSoldText(messageText(m, roles))) soldByReply.set(target, m.timestamp);
     }
 
     // Posters → their market accounts and airline profiles.
@@ -279,13 +320,16 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
     const rows = [];
     for (const m of posts) {
         const replyTo = m.message_reference?.message_id;
-        if (replyTo && posts.some((p) => p.id === replyTo) && !extractable(messageText(m))) continue;   // a reply, not a listing
-        const content = messageText(m);
+        if (replyTo && posts.some((p) => p.id === replyTo) && !extractable(messageText(m, roles))) continue;   // a reply, not a listing
+        const content = messageText(m, roles);
         if (!content) continue;
         const h = hash(content);
         const old = byId.get(m.id);
         const accountId = accountOf.get(m.author.id) || null;
-        const post = { id: m.id, content, airlines: accountId ? airlinesOf.get(accountId) || [] : [] };
+        // Division roles the post pings ("FFA Elion", "Echo Uzuri" → Elion, Uzuri).
+        const pinged = [...new Set((m.mention_roles || []).map((id) => roles.get(id)).filter(Boolean)
+            .flatMap((name) => divisions.filter((d) => divRe(d).test(name))))];
+        const post = { id: m.id, content, pinged, airlines: accountId ? airlinesOf.get(accountId) || [] : [] };
         const base = {
             id: m.id, channel_id: FFA_CHANNEL_ID, author_discord_id: m.author.id, account_id: accountId,
             author_name: m.member?.nick || m.author.global_name || m.author.username || 'player',
@@ -313,7 +357,7 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
             try {
                 aiUsed++;
                 const out = await aiParse(batch, divisions);
-                for (const p of batch) if (out.has(p.id)) results.set(p.id, { r: finish(out.get(p.id), p, divisions), source: 'ai' });
+                for (const p of batch) if (out.has(p.id)) results.set(p.id, { raw: out.get(p.id), post: p, source: 'ai' });
             } catch (err) {
                 aiError = err.message;
                 if (/AI 429/.test(err.message)) aiPausedUntil = new Date(now + 10 * 60e3).toISOString();
@@ -322,6 +366,21 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
             }
         }
     }
+    // Airlines named in the posts ("Listed by …"), looked up across the whole market.
+    const basicRaw = new Map(rows.filter((r) => !r.keep && !results.has(r.id)).map((r) => [r.id, basicParse(r.post.content, divisions)]));
+    const names = new Set();
+    for (const raw of [...[...results.values()].map((x) => x.raw), ...basicRaw.values()]) {
+        for (const it of raw?.items || []) for (const part of [it.airline, ...String(it.airline || '').split(/\s*[/|]\s*/)]) if (part && String(part).trim().length >= 3) names.add(String(part).trim());
+    }
+    const market = new Map();
+    if (names.size) {
+        const { data: found } = await db.from('airlines').select('name, alliance').in('name', [...names].slice(0, 200));
+        const byName = new Map();
+        for (const a of found || []) { const k = norm(a.name); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(a); }
+        for (const [k, list] of byName) if (new Set(list.map((a) => a.alliance)).size === 1) market.set(k, list[0]);
+    }
+    for (const [id, x] of results) results.set(id, { r: finish(x.raw, x.post, divisions, market), source: 'ai' });
+
     const nowIso = new Date(now).toISOString();
     const upserts = rows.map((row) => {
         const { keep, old, post, ...base } = row;
@@ -329,7 +388,7 @@ export async function syncFfa({ force = false, now = Date.now() } = {}) {
         if (keep) parsed = { items: old.items, isListing: old.is_listing, source: old.parse_source };
         else {
             const hit = results.get(row.id);
-            const r = hit?.r || finish(basicParse(post.content, divisions), post, divisions);
+            const r = hit?.r || finish(basicRaw.get(row.id) || basicParse(post.content, divisions), post, divisions, market);
             // Read with the basic reader because the AI was busy: read again by the AI next time.
             const source = hit ? 'ai' : FFA_AI ? 'basic-wait' : 'basic';
             parsed = { items: r.items, isListing: r.isListing, source, soldOut: r.soldOut };
